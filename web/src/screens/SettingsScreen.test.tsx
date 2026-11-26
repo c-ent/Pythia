@@ -76,7 +76,7 @@ describe('SettingsScreen', () => {
   it('signs out', () => {
     stubStorage({})
     const onSignOut = vi.fn()
-    render(<SettingsScreen onSignOut={onSignOut} />)
+    render(<SettingsScreen section="profile" onSignOut={onSignOut} />)
     fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
     expect(onSignOut).toHaveBeenCalledOnce()
   })
@@ -86,7 +86,7 @@ describe('SettingsScreen', () => {
       estimate: () => Promise.resolve({ usage: 5 * 1024 * 1024, quota: 2 * 1024 ** 3 }),
       persisted: () => Promise.resolve(true),
     })
-    render(<SettingsScreen onSignOut={() => {}} />)
+    render(<SettingsScreen section="storage" onSignOut={() => {}} />)
     expect(await screen.findByText('5.0 MB of 2.0 GB')).toBeTruthy()
     expect(screen.getByText(/Yes, offline data is not cleared/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Keep offline data' })).toBeNull()
@@ -95,7 +95,7 @@ describe('SettingsScreen', () => {
   it('asks the browser to keep offline data', async () => {
     const persist = vi.fn(() => Promise.resolve(true))
     stubStorage({ persisted: () => Promise.resolve(false), persist })
-    render(<SettingsScreen onSignOut={() => {}} />)
+    render(<SettingsScreen section="storage" onSignOut={() => {}} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Keep offline data' }))
     expect(await screen.findByText(/Yes, offline data is not cleared/)).toBeTruthy()
     expect(persist).toHaveBeenCalledOnce()
@@ -103,14 +103,14 @@ describe('SettingsScreen', () => {
 
   it('explains a refused persistence request', async () => {
     stubStorage({ persisted: () => Promise.resolve(false), persist: () => Promise.resolve(false) })
-    render(<SettingsScreen onSignOut={() => {}} />)
+    render(<SettingsScreen section="storage" onSignOut={() => {}} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Keep offline data' }))
     expect(await screen.findByText(/add Pythia to the Home Screen/)).toBeTruthy()
   })
 
   it('says when storage details are unknown', async () => {
     stubStorage({})
-    render(<SettingsScreen onSignOut={() => {}} />)
+    render(<SettingsScreen section="storage" onSignOut={() => {}} />)
     expect(await screen.findByText('Storage used')).toBeTruthy()
     expect(screen.getAllByText('Unknown')).toHaveLength(2)
   })
@@ -118,7 +118,7 @@ describe('SettingsScreen', () => {
   it('lists pinned repos and unpins one', async () => {
     stubStorage({})
     localStorage.setItem(PINS_KEY, JSON.stringify(['alpha', 'beta']))
-    render(<SettingsScreen onSignOut={() => {}} />)
+    render(<SettingsScreen section="storage" onSignOut={() => {}} />)
     expect(screen.getByText('alpha')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Unpin alpha' }))
     await waitFor(() => expect(screen.queryByText('alpha')).toBeNull())
@@ -127,7 +127,7 @@ describe('SettingsScreen', () => {
 
   it('points to the Repos screen when nothing is pinned', () => {
     stubStorage({})
-    render(<SettingsScreen onSignOut={() => {}} />)
+    render(<SettingsScreen section="storage" onSignOut={() => {}} />)
     expect(screen.getByText(/Pin a repo on the Repos screen/)).toBeTruthy()
   })
 })
@@ -145,7 +145,7 @@ describe('Kept away from Gemini panel', () => {
 
   it('says when nothing is kept away', async () => {
     stubExclusionServer()
-    render(<SettingsScreen onSignOut={() => {}} />)
+    render(<SettingsScreen section="gemini" onSignOut={() => {}} />)
     expect(await within(panel()).findByText(/Nothing is kept away/)).toBeTruthy()
   })
 
@@ -154,7 +154,7 @@ describe('Kept away from Gemini panel', () => {
       { kind: 'folder', path: 'Private' },
       { kind: 'note', path: 'Journal/2026-11-26.md' },
     ])
-    render(<SettingsScreen onSignOut={() => {}} />)
+    render(<SettingsScreen section="gemini" onSignOut={() => {}} />)
     const list = await within(panel()).findByRole('list', { name: 'Kept away from Gemini' })
     const items = within(list).getAllByRole('listitem')
     expect(items).toHaveLength(2)
@@ -166,7 +166,7 @@ describe('Kept away from Gemini panel', () => {
 
   it('adds a folder, sending the whole list with the path cleaned', async () => {
     const server = stubExclusionServer([{ kind: 'note', path: 'Inbox/todo.md' }])
-    render(<SettingsScreen onSignOut={() => {}} />)
+    render(<SettingsScreen section="gemini" onSignOut={() => {}} />)
     const region = panel()
     await within(region).findByText('Inbox/todo.md')
     fireEvent.change(within(region).getByLabelText('Path in the vault'), { target: { value: ' ./Work\\Clients/ ' } })
@@ -183,7 +183,7 @@ describe('Kept away from Gemini panel', () => {
 
   it('adds a single note', async () => {
     const server = stubExclusionServer()
-    render(<SettingsScreen onSignOut={() => {}} />)
+    render(<SettingsScreen section="gemini" onSignOut={() => {}} />)
     const region = panel()
     await within(region).findByText(/Nothing is kept away/)
     fireEvent.change(within(region).getByLabelText('Type'), { target: { value: 'note' } })
@@ -195,7 +195,7 @@ describe('Kept away from Gemini panel', () => {
 
   it('refuses a note path without .md and does not call the server', async () => {
     const server = stubExclusionServer()
-    render(<SettingsScreen onSignOut={() => {}} />)
+    render(<SettingsScreen section="gemini" onSignOut={() => {}} />)
     const region = panel()
     await within(region).findByText(/Nothing is kept away/)
     fireEvent.change(within(region).getByLabelText('Type'), { target: { value: 'note' } })
@@ -210,7 +210,7 @@ describe('Kept away from Gemini panel', () => {
       { kind: 'folder', path: 'Private' },
       { kind: 'folder', path: 'Health' },
     ])
-    render(<SettingsScreen onSignOut={() => {}} />)
+    render(<SettingsScreen section="gemini" onSignOut={() => {}} />)
     const region = panel()
     fireEvent.click(await within(region).findByRole('button', { name: 'Remove Private' }))
     await waitFor(() => expect(within(region).queryByText('Private/')).toBeNull())
@@ -223,7 +223,7 @@ describe('Kept away from Gemini panel', () => {
       [`GET ${EXCLUSIONS_URL}`]: () => json(200, { exclusions: [{ kind: 'folder', path: 'Private' }] }),
       [`PUT ${EXCLUSIONS_URL}`]: () => json(500, { error: { code: 'internal', message: 'Internal server error' } }),
     })
-    render(<SettingsScreen onSignOut={() => {}} />)
+    render(<SettingsScreen section="gemini" onSignOut={() => {}} />)
     const region = panel()
     fireEvent.click(await within(region).findByRole('button', { name: 'Remove Private' }))
     expect(await within(region).findByText('Couldn’t save the change. Try again.')).toBeTruthy()
@@ -244,7 +244,7 @@ describe('Kept away from Gemini panel', () => {
         () => json(200, { exclusions: [{ kind: 'folder', path: 'Private' }] }),
       ],
     })
-    render(<SettingsScreen onSignOut={() => {}} />)
+    render(<SettingsScreen section="gemini" onSignOut={() => {}} />)
     const region = panel()
     expect(await within(region).findByText('Couldn’t load the list. Try again.')).toBeTruthy()
     fireEvent.click(within(region).getByRole('button', { name: 'Retry' }))
@@ -254,7 +254,7 @@ describe('Kept away from Gemini panel', () => {
   it('does not call the server while offline', () => {
     setOnline(false)
     const server = stubExclusionServer()
-    render(<SettingsScreen onSignOut={() => {}} />)
+    render(<SettingsScreen section="gemini" onSignOut={() => {}} />)
     expect(within(panel()).getByText(/You’re offline. This list needs a connection./)).toBeTruthy()
     expect(server.calls.filter((call) => call.key.endsWith(EXCLUSIONS_URL))).toEqual([])
   })

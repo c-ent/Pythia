@@ -1,6 +1,7 @@
-import { HardDrive, LoaderCircle, LogOut, PinOff, ShieldCheck } from 'lucide-react'
+import { HardDrive, LoaderCircle, MonitorSmartphone, PinOff, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { ScreenHeader } from '../components/Screen'
+import { Placeholder, ScreenHeader } from '../components/Screen'
+import { ScrollRow } from '../components/ScrollRow'
 import { offlineDb } from '../offline/db'
 import {
   formatBytes,
@@ -12,29 +13,47 @@ import {
 } from '../offline/storage'
 import { formatDate, plural } from '../repos/format'
 import { setRepoPinned, usePinnedRepos } from '../repos/pins'
+import { followLink, SETTINGS_SECTIONS, settingsPath, type SettingsSection } from '../router'
+import { SETTINGS_SECTION_LABELS } from '../shell/nav'
 import { LlmExclusionsPanel } from './LlmExclusionsPanel'
+import { ProfileSection } from './settings/ProfileSection'
 
-export function SettingsScreen({ onSignOut }: { onSignOut: () => void }) {
+/** Settings opens one section at a time, each at `/settings/<section>`. */
+export function SettingsScreen({ section, onSignOut }: { section: SettingsSection; onSignOut: () => void }) {
   return (
     <>
       <ScreenHeader title="Settings" />
+      <nav aria-label="Settings" className="mb-5">
+        {/* One line of tabs; on narrow screens it scrolls sideways with faded edges, no scrollbar. */}
+        <ScrollRow className="-m-1 p-1">
+          <ul className="flex w-max gap-1.5">
+            {SETTINGS_SECTIONS.map((item) => {
+              const path = settingsPath(item)
+              return (
+                <li key={item} className="shrink-0">
+                  <a
+                    href={path}
+                    onClick={(event) => followLink(event, path)}
+                    aria-current={item === section ? 'page' : undefined}
+                    className="inline-flex min-h-11 items-center rounded-full border border-line bg-surface px-4 text-sm whitespace-nowrap text-muted transition-colors hover:text-ink aria-[current]:border-strong aria-[current]:bg-strong aria-[current]:text-on-strong"
+                  >
+                    {SETTINGS_SECTION_LABELS[item]}
+                  </a>
+                </li>
+              )
+            })}
+          </ul>
+        </ScrollRow>
+      </nav>
       <div className="space-y-4">
-        <section className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-line bg-surface p-4">
-          <div>
-            <h2 className="text-base font-medium">Account</h2>
-            <p className="mt-0.5 text-sm text-muted">Signing out ends this device’s session.</p>
-          </div>
-          <button
-            type="button"
-            onClick={onSignOut}
-            className="inline-flex min-h-11 items-center gap-2 rounded-control border border-line px-4 text-sm font-medium transition-colors hover:bg-raised"
-          >
-            <LogOut aria-hidden="true" className="size-4" />
-            Sign out
-          </button>
-        </section>
-        <LlmExclusionsPanel />
-        <StoragePanel />
+        {section === 'profile' ? <ProfileSection onSignOut={onSignOut} /> : null}
+        {section === 'gemini' ? <LlmExclusionsPanel /> : null}
+        {section === 'devices' ? (
+          <Placeholder icon={MonitorSmartphone} title="Connect devices is on its way">
+            Signed-in devices, the MCP address and token rotation will be listed here.
+          </Placeholder>
+        ) : null}
+        {section === 'storage' ? <StoragePanel /> : null}
       </div>
     </>
   )
