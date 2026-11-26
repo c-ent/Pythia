@@ -1,0 +1,20 @@
+{
+  "questions": [
+    {
+      "id": "sourdough",
+      "question": "how often do I feed the sourdough starter",
+      "expected": [{ "path": "Kitchen/Sourdough starter.md", "kind": "obsidian" }]
+    },
+    {
+      "id": "login-repo",
+      "question": "which repo handles the login rate limit",
+      "expected": [{ "path": "src/security/rateLimit.ts", "kind": "repo", "name": "pythia" }],
+      "sources": ["repo"]
+    },
+    {
+      "id": "shopping",
+      "question": "what was on the shopping list",
+      "expected": [{ "path": "Keep/Shopping", "kind": "keep" }, { "path": "Lists/Shopping.md" }]
+    }
+  ]
+}
