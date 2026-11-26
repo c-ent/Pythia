@@ -144,7 +144,7 @@ Pythia (named after the Oracle at Delphi) is a private, read-only Personal Knowl
 - Behaviour:
   - `POST /api/ask` runs hybrid search, then enforces `allow_llm`: chunks from `allow_llm = false` documents are never sent to Gemini.
   - Fallback chain:
-    1. If allowed chunks exist and `GEMINI_API_KEY` is configured, call Gemini API (server-side only, exponential backoff on 429) and return cited answer.
+    1. If allowed chunks exist and a Gemini key is configured (`GEMINI_API_KEY` in `.env`, or the key saved in Settings, R16), call Gemini API (server-side only, exponential backoff on 429) and return cited answer.
     2. If Gemini fails, times out, is unconfigured, or all top matches have `allow_llm = false`, try the configured local Ollama chat model (if available).
     3. If both fail/unavailable, return a retrieval-only response with the top chunks and highlighted sentences.
   - Every response includes source chunk links and which engine answered (`gemini`, `ollama`, or `retrieval`).
@@ -169,9 +169,11 @@ Pythia (named after the Oracle at Delphi) is a private, read-only Personal Knowl
 #### R6. Web App (PWA) Core UI
 
 - Behaviour:
-  - React + Vite + `vite-plugin-pwa` installable web app, responsive across mobile and desktop, dark-mode first.
-  - Screens: Login, Search (source filter chips, ranked result cards with heading path & highlighted snippets, Ask box), Document (rendered Markdown, syntax-highlighted code, file path), Repos (list, overview, pin toggle), Import (Keep zip upload, re-index button, index status), Settings (offline storage usage, pinned repos list, "Kept away from Gemini" list where folders and single notes can be added and removed).
-- Edge cases: Narrow mobile viewport (iPhone), long code lines (horizontal scroll), empty search results, offline banner when disconnected.
+  - React + Vite + `vite-plugin-pwa` installable web app, responsive across mobile, tablet and desktop, with light and dark themes (R13). The look and layout follow the owner's mock-ups in `docs/agent/mockups/` as described in `ui.md` (redesign decided 2026-11-26).
+  - Screens: Login; Home (greeting, Search / Ask box with source chips, Recent changes, Pinned offline and Try asking cards); Search results (result cards with heading path and highlighted snippets, desktop preview pane, Copy path, Open in Obsidian); Ask (cited answer, engine badge, answer-engine and sources panels, follow-up box); Document (rendered Markdown, syntax-highlighted code, file path, Copy path, Open in Obsidian); Repos (filter, language chips, repo cards, detail panel with stats, "Allow Ask to read this repo", pin, re-sync); Pinned and offline (pinned repos, storage use, Update all now, Clear offline cache); Sources and sync (R18, Keep import); Settings with Profile (R17), Gemini access (R16), Connect devices (R15) and Offline storage sections.
+  - "Open in Obsidian" opens `obsidian://open?vault=<vault name>&file=<path>`, using the vault name from Profile; it is hidden when no vault name is set and for non-Obsidian documents.
+  - Chat history sources appear on Sources and sync as "Coming later" and cannot be used.
+- Edge cases: Narrow mobile viewport (iPhone), long code lines (horizontal scroll), empty search results, offline banner when disconnected, first visit with no data indexed (each Home card shows an empty state, not sample data).
 - Acceptance criteria:
   - Given the running app at `localhost`, when opened on desktop or mobile viewport, then user can log in, search, open a rendered Markdown/code document, and install the PWA manifest.
 
@@ -199,12 +201,89 @@ Pythia (named after the Oracle at Delphi) is a private, read-only Personal Knowl
 - Acceptance criteria:
   - Given the PWA installed on iPhone Home Screen and synced, when airplane mode is enabled, then the app opens, searches cached notes and pinned repos via MiniSearch, and displays full document text.
 
+### Redesign features (owner decisions 2026-11-26)
+
+#### R13. Themes, Font, Logo & App Shell
+
+- Behaviour:
+  - Light and dark themes from one set of tokens (`ui.md`). Profile offers Light, Dark and System (default System, following `prefers-color-scheme`). The choice is cached on the device and applied before first paint, so the app opens in the right theme offline.
+  - Geist and Geist Mono are bundled with the app (woff2, precached for offline). No font or other asset is loaded from a third-party host.
+  - The logo is the laurel sprig from `docs/agent/mockups/Main.dc.html`, used for the favicon, the in-app mark and the PWA icons.
+  - App shell per `ui.md`: desktop sidebar, tablet top navigation, mobile top bar and bottom tab bar; main-panel top bar with source picker, device count, Online and "Gemini on" pills and avatar; `Ctrl K` / `⌘ K` starts a new search from anywhere.
+  - Routes `/`, `/ask`, `/repos`, `/pinned`, `/sources`, `/settings/<section>`, `/doc/<id>`; old `/import` and `/settings` redirect.
+- Edge cases: Theme changed on another device (applies on next profile load), System theme switching while the app is open, `prefers-reduced-motion`.
+- Acceptance criteria:
+  - Given Dark selected, when the app reloads offline, then it paints dark with no light flash.
+  - Given a production build, when its files are inspected, then no request goes to a font or CDN host.
+  - Given each theme, when every text/background token pair is checked, then contrast is at least 4.5:1.
+
+#### R14. Recent Searches
+
+- Behaviour:
+  - The server stores the owner's last 20 searches and last 20 Ask questions in a `recent_queries` table (kind `search` or `ask`, query text, filters, time), so every device shows the same lists.
+  - A query is recorded when it runs successfully; repeating a query moves it to the top instead of adding a copy. Each entry can be removed, and each list can be cleared.
+  - `GET /api/recent-queries?kind=`, `DELETE /api/recent-queries/:id`, `DELETE /api/recent-queries?kind=`.
+  - The sidebar shows Recent searches (Recent questions on the Ask page); clicking one runs it again. Home's mobile layout shows the latest searches. Home's Try asking card shows the last three Ask questions; until there are any, it shows three fixed example questions (owner decision 2026-11-26).
+  - Queries run while offline are not recorded.
+- Edge cases: Empty or whitespace query (not recorded), very long query (stored truncated to 500 characters), the 21st entry (oldest dropped).
+- Acceptance criteria:
+  - Given a search run on one device, when another device loads the sidebar, then the search is listed first.
+  - Given 21 searches, when the list is read, then it has 20 entries and the oldest is gone.
+
+#### R15. Devices, Sessions & MCP Token
+
+- Behaviour:
+  - Sessions move to a server-side `sessions` table (id, token hash, device name, user agent, created, last seen, revoked). Each login creates one device, named from the browser (e.g. "iPhone · Safari") and renamable. The cookie stays HTTP-only, `Secure`, `__Host-` prefixed.
+  - Connect devices lists devices with last seen; each can be renamed or signed out, and "Sign out everywhere" (also in Profile) ends every session. Revocation survives restarts.
+  - The top bar shows "Personal index · N devices" (active sessions).
+  - The MCP token can be rotated from Connect devices: the new token is shown once, only its hash is stored (in the database), and the old token stops working at once. Until the first rotation, `PYTHIA_MCP_TOKEN` from `.env` is used. The page shows the token's last 4 characters, the server URL, a Claude config snippet and the tools exposed, and says the address is public through Tailscale Funnel and protected by the token.
+- Edge cases: Rotating while an MCP client is connected (its next call gets 401), signing out the current device (back to Login), sessions issued before this change (they end once; the owner logs in again), user agent missing (name "Unknown device").
+- Acceptance criteria:
+  - Given two signed-in devices, when one is signed out from the other, then its next `/api` call returns 401, also after a server restart.
+  - Given a rotated MCP token, when `/mcp` is called with the old token, then it returns 401, and the new token works.
+
+#### R16. Gemini Access: API Key & Rules
+
+- Behaviour:
+  - The Gemini API key can be saved, tested and removed in Settings. It is stored encrypted (AES-256-GCM) in the database with `PYTHIA_SECRETS_KEY` from `.env` (printed by `pnpm --filter server auth-env` alongside the other values); without that variable, saving is refused with a clear message. The key is never returned to the browser or logged: the API reports only whether a key is set, where it comes from (`env` or `settings`) and its last 4 characters. A key in `.env` (`GEMINI_API_KEY`) wins over a saved one.
+  - "Test" makes one minimal Gemini call and reports success or the error class (invalid key, rate limited, unreachable).
+  - The server counts Gemini requests per day (Asia/Taipei date) and Settings shows "Used today: N requests".
+  - Rules on the "Kept away from Gemini" list (R3) gain two kinds: **tags** (an Obsidian note whose frontmatter `tags` or inline `#tag` matches is locked) and **repos** (a repo marked locked, the "Allow Ask to read this repo" switch, sets `allow_llm = false` on all its documents). Google Keep as a whole can be locked too. Each rule shows how many documents it covers. Applying a rule changes `allow_llm` without re-embedding.
+  - New notes stay allowed unless a rule matches (no "default Locked" setting).
+- Edge cases: Wrong `PYTHIA_SECRETS_KEY` after a restore (key cannot be decrypted: treated as no key, with a warning in Settings), tag with or without `#`, nested tags (`#private/health` matches `private`), a repo rule for a repo later removed from `repos.json`.
+- Acceptance criteria:
+  - Given a key saved in Settings, when `GET /api/settings/gemini` is called, then the response holds no key text except the last 4 characters, and the database column holds no plain key.
+  - Given a note tagged `#private` and a `private` tag rule, when Ask runs on it, then its text never reaches Gemini.
+  - Given a locked repo, when Ask runs, then none of its chunks reach Gemini, and Ollama was not called to re-embed anything.
+
+#### R17. Profile & Preferences
+
+- Behaviour:
+  - One `profile` row on the server: display name (shown as "Hi, <name>" and as the initial avatar), time zone (default Asia/Taipei), Obsidian vault name (for Open in Obsidian), theme (Light / Dark / System), opening mode (Search or Ask), and note previews in results (on/off). `GET`/`PUT /api/profile`.
+  - Profile also shows the signed-in device summary and "Sign out everywhere" (R15).
+  - Not built: email sign-in links, profile photo, language switch.
+- Edge cases: Empty name (greeting shows "Hi"), unknown time zone name (400), profile edited offline (refused with a message; preferences cached on the device still apply).
+- Acceptance criteria:
+  - Given a name and theme saved on one device, when another device opens the app, then it shows the same greeting and theme.
+
+#### R18. Status, Sync Now & Sources
+
+- Behaviour:
+  - `GET /api/status` returns: server reachable, Gemini available (a key is set and the last call did not fail on the key), document counts per source, active device count, and per source its state (`healthy`, `error` with a short reason, `manual`, `off`), last sync time and schedule.
+  - "Sync now" (sidebar card, Pinned page "Update all now", Sources "Sync all") first asks the server to re-scan the vault and fetch every repo now (`POST /api/sync-now`, answered at once; a run already in progress is not started twice), then pulls this device's offline copy. Per repo, "Re-sync" fetches one repo.
+  - The server keeps the last 50 activity events in an `activity` table (vault synced with changed count, repos fetched, chunks blocked by the secrets scanner with count only, Keep imported, sync errors). Sources and sync shows them; nothing in them may contain secret text or note content.
+  - The sidebar "Offline ready" card shows cached notes, pinned repos, cached size and last sync for this device. Offline it says so and Sync now is disabled.
+- Edge cases: Sync now pressed twice quickly, vault path not set (vault shown as `off`), repo fetch failing (state `error`, old index kept), Gemini key removed (pill shows "Gemini off").
+- Acceptance criteria:
+  - Given Sync now, when a vault file changed since the last scan, then it is indexed without waiting for the watcher or the schedule, and an activity event records the changed count.
+  - Given a blocked secret during a fetch, when Sources and sync is opened, then the event shows only the blocked count.
+
 ## Constraints
 
 - Platforms: Web PWA (Windows PC, MacBook, iPhone Safari Home Screen, iPad) + Linux/WSL2 Docker host + Streamable HTTP MCP.
 - Performance: Vault size < 50 MB (~15 personal repos; tens of thousands of chunks). Exact vector search is fast; HNSW index is optional.
 - Privacy and security: Read-only against sources; secrets never indexed; private notes never sent to Gemini free tier; Tailscale Personal plan (non-commercial use only).
-- Accessibility: Keyboard-navigable search/document views, >= 4.5:1 contrast in dark mode, >= 44x44px touch targets on mobile.
+- Accessibility: Keyboard-navigable search/document views, >= 4.5:1 contrast in both light and dark themes, >= 44x44px touch targets on mobile.
 - Licences: Open-source dependencies only (MIT/Apache/BSD/PostgreSQL); $0 recurring cost.
 
 ## Out of scope for this version
