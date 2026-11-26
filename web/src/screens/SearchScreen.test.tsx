@@ -1,7 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { AskCitation, AskResponse } from '../api/ask'
+import { DEFAULT_PROFILE } from '../api/profile'
 import type { SearchResponse, SearchResult } from '../api/search'
+import { PROFILE_KEY } from '../profile/profile'
 import { SearchScreen } from './SearchScreen'
 
 const result = (over: Partial<SearchResult> = {}): SearchResult => ({
@@ -27,6 +29,8 @@ const json = (status: number, body: unknown) =>
 function stubSearch(respond: (body: Record<string, unknown>) => Response = () => json(200, { results: [result()], degraded: false })) {
   const bodies: Record<string, unknown>[] = []
   const fn = vi.fn(async (_url: string, init: RequestInit = {}) => {
+    // Home's cards load with GETs; only searches carry a body.
+    if (init.body === undefined) return json(200, { documents: [], queries: [] })
     const body = JSON.parse(String(init.body)) as Record<string, unknown>
     bodies.push(body)
     return respond(body)
@@ -64,6 +68,38 @@ describe('SearchScreen', () => {
     expect(within(card).queryByText('Local only')).toBeNull()
   })
 
+  describe('Profile settings', () => {
+    const keepProfile = (over: Partial<typeof DEFAULT_PROFILE>): void =>
+      localStorage.setItem(PROFILE_KEY, JSON.stringify({ ...DEFAULT_PROFILE, ...over }))
+
+    it('opens in the mode chosen in Profile', () => {
+      keepProfile({ openingMode: 'ask' })
+      try {
+        stubSearch()
+        render(<SearchScreen />)
+        expect(screen.getByRole('button', { name: 'Ask' })).toBeTruthy()
+        expect(screen.queryByRole('button', { name: 'Search' })).toBeNull()
+      } finally {
+        localStorage.removeItem(PROFILE_KEY)
+      }
+    })
+
+    it('hides note previews when Profile turns them off', async () => {
+      keepProfile({ notePreviews: false })
+      try {
+        stubSearch()
+        const { container } = render(<SearchScreen />)
+        search('goals')
+        const card = await screen.findByRole('article')
+        expect(within(card).getByRole('heading', { name: 'Pythia' })).toBeTruthy()
+        expect(container.querySelector('mark')).toBeNull()
+        expect(within(card).queryByText(/Private/)).toBeNull()
+      } finally {
+        localStorage.removeItem(PROFILE_KEY)
+      }
+    })
+  })
+
   it('keeps the submit button disabled for an empty query', () => {
     stubSearch()
     render(<SearchScreen />)
@@ -85,7 +121,7 @@ describe('SearchScreen', () => {
     expect(screen.getByRole('button', { name: 'Keep' }).getAttribute('aria-pressed')).toBe('true')
     expect(screen.getByRole('button', { name: 'All' }).getAttribute('aria-pressed')).toBe('false')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Obsidian' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Notes' }))
     await waitFor(() => expect(bodies).toHaveLength(3))
     expect(bodies[2]).toMatchObject({ sources: ['obsidian', 'keep'] })
 
@@ -95,10 +131,10 @@ describe('SearchScreen', () => {
   })
 
   it('does not search when a chip changes before any search', () => {
-    const { fn } = stubSearch()
+    const { bodies } = stubSearch()
     render(<SearchScreen />)
     fireEvent.click(screen.getByRole('button', { name: 'Repos' }))
-    expect(fn).not.toHaveBeenCalled()
+    expect(bodies).toEqual([])
   })
 
   it('shows an empty state', async () => {
@@ -181,6 +217,7 @@ describe('SearchScreen', () => {
       const searchBodies: Record<string, unknown>[] = []
       const results = [1, 2, 3, 4, 5].map((n) => result({ chunkId: n, title: `Match ${n}`, headingPath: `Match ${n}` }))
       vi.stubGlobal('fetch', async (url: string, init: RequestInit = {}) => {
+        if (init.body === undefined) return json(200, { documents: [], queries: [] })
         const body = JSON.parse(String(init.body)) as Record<string, unknown>
         if (url === '/api/ask') {
           askBodies.push(body)

@@ -86,6 +86,16 @@ export function fromCached(doc: CachedDocument): DocumentView | null {
   }
 }
 
+/**
+ * `obsidian://open?vault=…&file=…` for an Obsidian note (R4), or null when
+ * Profile has no vault name or the document is not from the vault.
+ */
+export function obsidianUrl(vaultName: string, doc: { source: { kind: string }; path: string }): string | null {
+  const vault = vaultName.trim()
+  if (vault === '' || doc.source.kind !== 'obsidian' || doc.path === '') return null
+  return `obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(doc.path)}`
+}
+
 /** Thrown when the server cannot be asked and the device has no copy. */
 export class NotCachedError extends Error {
   override name = 'NotCachedError'
