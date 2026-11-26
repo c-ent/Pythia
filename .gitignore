@@ -1,0 +1,19 @@
+node_modules
+dist
+coverage
+*.tsbuildinfo
+*.log
+
+.env
+.env.*
+!.env.example
+
+# Repo mirrors and the local repo list (T15)
+data/
+repos.json
+
+# Third-party agent skills: restored from skills-lock.json (see README).
+# add-sql-migration is written for this repo, so it stays tracked.
+.agents/skills/*
+!.agents/skills/add-sql-migration/
+.claude/skills/
