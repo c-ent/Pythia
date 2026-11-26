@@ -12,12 +12,29 @@ describe('loadConfig', () => {
       port: 3000,
       db: { host: '127.0.0.1', port: 5433, user: 'pythia', database: 'pythia', password: pw },
       ollamaUrl: 'http://127.0.0.1:11434',
+      embed: { batchSize: 32, timeoutMs: 120_000 },
       vault: null,
       repos: null,
       auth: { passwordHash: null, sessionSecret: null, mcpToken: null },
       ask: { geminiApiKey: null, geminiModel: 'gemini-3.5-flash-lite', ollamaChatModel: 'qwen3:4b' },
       webDir: null,
     })
+  })
+
+  it('reads the indexing embed batch size and timeout for slow hosts', () => {
+    expect(loadConfig({ ...base, PYTHIA_EMBED_BATCH_SIZE: '8', PYTHIA_EMBED_TIMEOUT_MS: '600000' }).embed).toEqual({
+      batchSize: 8,
+      timeoutMs: 600_000,
+    })
+  })
+
+  it.each([
+    ['PYTHIA_EMBED_BATCH_SIZE', '0'],
+    ['PYTHIA_EMBED_BATCH_SIZE', '1.5'],
+    ['PYTHIA_EMBED_TIMEOUT_MS', '500'],
+    ['PYTHIA_EMBED_TIMEOUT_MS', 'soon'],
+  ])('rejects %s=%s', (name, value) => {
+    expect(() => loadConfig({ ...base, [name]: value })).toThrow(new RegExp(name))
   })
 
   it('serves the built web app only when PYTHIA_WEB_DIR is set', () => {

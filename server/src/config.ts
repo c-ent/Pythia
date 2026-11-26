@@ -17,6 +17,11 @@ const envSchema = z.object({
   POSTGRES_PASSWORD: z.string().min(1, 'is required'),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
   OLLAMA_URL: z.url().default('http://127.0.0.1:11434'),
+  // Indexing embeds (vault, repos, Keep). A 1-core host needs smaller batches
+  // and a longer wait: a big note's chunks went over 120 s as one batch of 32.
+  // Search keeps its own short timeout in index.ts.
+  PYTHIA_EMBED_BATCH_SIZE: z.coerce.number().int().min(1).max(256).default(32),
+  PYTHIA_EMBED_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(3_600_000).default(120_000),
   // Unset means no vault is indexed yet; the server still starts.
   // `.env.example` ships `PYTHIA_VAULT_PATH=`, so empty counts as unset.
   PYTHIA_VAULT_PATH: z
@@ -101,11 +106,19 @@ export interface AskConfig {
   ollamaChatModel: string | null
 }
 
+export interface EmbedConfig {
+  /** Chunks per `/api/embed` request when indexing. */
+  batchSize: number
+  /** Per indexing request; search uses its own short timeout. */
+  timeoutMs: number
+}
+
 export interface Config {
   host: typeof HOST
   port: number
   db: DbConfig
   ollamaUrl: string
+  embed: EmbedConfig
   vault: VaultConfig | null
   repos: ReposConfig | null
   auth: AuthConfig
@@ -140,6 +153,10 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
       password: data.POSTGRES_PASSWORD,
     },
     ollamaUrl: data.OLLAMA_URL,
+    embed: {
+      batchSize: data.PYTHIA_EMBED_BATCH_SIZE,
+      timeoutMs: data.PYTHIA_EMBED_TIMEOUT_MS,
+    },
     vault:
       data.PYTHIA_VAULT_PATH === undefined
         ? null
