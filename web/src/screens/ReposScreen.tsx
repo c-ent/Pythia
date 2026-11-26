@@ -182,7 +182,7 @@ function RepoCard({
           title={pinned ? 'Pinned: files kept on this device' : 'Pin for offline'}
           onClick={() => onTogglePin(repo.name, !pinned)}
           className={`inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-control border px-3 text-sm transition-colors ${
-            pinned ? 'border-accent bg-raised text-accent' : 'border-line text-muted hover:bg-raised hover:text-ink'
+            pinned ? 'border-accent bg-raised text-accent-ink' : 'border-line text-muted hover:bg-raised hover:text-ink'
           }`}
         >
           <PinIcon aria-hidden="true" className="size-4" />

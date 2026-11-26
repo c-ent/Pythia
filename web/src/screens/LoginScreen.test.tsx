@@ -65,6 +65,25 @@ describe('LoginScreen', () => {
     expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Too many attempts. Try again in 14 minutes.')
   })
 
+  it('shows and hides the password', () => {
+    render(<LoginScreen onSignedIn={() => {}} />)
+    const field = screen.getByLabelText('Password')
+    const toggle = screen.getByRole('button', { name: 'Show password' })
+    expect(field.getAttribute('type')).toBe('password')
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(toggle)
+    expect(field.getAttribute('type')).toBe('text')
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(toggle)
+    expect(field.getAttribute('type')).toBe('password')
+  })
+
+  it('shows the logo and the 30-day note', () => {
+    render(<LoginScreen onSignedIn={() => {}} />)
+    expect(screen.getByRole('heading', { level: 1, name: 'Pythia' })).toBeTruthy()
+    expect(screen.getByText(/stays signed in for 30 days/)).toBeTruthy()
+  })
+
   it('signs in on success', async () => {
     vi.stubGlobal('fetch', async () => new Response(null, { status: 204 }))
     const onSignedIn = vi.fn()

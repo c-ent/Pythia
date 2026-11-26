@@ -1,6 +1,7 @@
-import { ArrowLeft, Check, Copy, HardDrive, LoaderCircle, Lock, RotateCw, TriangleAlert } from 'lucide-react'
+import { ArrowLeft, HardDrive, LoaderCircle, Lock, RotateCw, TriangleAlert } from 'lucide-react'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import type { DocumentView } from '../api/documents'
+import { CopyPath, OpenInObsidian } from '../document/DocumentActions'
 import { canRetry, documentErrorMessage, truncationNote } from '../document/format'
 import { loadDocument } from '../document/loadDocument'
 import { formatDate } from '../repos/format'
@@ -82,7 +83,7 @@ export function DocumentScreen({ id }: { id: number }) {
           ) : null}
         </div>
       ) : (
-        <article>
+        <article className="mx-auto w-full max-w-3xl rounded-card border border-line/60 bg-surface p-5 shadow-[0_1px_2px_rgb(15_15_16/0.05)] md:p-8">
           <DocumentHeader doc={state.doc} cached={state.cached} />
           <Suspense
             fallback={
@@ -104,76 +105,36 @@ function DocumentHeader({ doc, cached }: { doc: DocumentView; cached: boolean })
   const note = truncationNote(doc)
   const updated = doc.mtime ?? doc.updatedAt
   return (
-    <header className="mb-6 border-b border-line pb-4">
-      <h1 className="text-2xl font-semibold tracking-tight break-words">{doc.title}</h1>
-      <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted">
+    <header className="mb-6 border-b border-line pb-5">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted">
         <SourceBadge source={doc.source} />
         {doc.allowLlm ? null : (
-          <span className="inline-flex items-center gap-1" title="Never sent to Gemini">
+          <span className="inline-flex items-center gap-1 rounded-full bg-raised px-2 py-0.5" title="Never sent to Gemini">
             <Lock aria-hidden="true" className="size-3.5" />
             Local only
           </span>
         )}
         {cached ? (
-          <span className="inline-flex items-center gap-1" title="Read from the copy saved on this device">
+          <span
+            className="inline-flex items-center gap-1 rounded-full bg-raised px-2 py-0.5"
+            title="Read from the copy saved on this device"
+          >
             <HardDrive aria-hidden="true" className="size-3.5" />
             Saved copy
           </span>
         ) : null}
-        <span>
-          Updated <time dateTime={updated}>{formatDate(updated)}</time>
-        </span>
       </div>
+      <h1 className="mt-3 text-2xl leading-tight font-semibold tracking-tight break-words md:text-[1.875rem]">
+        {doc.title}
+      </h1>
+      <p className="mt-2 text-[0.8125rem] text-muted">
+        Updated <time dateTime={updated}>{formatDate(updated)}</time>
+      </p>
       <CopyPath path={doc.path} />
+      <div className="mt-1 empty:hidden">
+        <OpenInObsidian doc={doc} />
+      </div>
       {note === null ? null : <p className="mt-3 text-sm text-warning">{note}</p>}
     </header>
-  )
-}
-
-type CopyState = 'idle' | 'copied' | 'failed'
-
-function CopyPath({ path }: { path: string }) {
-  const [copy, setCopy] = useState<CopyState>('idle')
-
-  useEffect(() => {
-    if (copy === 'idle') return
-    const timer = window.setTimeout(() => setCopy('idle'), 2000)
-    return () => window.clearTimeout(timer)
-  }, [copy])
-
-  const onCopy = (): void => {
-    // `navigator.clipboard` exists only in secure contexts (HTTPS, localhost).
-    const clipboard = typeof navigator.clipboard?.writeText === 'function' ? navigator.clipboard : null
-    if (clipboard === null) {
-      setCopy('failed')
-      return
-    }
-    clipboard.writeText(path).then(
-      () => setCopy('copied'),
-      () => setCopy('failed'),
-    )
-  }
-
-  return (
-    <div className="mt-2 flex min-w-0 items-center gap-1">
-      <code className="min-w-0 flex-1 truncate font-mono text-sm text-muted" title={path}>
-        {path}
-      </code>
-      <button
-        type="button"
-        onClick={onCopy}
-        aria-label="Copy file path"
-        className="inline-flex size-11 shrink-0 items-center justify-center rounded-control text-muted transition-colors hover:bg-raised hover:text-ink"
-      >
-        {copy === 'copied' ? (
-          <Check aria-hidden="true" className="size-4 text-success" />
-        ) : (
-          <Copy aria-hidden="true" className="size-4" />
-        )}
-      </button>
-      <span role="status" className="sr-only">
-        {copy === 'copied' ? 'Path copied' : copy === 'failed' ? 'Couldn’t copy the path' : ''}
-      </span>
-    </div>
   )
 }

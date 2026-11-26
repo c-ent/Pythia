@@ -27,7 +27,7 @@ const components: Components = {
         {children}
       </a>
     ) : (
-      <span className="text-accent" title={href}>
+      <span className="text-accent-ink" title={href}>
         {children}
       </span>
     ),
