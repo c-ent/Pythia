@@ -29,7 +29,7 @@ export function AskAnswer({ state }: { state: AnswerState }) {
     <section aria-labelledby={headingId} aria-busy={state.status === 'loading'} className="rounded-card border border-accent/40 bg-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 id={headingId} className="flex items-center gap-2 text-base font-medium">
-          <Sparkles aria-hidden="true" className="size-4 text-accent" />
+          <Sparkles aria-hidden="true" className="size-4 text-accent-ink" />
           Answer
         </h2>
         {state.status === 'done' ? <EngineBadge engine={state.response.engine} model={state.response.model} /> : null}
@@ -87,7 +87,8 @@ function AnswerBody({ state, sourceIdPrefix }: { state: AnswerState; sourceIdPre
   )
 }
 
-function AnswerText({
+/** The answer with its `[n]` markers as links that focus the source with id `sourceId(n)`. */
+export function AnswerText({
   answer,
   citations,
   sourceId,
@@ -115,7 +116,7 @@ function AnswerText({
             key={i}
             href={`#${sourceId(segment.n)}`}
             onClick={jump(segment.n)}
-            className="mx-0.5 inline-flex min-w-5 items-center justify-center rounded-full bg-raised px-1 align-super font-mono text-[0.7rem] leading-4 text-accent no-underline hover:bg-accent hover:text-on-accent"
+            className="mx-0.5 inline-flex min-w-5 items-center justify-center rounded-full bg-raised px-1 align-super font-mono text-[0.7rem] leading-4 text-accent-ink no-underline hover:bg-accent hover:text-on-accent"
           >
             <span className="sr-only">source </span>
             {segment.n}
@@ -126,10 +127,11 @@ function AnswerText({
   )
 }
 
-function Source({ id, citation, showSnippet }: { id: string; citation: AskCitation; showSnippet: boolean }) {
+/** One numbered source (a list item that `[n]` markers focus), with its snippet when `showSnippet`. */
+export function Source({ id, citation, showSnippet }: { id: string; citation: AskCitation; showSnippet: boolean }) {
   const trail = headingTrail(citation)
   return (
-    <li id={id} tabIndex={-1} className="flex gap-3 rounded-control outline-accent focus:outline-2 focus:outline-offset-2">
+    <li id={id} tabIndex={-1} className="flex gap-3 rounded-control outline-accent-ink focus:outline-2 focus:outline-offset-2">
       <span
         aria-hidden="true"
         className="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-raised font-mono text-xs text-muted"
