@@ -4,8 +4,9 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
-// Same value as --color-canvas in src/index.css; the manifest cannot read CSS.
-const CANVAS = '#0e1014'
+// The light `nav` token in src/index.css (the page frame); the manifest
+// cannot read CSS. theme-init.js and src/theme/theme.ts use it too.
+const FRAME = '#17191e'
 
 // The repo-root .env, which the API server also reads.
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
@@ -23,7 +24,7 @@ export default defineConfig(({ mode }) => {
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['pythia.svg', 'apple-touch-icon.png'],
+      includeAssets: ['pythia.svg', 'apple-touch-icon.png', 'theme-init.js'],
       manifest: {
         name: 'Pythia',
         short_name: 'Pythia',
@@ -32,8 +33,8 @@ export default defineConfig(({ mode }) => {
         start_url: '/',
         scope: '/',
         display: 'standalone',
-        background_color: CANVAS,
-        theme_color: CANVAS,
+        background_color: FRAME,
+        theme_color: FRAME,
         icons: [
           { src: 'pwa-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'pwa-512.png', sizes: '512x512', type: 'image/png' },
@@ -41,6 +42,8 @@ export default defineConfig(({ mode }) => {
         ],
       },
       workbox: {
+        // Fonts are bundled woff2 files; precache them so text looks the same offline.
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
         // The app shell opens offline; API and MCP requests never get the
         // cached index.html in place of a real response.
         navigateFallback: '/index.html',

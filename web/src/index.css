@@ -1,43 +1,100 @@
 @import 'tailwindcss';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
 
 /*
  * Design tokens. Every color, font, radius and motion value lives here
  * (docs/agent/ui.md); components use the utilities Tailwind generates from
  * them (bg-canvas, text-muted, rounded-card, ...) and never hardcode values.
  * The default palette is dropped so only these colors exist.
- * Contrast against canvas and surface is at least 4.5:1 for every text color.
+ *
+ * The @theme values are the light theme; [data-theme='dark'] below overrides
+ * the same variables. public/theme-init.js sets data-theme before first paint.
+ * src/theme/tokens.test.ts checks every text/background pair in both themes
+ * (at least 4.5:1), so add a new pair there when a new token is used as text.
  */
 @theme {
   --color-*: initial;
   --color-transparent: transparent;
   --color-current: currentColor;
 
-  --color-canvas: #0e1014;
-  --color-surface: #161a20;
-  --color-raised: #1e232b;
-  --color-line: #2b323c;
-  --color-ink: #e6e8eb;
-  --color-muted: #a0a8b3;
-  --color-accent: #8ab4f8;
-  --color-on-accent: #0e1014;
-  --color-danger: #f28b82;
-  --color-warning: #fdd663;
-  --color-success: #81c995;
+  --color-canvas: #f6f6f4;
+  --color-surface: #ffffff;
+  --color-raised: #f0f0ec;
+  --color-line: #dadad5;
+  --color-ink: #0f0f10;
+  --color-muted: #5a5a5a;
+  /* Lime fill: icon tiles, primary buttons, status dot. Never text on light. */
+  --color-accent: #ccff00;
+  --color-on-accent: #0f0f10;
+  /* Accent-colored text, links and focus rings. */
+  --color-accent-ink: #4f6600;
+  --color-strong: #17191e;
+  --color-on-strong: #ffffff;
+  --color-danger: #b3261e;
+  --color-warning: #7a5900;
+  --color-success: #1f6b3a;
   /* Snippet highlight background; text on it stays ink. */
-  --color-mark: #3d3520;
+  --color-mark: #ffe9a8;
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  /* Sidebar and the frame around the main panel (same in both themes' role). */
+  --color-nav: #17191e;
+  --color-nav-raised: #23262d;
+  --color-nav-line: #30343c;
+  --color-nav-ink: #ffffff;
+  --color-nav-muted: #8d8d8d;
 
-  --radius-control: 0.5rem;
-  --radius-card: 0.75rem;
+  /* Radial glow at the top of the main panel, and the "Offline ready" card. */
+  --color-glow-pink: #f6c3d2;
+  --color-glow-green: #cfe9b8;
+  --color-glow-lavender: #c4cbf2;
+  --color-glow-offline: #1c2923;
+
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --radius-control: 0.75rem;
+  --radius-card: 1.25rem;
+  --radius-panel: 1.75rem;
 
   --default-transition-duration: 150ms;
 }
 
 @layer base {
   :root {
+    color-scheme: light;
+  }
+
+  :root[data-theme='dark'] {
     color-scheme: dark;
+
+    --color-canvas: #141519;
+    --color-surface: #1c1f25;
+    --color-raised: #262a31;
+    --color-line: #33373f;
+    --color-ink: #f2f2f2;
+    --color-muted: #a9a9ae;
+    --color-accent: #ccff00;
+    --color-on-accent: #0f0f10;
+    --color-accent-ink: #ccff00;
+    --color-strong: #f2f2f2;
+    --color-on-strong: #0f0f10;
+    --color-danger: #f28b82;
+    --color-warning: #fdd663;
+    --color-success: #81c995;
+    --color-mark: #4a4320;
+
+    --color-nav: #0f0f10;
+    --color-nav-raised: #1e2127;
+    --color-nav-line: #2a2e35;
+    --color-nav-ink: #ffffff;
+    --color-nav-muted: #8d8d8d;
+
+    /* The pastel glow is dimmed to about 15% on dark. */
+    --color-glow-pink: rgb(246 195 210 / 0.15);
+    --color-glow-green: rgb(207 233 184 / 0.15);
+    --color-glow-lavender: rgb(196 203 242 / 0.15);
+    --color-glow-offline: #1c2923;
   }
 
   html,
@@ -51,7 +108,7 @@
   }
 
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-accent;
+    @apply outline-2 outline-offset-2 outline-accent-ink;
   }
 
   /* Code blocks scroll inside themselves, never the page. */
@@ -65,6 +122,46 @@
  * the reading styles live here rather than on each element.
  */
 @layer components {
+  /* The main panel: canvas with the pastel glow along the top (dimmed on dark by the tokens). */
+  .panel-glow {
+    background-color: var(--color-canvas);
+    background-image:
+      radial-gradient(60% 45% at 18% 0%, var(--color-glow-pink), transparent),
+      radial-gradient(55% 45% at 82% 0%, var(--color-glow-green), transparent),
+      radial-gradient(50% 40% at 52% 0%, var(--color-glow-lavender), transparent);
+    background-repeat: no-repeat;
+    background-size: 100% 75rem;
+  }
+
+  /*
+   * ScrollRow: one sideways-scrolling row with no scrollbar. The side with
+   * more content fades out (data attributes set by the component).
+   */
+  .scroll-row {
+    --fade-start: 0px;
+    --fade-end: 0px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    scroll-padding-inline: 2rem;
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 var(--fade-start),
+      #000 calc(100% - var(--fade-end)),
+      transparent
+    );
+  }
+  .scroll-row::-webkit-scrollbar {
+    display: none;
+  }
+  .scroll-row[data-more-start] {
+    --fade-start: 1.5rem;
+  }
+  .scroll-row[data-more-end] {
+    --fade-end: 2.5rem;
+  }
+
   .markdown {
     @apply text-base leading-relaxed break-words;
   }
@@ -84,7 +181,7 @@
     @apply text-base;
   }
   .markdown a {
-    @apply text-accent underline underline-offset-4;
+    @apply text-accent-ink underline underline-offset-4;
   }
   .markdown :is(ul, ol) {
     @apply space-y-1 pl-6;
@@ -102,7 +199,7 @@
     @apply list-none;
   }
   .markdown input[type='checkbox'] {
-    @apply mr-2 -ml-5 accent-accent;
+    @apply mr-2 -ml-5 accent-accent-ink;
   }
   .markdown blockquote {
     @apply border-l-2 border-line pl-4 text-muted;
@@ -140,7 +237,7 @@
   .hljs-built_in,
   .hljs-type,
   .hljs-doctag {
-    @apply text-accent;
+    @apply text-accent-ink;
   }
   .hljs-string,
   .hljs-regexp,
