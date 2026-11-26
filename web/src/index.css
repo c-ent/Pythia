@@ -1,111 +1,186 @@
-:root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+@import 'tailwindcss';
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+/*
+ * Design tokens. Every color, font, radius and motion value lives here
+ * (docs/agent/ui.md); components use the utilities Tailwind generates from
+ * them (bg-canvas, text-muted, rounded-card, ...) and never hardcode values.
+ * The default palette is dropped so only these colors exist.
+ * Contrast against canvas and surface is at least 4.5:1 for every text color.
+ */
+@theme {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  --color-canvas: #0e1014;
+  --color-surface: #161a20;
+  --color-raised: #1e232b;
+  --color-line: #2b323c;
+  --color-ink: #e6e8eb;
+  --color-muted: #a0a8b3;
+  --color-accent: #8ab4f8;
+  --color-on-accent: #0e1014;
+  --color-danger: #f28b82;
+  --color-warning: #fdd663;
+  --color-success: #81c995;
+  /* Snippet highlight background; text on it stays ink. */
+  --color-mark: #3d3520;
 
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --radius-control: 0.5rem;
+  --radius-card: 0.75rem;
+
+  --default-transition-duration: 150ms;
 }
 
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+    color-scheme: dark;
   }
 
-  #social .button-icon {
-    filter: invert(1) brightness(2);
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    @apply bg-canvas font-sans text-ink antialiased;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+
+  /* Code blocks scroll inside themselves, never the page. */
+  pre {
+    @apply max-w-full overflow-x-auto font-mono;
   }
 }
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
-}
+/*
+ * Rendered documents (DocumentBody). Markdown arrives as plain elements, so
+ * the reading styles live here rather than on each element.
+ */
+@layer components {
+  .markdown {
+    @apply text-base leading-relaxed break-words;
+  }
+  .markdown > * + * {
+    @apply mt-4;
+  }
+  .markdown :is(h2, h3, h4, h5, h6) {
+    @apply mt-8 font-semibold tracking-tight;
+  }
+  .markdown h2 {
+    @apply text-xl;
+  }
+  .markdown h3 {
+    @apply text-lg;
+  }
+  .markdown :is(h4, h5, h6) {
+    @apply text-base;
+  }
+  .markdown a {
+    @apply text-accent underline underline-offset-4;
+  }
+  .markdown :is(ul, ol) {
+    @apply space-y-1 pl-6;
+  }
+  .markdown ul {
+    @apply list-disc;
+  }
+  .markdown ol {
+    @apply list-decimal;
+  }
+  .markdown li > :is(ul, ol) {
+    @apply mt-1;
+  }
+  .markdown li:has(> input[type='checkbox']) {
+    @apply list-none;
+  }
+  .markdown input[type='checkbox'] {
+    @apply mr-2 -ml-5 accent-accent;
+  }
+  .markdown blockquote {
+    @apply border-l-2 border-line pl-4 text-muted;
+  }
+  .markdown hr {
+    @apply border-line;
+  }
+  .markdown :not(pre) > code {
+    @apply rounded bg-raised px-1.5 py-0.5 font-mono text-[0.875em];
+  }
+  .markdown pre {
+    @apply rounded-card border border-line bg-surface p-4 text-sm leading-relaxed;
+  }
+  .markdown pre code {
+    @apply block w-max min-w-full;
+  }
+  .markdown table {
+    @apply block max-w-full overflow-x-auto text-sm;
+  }
+  .markdown :is(th, td) {
+    @apply border border-line px-3 py-1.5 text-left align-top;
+  }
+  .markdown th {
+    @apply bg-raised font-medium;
+  }
 
-body {
-  margin: 0;
-}
-
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
+  /* Syntax colors for rehype-highlight (highlight.js classes), from the theme tokens. */
+  .hljs-comment,
+  .hljs-quote,
+  .hljs-meta {
+    @apply text-muted italic;
+  }
+  .hljs-keyword,
+  .hljs-selector-tag,
+  .hljs-built_in,
+  .hljs-type,
+  .hljs-doctag {
+    @apply text-accent;
+  }
+  .hljs-string,
+  .hljs-regexp,
+  .hljs-addition,
+  .hljs-symbol {
+    @apply text-success;
+  }
+  .hljs-number,
+  .hljs-literal,
+  .hljs-attr,
+  .hljs-attribute,
+  .hljs-variable,
+  .hljs-template-variable {
+    @apply text-warning;
+  }
+  .hljs-title,
+  .hljs-section,
+  .hljs-name,
+  .hljs-selector-id,
+  .hljs-selector-class {
+    @apply font-semibold text-ink;
+  }
+  .hljs-deletion {
+    @apply text-danger;
+  }
+  .hljs-emphasis {
+    @apply italic;
+  }
+  .hljs-strong {
+    @apply font-semibold;
   }
 }
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
-}
-p {
-  margin: 0;
-}
-
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
-
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
 }
