@@ -21,7 +21,7 @@ Read this when changing data flow, storage, auth, or module boundaries. Only wha
 4. `server/src/db/` upserts `documents` and replaces their `chunks` in a transaction.
 
 ### Search & Ask
-1. Client (PWA over Tailscale HTTPS, or MCP client with bearer token) sends a query to Express on `127.0.0.1`.
+1. Client (PWA over Tailscale Funnel HTTPS, or MCP client with bearer token) sends a query to Express on `127.0.0.1`.
 2. `server/src/search/` embeds the query with prefix `search_query: `, runs Postgres FTS + vector CTEs (applying `sources`/`repo` filters inside both CTEs), and merges rankings with RRF (`k = 60`).
 3. For Ask mode, `server/src/search/ask` strips chunks where `allow_llm = false` before calling Gemini (429 backoff), falling back to local Ollama and then to retrieval-only snippets.
 
@@ -37,7 +37,7 @@ Read this when changing data flow, storage, auth, or module boundaries. Only wha
 - **Gemini API (free tier, server-side key only):** Optional primary LLM for Ask mode. Free-tier inputs may be used by Google to improve products, so `allow_llm = false` documents are strictly excluded. On 429 or outage, back off then fall back to Ollama / retrieval-only.
 - **Dropbox (via `rclone`):** One-way read source for Remotely Save vault. If unreachable, keep serving existing index and retry on next schedule.
 - **GitHub (read-only token/deploy key):** Periodic `git fetch` for configured personal repos.
-- **Tailscale (`tailscale serve`):** Private mesh network and HTTPS certificates for PWA service worker support.
+- **Tailscale Funnel (`tailscale funnel`):** Public HTTPS address (`<machine>.<tailnet>.ts.net`) and certificate for PWA service worker support. Tailscale runs only on the host and forwards to `127.0.0.1:3000`; devices need no Tailscale app. The Pythia login is the only gate, so login limiting is per visitor.
 
 ## Decisions
 
@@ -63,7 +63,7 @@ Read this when changing data flow, storage, auth, or module boundaries. Only wha
 
 - Context: Free-tier Gemini API prompts/responses may be reviewed or used to improve Google products.
 - Decision: Chunks belonging to `allow_llm = false` documents MUST be filtered out before constructing any Gemini prompt.
-- Consequences: Private notes and Keep imports stay searchable and can still be answered by local Ollama or retrieval-only mode without leaking to cloud APIs.
+- Consequences: Notes kept away from Gemini (`llm: false` frontmatter or the Settings exclusion list) stay searchable and can still be answered by local Ollama or retrieval-only mode without leaking to cloud APIs. Keep imports default to `allow_llm = true` like Obsidian notes (owner decision 2026-11-26).
 
 ### D5. Embedding model tracked per chunk
 

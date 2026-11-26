@@ -35,7 +35,7 @@ Pythia (named after the Oracle at Delphi) is a private, read-only Personal Knowl
 
 ## Core user flow
 
-1. User opens Pythia PWA (installed on Home Screen or desktop browser) over Tailscale HTTPS and signs in once with their password.
+1. User opens Pythia PWA (installed on Home Screen or desktop browser) over its Tailscale Funnel HTTPS address and signs in once with their password.
 2. User types a query in the Search or Ask box, optionally filtering by source (`obsidian`, `repo`, `keep`) or repository.
 3. In Search mode, Pythia returns ranked chunks with heading paths, highlighted snippets, and links to open the full rendered document.
 4. In Ask mode, Pythia retrieves top chunks, synthesizes a cited answer (respecting `allow_llm`), and links directly to the source chunks.
@@ -77,12 +77,16 @@ Pythia (named after the Oracle at Delphi) is a private, read-only Personal Knowl
   - Skips unchanged files by comparing `content_hash`. Deletes `documents` rows when files disappear from disk.
   - Splits Markdown by heading into chunks targeting ~300–500 tokens, prepending note title and `heading_path` (`Note > Section`) before embedding.
   - Embeds chunks via Ollama `nomic-embed-text` in batches of 16–32 with prefix `search_document: `. Stores `embed_model` per chunk so model upgrades can re-embed stale rows.
-  - Sets `allow_llm = false` when a note sits in a configured excluded folder (e.g., `Private/`) or has frontmatter property `llm: false`.
+  - Every note may be sent to Gemini by default (`allow_llm = true`); nothing is excluded until the owner excludes it.
+  - Sets `allow_llm = false` when a note sits in a folder on the Gemini exclusion list, is itself on that list, or has frontmatter property `llm: false`.
+  - The exclusion list (folders and single notes, vault-relative paths) is edited in Settings and stored in `llm_exclusions`. Changing it updates `allow_llm` on the affected notes without re-embedding them.
 - Edge cases: Empty markdown file, note with no headings, huge single section exceeding 500 tokens (split cleanly), malformed YAML frontmatter, rapid consecutive file saves (debounced).
 - Acceptance criteria:
   - Given a vault with sample notes, when indexed, then each note produces heading-scoped chunks with 768-dim embeddings and valid `content_hash`.
   - Given an unchanged note, when re-indexed, then Ollama is not called for that note.
-  - Given a note with `llm: false` in frontmatter or inside `Private/`, when indexed, then `documents.allow_llm` is `false`.
+  - Given a note with `llm: false` in frontmatter, inside an excluded folder, or excluded on its own, when indexed, then `documents.allow_llm` is `false`.
+  - Given an empty exclusion list, when a note in `Private/` (or any folder) without `llm: false` is indexed, then `documents.allow_llm` is `true`.
+  - Given a folder or note added to or removed from the exclusion list in Settings, when saved, then the affected notes' `allow_llm` changes and Ollama is not called.
 
 #### R9. GitHub Repo Ingestion & Overviews
 
@@ -100,12 +104,12 @@ Pythia (named after the Oracle at Delphi) is a private, read-only Personal Knowl
 
 - Behaviour:
   - Import page accepts a Google Takeout `.zip` containing Keep notes, parses title, text, labels, and checklist items, and replaces all existing `kind = 'keep'` documents on each import.
-  - Keep documents default to `allow_llm = false`.
+  - Keep documents default to `allow_llm = true`, like Obsidian notes (owner decision 2026-11-26; was `false`).
   - Import page also exposes index status (counts per source, last updated) and a manual re-index trigger.
   - Includes a 30-question evaluation script that queries hybrid search and reports `hit@5`.
 - Edge cases: Invalid or non-Keep zip file returns a clear 400 error without wiping existing Keep docs; empty checklist or untitled note.
 - Acceptance criteria:
-  - Given a valid Keep Takeout zip, when uploaded, then Keep notes appear in search with `allow_llm = false`, and a second upload replaces rather than duplicates them.
+  - Given a valid Keep Takeout zip, when uploaded, then Keep notes appear in search with `allow_llm = true`, and a second upload replaces rather than duplicates them.
   - Given a 30-question eval JSON file, when the eval script runs, then it outputs per-question pass/fail and aggregate `hit@5`.
 
 ### Search, Ask & MCP
@@ -166,7 +170,7 @@ Pythia (named after the Oracle at Delphi) is a private, read-only Personal Knowl
 
 - Behaviour:
   - React + Vite + `vite-plugin-pwa` installable web app, responsive across mobile and desktop, dark-mode first.
-  - Screens: Login, Search (source filter chips, ranked result cards with heading path & highlighted snippets, Ask box), Document (rendered Markdown, syntax-highlighted code, file path), Repos (list, overview, pin toggle), Import (Keep zip upload, re-index button, index status), Settings (offline storage usage, pinned repos list).
+  - Screens: Login, Search (source filter chips, ranked result cards with heading path & highlighted snippets, Ask box), Document (rendered Markdown, syntax-highlighted code, file path), Repos (list, overview, pin toggle), Import (Keep zip upload, re-index button, index status), Settings (offline storage usage, pinned repos list, "Kept away from Gemini" list where folders and single notes can be added and removed).
 - Edge cases: Narrow mobile viewport (iPhone), long code lines (horizontal scroll), empty search results, offline banner when disconnected.
 - Acceptance criteria:
   - Given the running app at `localhost`, when opened on desktop or mobile viewport, then user can log in, search, open a rendered Markdown/code document, and install the PWA manifest.
@@ -177,10 +181,11 @@ Pythia (named after the Oracle at Delphi) is a private, read-only Personal Knowl
   - Same Docker Compose stack runs on an always-on host (Oracle Always Free Arm primary; Google Cloud `e2-micro` fallback).
   - Supports running initial heavy indexing on workstation and transferring via `pg_dump` / `pg_restore`.
   - Scheduled one-way `rclone` pull fetches Dropbox `Apps/remotely-save` into the server's read-only vault directory every few minutes.
-  - Exposed exclusively via `tailscale serve` (`https://<machine>.<tailnet>.ts.net`), with host firewall blocking other inbound ports.
+  - Exposed exclusively via Tailscale Funnel (`tailscale funnel`, public `https://<machine>.<tailnet>.ts.net`), with host firewall blocking other inbound ports. Tailscale runs only on the host; devices open the address in a browser and log in, with no Tailscale app (owner decision 2026-11-26, replacing tailnet-only `tailscale serve`).
+  - Because the login page is public, the login rate limit counts each visitor separately, so failed guesses from others cannot lock the owner out.
 - Edge cases: `rclone` transient Dropbox network error (retry next interval without deleting local vault); Oracle idle-reclamation avoidance (keep memory usage > 20%).
 - Acceptance criteria:
-  - Given the workstation is powered off, when opening the Tailscale HTTPS URL on iPhone over mobile data, then search works and a note edited/synced from the phone appears after the next `rclone` pull.
+  - Given the workstation is powered off, when opening the Funnel HTTPS URL on iPhone over mobile data without the Tailscale app, then search works and a note edited/synced from the phone appears after the next `rclone` pull.
 
 #### R11. Offline Mode & Pinning
 

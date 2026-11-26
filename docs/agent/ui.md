@@ -6,21 +6,44 @@ Read this when touching UI, styling, layout, theme or icons. Delete this file if
 
 Dark-mode first, calm, reading-focused interface designed for night eye comfort and quick retrieval—search input and readable document text are the hero of every screen.
 
-Styling approach and exact token file path: not decided yet (see Open questions in `docs/agent/progress.md`). Once chosen in T1/T9, keep all color, spacing, and typography tokens in one file and avoid hardcoded values in components.
+Styling is Tailwind CSS 4 (owner decision). Every token lives in the `@theme` block of `web/src/index.css`; components use the utilities Tailwind generates from it (`bg-canvas`, `text-muted`, `rounded-card`) and never hardcode colors, fonts or radii. The default Tailwind palette is removed there, so a color that is not a token does not exist.
 
 ## Color tokens
 
-Not decided yet; define in T9 before building screens.
+| Token | Value | Use |
+| --- | --- | --- |
+| `canvas` | `#0e1014` | Page background, input background |
+| `surface` | `#161a20` | Cards, sidebar, bottom tab bar |
+| `raised` | `#1e232b` | Hover and active states, banners |
+| `line` | `#2b323c` | Borders and dividers |
+| `ink` | `#e6e8eb` | Body text |
+| `muted` | `#a0a8b3` | Secondary text, inactive nav |
+| `accent` | `#8ab4f8` | Primary buttons, focus ring, active nav, links |
+| `on-accent` | `#0e1014` | Text on `accent` |
+| `danger` | `#f28b82` | Errors |
+| `warning` | `#fdd663` | Offline banner, unreachable server |
+| `success` | `#81c995` | Confirmations |
+| `mark` | `#3d3520` | Snippet highlight background (text stays `ink`) |
+
+Every text color is at least 4.5:1 on `canvas`, `surface` and `raised`. The manifest and `<meta name="theme-color">` repeat `canvas` because they cannot read CSS; change all three together.
 
 ## Type, spacing and radius
 
-Not decided yet; define in T9 before building screens. Must include a readable monospace font stack for code blocks and file paths.
+- `font-sans`: system UI stack. `font-mono`: `ui-monospace`, SF Mono, Cascadia Code, JetBrains Mono, Menlo, Consolas; used for code blocks and file paths.
+- Spacing uses Tailwind's default 0.25rem scale.
+- Radius: `rounded-control` (0.5rem) for inputs and buttons, `rounded-card` (0.75rem) for cards.
+- Body text is `text-base` (16px) on inputs so iOS Safari does not zoom on focus.
 
 ## Layout
 
 - Mobile-first responsive layout covering iPhone (portrait), iPad, MacBook, and desktop monitors.
-- Exact breakpoint values and the layout helper module: not decided yet; define in T9.
-- Long code blocks scroll horizontally inside their container without causing page-level horizontal overflow.
+- One breakpoint changes the navigation: below `md` (48rem) a fixed bottom tab bar plus a top bar; from `md` up a 15rem left sidebar. Tailwind's default `sm`/`lg`/`xl` are available for content.
+- Content sits in one reading column (`max-w-3xl`, centered). The shell is `web/src/shell/AppShell.tsx`; screens render inside it and start with `ScreenHeader` from `web/src/components/Screen.tsx`.
+- The shell pads for `env(safe-area-inset-*)` so the tab bar clears the iPhone home indicator.
+- Long code blocks scroll horizontally inside their container without causing page-level horizontal overflow (`pre` is `overflow-x-auto` in the base layer).
+- Routing is a tiny History API router in `web/src/router.ts` (`/`, `/repos`, `/import`, `/settings`, and `/doc/<id>` for one document); unknown paths show Search. Nav links are real `<a href>` so new-tab clicks work; in-app links use `followLink`.
+- A document at `/doc/<id>` opens over Search: Search stays mounted but hidden, so Back returns to the same query and results. The Search tab keeps `aria-current="true"` (not `page`) there and links back to `/`.
+- Rendered Markdown is styled by the `.markdown` component class in `web/src/index.css`; syntax colors map highlight.js classes (`.hljs-*`) to the theme tokens. Raw HTML in notes is never rendered, images never load (they show as a link), and only `http(s):`/`mailto:` links stay links.
 
 ## Screens & Core Components
 
@@ -29,11 +52,13 @@ Not decided yet; define in T9 before building screens. Must include a readable m
 - **Document:** Rendered Markdown, syntax-highlighted code, copyable file path, and `allow_llm` / source indicator.
 - **Repos:** Repo list with language, last updated, expandable overview (`SUMMARY`), and offline pin toggle.
 - **Import:** Google Keep Takeout `.zip` upload, manual re-index trigger, and index status table.
-- **Settings:** Offline storage usage (`navigator.storage.estimate()`), persistent storage status, and pinned repos management.
+- **Settings:** "Kept away from Gemini" list (folders and single notes: list, add with a Folder / Single note picker and a vault path, remove; needs a connection), offline storage usage (`navigator.storage.estimate()`), persistent storage status, and pinned repos management.
 
 ## Icons and images
 
-Not decided yet; choose one lightweight icon set (e.g., `lucide-react`) in T9 and include PWA Home Screen icons for iOS and desktop.
+- Icons: `lucide-react` only, always `aria-hidden="true"` next to a visible or screen-reader label.
+- The Pythia mark is a ring and a dot: `web/public/pythia.svg` (favicon) and `web/src/components/BrandMark.tsx` (in-app, theme colors).
+- PWA and Home Screen PNGs (`pwa-192.png`, `pwa-512.png`, `pwa-maskable-512.png`, `apple-touch-icon.png`) are generated by `node web/scripts/make-icons.mjs` with no image dependencies. Change the mark there and in the SVG together, then rerun it.
 
 ## Motion
 

@@ -4,24 +4,30 @@ Private, read-only Personal Knowledge Server (PWA + MCP server) that indexes Obs
 
 ## Commands
 
-*(Unverified until T1 scaffold is complete.)*
+pnpm workspace (`server`, `web`). Run from the repo root.
 
-- Install: `npm install`
-- Dev server (API + web): `npm run dev`
-- Build (must pass before finishing any task): `npm run build`
-- Typecheck: `npm run typecheck`
-- Tests, all: `npm test`
-- Test one file: `npx vitest run path/to/file.test.ts`
-- Lint one file: `npx eslint path/to/file.ts`
-- Local infra (Postgres + Ollama): `docker compose up -d`
+- Install: `pnpm install`
+- Dev server (API + web): `pnpm dev`
+- Build (must pass before finishing any task): `pnpm build`
+- Typecheck: `pnpm typecheck`
+- Lint, all: `pnpm lint`
+- Tests, all: `pnpm test`
+- Test one file: `pnpm exec vitest run path/to/file.test.ts`
+- Lint one file: `pnpm exec eslint path/to/file.ts`
+- Local infra (Postgres + Ollama + app): `cp .env.example .env`, set `POSTGRES_PASSWORD`, then `docker compose up -d --build`
+- Migrate from the host: `pnpm --filter server migrate`
+- Postgres integration tests: set `PYTHIA_DB_TESTS=1` in `.env` with the `postgres` container running; otherwise they are skipped
 
 ## Traps and conventions the code does not show
+
+- Never put libpq variables (`PGHOST`, `PGPORT`, `PGUSER`, `PGDATABASE`) in `.env`: compose passes `.env` into the `postgres` container, and the server there reads `PGPORT` and listens on the wrong port. Use the `PYTHIA_DB_*` names.
+- Postgres publishes on host port `5433`, not `5432`, because a native Windows Postgres already owns `5432` on the workstation.
 
 - `nomic-embed-text` requires prefixing every stored chunk with `search_document: ` and every query with `search_query: `; omitting prefixes silently degrades recall.
 - In hybrid search (`RRF k = 60`), source and repo filters MUST be applied inside both the `lexical` and `semantic` CTEs—never only in the outer `SELECT`—or filtered queries drop relevant matches.
 - Every ingested chunk MUST pass through the secrets scanner before embedding or DB insert; log only the redacted/dropped count, never the matched value.
 - Documents with `allow_llm = false` remain searchable in hybrid search, but their text MUST NEVER be sent to the Gemini API.
-- Bind the Express server to `127.0.0.1` only; external access goes exclusively through `tailscale serve`.
+- Bind the Express server to `127.0.0.1` only; external access goes exclusively through Tailscale Funnel on the host (public URL, so the login limit must count each visitor separately).
 - Keep work material out: `kind = 'work'` is disabled by default and must never be auto-enabled.
 - After adding a SQL file in `server/migrations/`, run the migration script before running DB tests.
 
