@@ -1,0 +1,285 @@
+import { describe, expect, it } from 'vitest'
+import type { ChunkText, ChunkTextLoader } from '../db/searchStore.js'
+import type { SearchResult, SearchService } from '../search/searchService.js'
+import { buildPrompt, createAskService, RETRIEVAL_PASSAGES, SYSTEM_PROMPT } from './askService.js'
+import { LlmError, type ChatModel, type ChatPrompt } from './llm.js'
+
+const PRIVATE_TEXT = 'Private salary figure: 123456 per year.'
+const PUBLIC_TEXT = 'The goal of Pythia is cited answers across notes.'
+
+const result = (over: Partial<SearchResult> = {}): SearchResult => ({
+  chunkId: 1,
+  documentId: 10,
+  source: { kind: 'obsidian', name: 'vault' },
+  path: 'Projects/Pythia.md',
+  title: 'Pythia',
+  headingPath: 'Pythia > Goals',
+  startLine: 1,
+  endLine: 3,
+  allowLlm: true,
+  score: 0.03,
+  ftsRank: 1,
+  vectorRank: 1,
+  snippet: { text: 'The goal of Pythia', highlights: [[4, 8]] },
+  ...over,
+})
+
+const privateHit = result({
+  chunkId: 2,
+  documentId: 20,
+  path: 'Private/Money.md',
+  title: 'Money',
+  headingPath: 'Money',
+  allowLlm: false,
+  snippet: { text: 'Private salary figure', highlights: [] },
+})
+const publicHit = result()
+
+function fakeSearch(results: SearchResult[], degraded = false) {
+  const calls: Parameters<SearchService['search']>[0][] = []
+  const search: SearchService = {
+    async search(request) {
+      calls.push(request)
+      return { results, degraded }
+    },
+    async getDocument() {
+      return null
+    },
+    async findDocument() {
+      return null
+    },
+    async recent() {
+      return []
+    },
+  }
+  return { search, calls }
+}
+
+function loader(texts: Record<number, ChunkText>): ChunkTextLoader {
+  return {
+    async chunkTexts(ids) {
+      return new Map(ids.flatMap((id) => (texts[id] === undefined ? [] : [[id, texts[id]] as const])))
+    },
+  }
+}
+
+const defaultTexts = {
+  1: { content: PUBLIC_TEXT, allowLlm: true },
+  2: { content: PRIVATE_TEXT, allowLlm: false },
+}
+
+function fakeModel(engine: 'gemini' | 'ollama', answer: string | Error = 'Answer [1].') {
+  const prompts: ChatPrompt[] = []
+  const model: ChatModel = {
+    engine,
+    model: engine === 'gemini' ? 'gemini-test' : 'local-test',
+    async generate(prompt) {
+      prompts.push(prompt)
+      if (answer instanceof Error) throw answer
+      return answer
+    },
+  }
+  return { model, prompts }
+}
+
+const quiet = () => {}
+
+describe('ask service', () => {
+  it('answers with Gemini using only allowed passages; private text never reaches it', async () => {
+    const { search } = fakeSearch([privateHit, publicHit])
+    const gemini = fakeModel('gemini')
+    const local = fakeModel('ollama')
+    const ask = createAskService({ search, chunks: loader(defaultTexts), gemini: gemini.model, local: local.model, log: quiet })
+
+    const response = await ask.ask({ question: 'What is my salary and the goal?' })
+
+    expect(response).toMatchObject({ engine: 'gemini', model: 'gemini-test', answer: 'Answer [1].', fallbacks: [], withheld: 1 })
+    expect(response.citations.map((c) => [c.n, c.path])).toEqual([[1, 'Projects/Pythia.md']])
+    expect(gemini.prompts).toHaveLength(1)
+    const sent = JSON.stringify(gemini.prompts)
+    expect(sent).toContain(PUBLIC_TEXT)
+    expect(sent).not.toContain(PRIVATE_TEXT)
+    expect(sent).not.toContain('Private/Money.md')
+    expect(local.prompts).toHaveLength(0)
+  })
+
+  it('sends a Keep note to Gemini but never an llm-excluded Obsidian note', async () => {
+    const KEEP_TEXT = 'Keep list: renew passport before March.'
+    const keepHit = result({
+      chunkId: 4,
+      documentId: 40,
+      source: { kind: 'keep', name: 'keep' },
+      path: 'Keep/Passport',
+      title: 'Passport',
+      headingPath: 'Passport',
+      allowLlm: true,
+      snippet: { text: 'renew passport', highlights: [] },
+    })
+    // An Obsidian note kept away by `llm: false` or the Settings exclusion list.
+    const excludedHit = result({ ...privateHit, chunkId: 5, path: 'Journal/Health.md', title: 'Health' })
+    const { search } = fakeSearch([excludedHit, keepHit])
+    const gemini = fakeModel('gemini')
+    const ask = createAskService({
+      search,
+      chunks: loader({ 4: { content: KEEP_TEXT, allowLlm: true }, 5: { content: PRIVATE_TEXT, allowLlm: false } }),
+      gemini: gemini.model,
+      local: null,
+      log: quiet,
+    })
+
+    const response = await ask.ask({ question: 'When do I renew my passport?' })
+
+    expect(response).toMatchObject({ engine: 'gemini', fallbacks: [], withheld: 1 })
+    expect(response.citations.map((c) => [c.n, c.path])).toEqual([[1, 'Keep/Passport']])
+    const sent = JSON.stringify(gemini.prompts)
+    expect(sent).toContain(KEEP_TEXT)
+    expect(sent).not.toContain(PRIVATE_TEXT)
+    expect(sent).not.toContain('Journal/Health.md')
+  })
+
+  it('skips Gemini when every match is private and answers locally with all passages', async () => {
+    const { search } = fakeSearch([privateHit])
+    const gemini = fakeModel('gemini')
+    const local = fakeModel('ollama')
+    const ask = createAskService({ search, chunks: loader(defaultTexts), gemini: gemini.model, local: local.model, log: quiet })
+
+    const response = await ask.ask({ question: 'salary?' })
+
+    expect(gemini.prompts).toHaveLength(0)
+    expect(response).toMatchObject({ engine: 'ollama', model: 'local-test', fallbacks: ['all_private'] })
+    expect(JSON.stringify(local.prompts)).toContain(PRIVATE_TEXT)
+  })
+
+  it('never sends a chunk whose document turned private after the search', async () => {
+    // The search result still says allowLlm = true, but the fresh load says false.
+    const { search } = fakeSearch([result({ chunkId: 3 })])
+    const gemini = fakeModel('gemini')
+    const ask = createAskService({
+      search,
+      chunks: loader({ 3: { content: PRIVATE_TEXT, allowLlm: false } }),
+      gemini: gemini.model,
+      local: null,
+      log: quiet,
+    })
+
+    const response = await ask.ask({ question: 'q' })
+
+    expect(gemini.prompts).toHaveLength(0)
+    expect(response.engine).toBe('retrieval')
+    expect(response.fallbacks).toEqual(['all_private', 'ollama_unconfigured'])
+  })
+
+  it('never sends a chunk that could not be loaded', async () => {
+    const { search } = fakeSearch([result({ chunkId: 99 })])
+    const gemini = fakeModel('gemini')
+    const ask = createAskService({ search, chunks: loader({}), gemini: gemini.model, local: null, log: quiet })
+    await ask.ask({ question: 'q' })
+    expect(gemini.prompts).toHaveLength(0)
+  })
+
+  it('falls back cleanly when GEMINI_API_KEY is unset', async () => {
+    const { search } = fakeSearch([publicHit])
+    const local = fakeModel('ollama')
+    const ask = createAskService({ search, chunks: loader(defaultTexts), gemini: null, local: local.model, log: quiet })
+    const response = await ask.ask({ question: 'goal?' })
+    expect(response).toMatchObject({ engine: 'ollama', fallbacks: ['gemini_unconfigured'] })
+  })
+
+  it('returns retrieval-only passages when no model is configured', async () => {
+    const hits = [1, 2, 3, 4, 5].map((n) => result({ chunkId: n, path: `n${n}.md` }))
+    const { search } = fakeSearch(hits)
+    const texts = Object.fromEntries(hits.map((h) => [h.chunkId, { content: `text ${h.chunkId}`, allowLlm: true }]))
+    const ask = createAskService({ search, chunks: loader(texts), gemini: null, local: null, log: quiet })
+
+    const response = await ask.ask({ question: 'q' })
+
+    expect(response).toMatchObject({
+      answer: null,
+      engine: 'retrieval',
+      model: null,
+      fallbacks: ['gemini_unconfigured', 'ollama_unconfigured'],
+    })
+    expect(response.citations).toHaveLength(RETRIEVAL_PASSAGES)
+    expect(response.citations[0]).toMatchObject({ n: 1, path: 'n1.md', snippet: hits[0]?.snippet })
+  })
+
+  it('goes Gemini → local → retrieval as each one fails, logging no question text', async () => {
+    const { search } = fakeSearch([publicHit])
+    const logs: string[] = []
+    const gemini = fakeModel('gemini', new LlmError('Gemini returned HTTP 429', { status: 429, retryable: true }))
+    const local = fakeModel('ollama', new LlmError('Ollama chat request failed: network error'))
+    const ask = createAskService({
+      search,
+      chunks: loader(defaultTexts),
+      gemini: gemini.model,
+      local: local.model,
+      log: (m) => logs.push(m),
+    })
+
+    const response = await ask.ask({ question: 'my secret question' })
+
+    expect(response).toMatchObject({ engine: 'retrieval', fallbacks: ['gemini_failed', 'ollama_failed'] })
+    expect(gemini.prompts).toHaveLength(1)
+    expect(local.prompts).toHaveLength(1)
+    expect(logs).toHaveLength(2)
+    expect(logs.join('\n')).toContain('LlmError 429')
+    expect(logs.join('\n')).not.toContain('secret')
+  })
+
+  it('answers locally after a Gemini failure', async () => {
+    const { search } = fakeSearch([publicHit])
+    const gemini = fakeModel('gemini', new LlmError('Gemini request failed: timed out'))
+    const local = fakeModel('ollama', 'Local answer [1].')
+    const ask = createAskService({ search, chunks: loader(defaultTexts), gemini: gemini.model, local: local.model, log: quiet })
+    const response = await ask.ask({ question: 'q' })
+    expect(response).toMatchObject({ engine: 'ollama', answer: 'Local answer [1].', fallbacks: ['gemini_failed'] })
+  })
+
+  it('handles zero search results without calling any model', async () => {
+    const { search } = fakeSearch([])
+    const gemini = fakeModel('gemini')
+    const local = fakeModel('ollama')
+    const ask = createAskService({ search, chunks: loader({}), gemini: gemini.model, local: local.model, log: quiet })
+    const response = await ask.ask({ question: 'nothing matches' })
+    expect(response).toEqual({
+      answer: null,
+      engine: 'retrieval',
+      model: null,
+      fallbacks: ['no_results'],
+      citations: [],
+      withheld: 0,
+      degraded: false,
+    })
+    expect(gemini.prompts).toHaveLength(0)
+    expect(local.prompts).toHaveLength(0)
+  })
+
+  it('passes filters and a clamped limit to search, and reports degraded search', async () => {
+    const { search, calls } = fakeSearch([publicHit], true)
+    const ask = createAskService({ search, chunks: loader(defaultTexts), gemini: null, local: null, log: quiet })
+    const response = await ask.ask({ question: 'q', sources: ['repo'], repo: 'pythia', limit: 50 })
+    expect(calls[0]).toEqual({ query: 'q', sources: ['repo'], repo: 'pythia', limit: 10 })
+    expect(response.degraded).toBe(true)
+    await ask.ask({ question: 'q' })
+    expect(calls[1]?.limit).toBe(6)
+  })
+})
+
+describe('buildPrompt', () => {
+  it('numbers passages with their path and heading and fences them as data', () => {
+    const prompt = buildPrompt('What is the goal?', [
+      { result: publicHit, text: PUBLIC_TEXT, cloudAllowed: true },
+      { result: result({ path: 'b.md', headingPath: '' }), text: 'Second.', cloudAllowed: true },
+    ])
+    expect(prompt.system).toBe(SYSTEM_PROMPT)
+    expect(prompt.user).toContain(`[1] Projects/Pythia.md — Pythia > Goals\n${PUBLIC_TEXT}`)
+    expect(prompt.user).toContain('[2] b.md\nSecond.')
+    expect(prompt.user.indexOf('<passages>')).toBe(0)
+    expect(prompt.user.endsWith('Question: What is the goal?')).toBe(true)
+  })
+
+  it('caps very long passages', () => {
+    const prompt = buildPrompt('q', [{ result: publicHit, text: 'x'.repeat(10_000), cloudAllowed: true }])
+    expect(prompt.user.length).toBeLessThan(5_000)
+  })
+})
