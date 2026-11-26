@@ -4,7 +4,8 @@ import type { SourceRef } from './search'
 // Mirrors `GET /api/documents/:id` (DocumentView in server/src/search/searchService.ts).
 // Dates arrive as ISO strings.
 
-export interface DocumentView {
+/** A document without its text, as listed by `GET /api/recent` (DocumentInfo on the server). */
+export interface DocumentInfo {
   id: number
   source: SourceRef
   path: string
@@ -14,6 +15,9 @@ export interface DocumentView {
   allowLlm: boolean
   mtime: string | null
   updatedAt: string
+}
+
+export interface DocumentView extends DocumentInfo {
   /** The document text, capped by the server; frontmatter is not kept. */
   content: string
   truncated: boolean
