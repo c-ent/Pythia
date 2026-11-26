@@ -59,6 +59,8 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('runMigrations against Post
       'document_tombstones',
       'documents',
       'llm_exclusions',
+      'profile',
+      'recent_queries',
       'schema_migrations',
       'sources',
     ])

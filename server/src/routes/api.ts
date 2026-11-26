@@ -3,6 +3,7 @@ import { z } from 'zod'
 import type { AskService } from '../ask/askService.js'
 import { KeepDisabledError, type ImportService } from '../ingest/importService.js'
 import { KeepTakeoutError } from '../ingest/keepTakeout.js'
+import { queryFilters, type RecentQueryService } from '../recent/recentQueryService.js'
 import type { RepoService } from '../search/repoService.js'
 import {
   askInputSchema,
@@ -65,6 +66,7 @@ export function createApiRouter(
   sync?: SyncService,
   repos?: RepoService,
   imports?: ImportService,
+  recent?: RecentQueryService,
 ): Router {
   const router = express.Router()
   router.use((_req, res, next) => {
@@ -76,12 +78,17 @@ export function createApiRouter(
 
   router.post('/search', async (req, res) => {
     const input = parseInput(searchInputSchema, req.body)
-    res.json(await search.search(input))
+    const response = await search.search(input)
+    // Recorded only once the search has run; `record` never throws (R14).
+    await recent?.record('search', input.query, queryFilters(input))
+    res.json(response)
   })
 
   router.post('/ask', async (req, res) => {
     const input = parseInput(askInputSchema, req.body)
-    res.json(await ask.ask(input))
+    const response = await ask.ask(input)
+    await recent?.record('ask', input.question, queryFilters(input))
+    res.json(response)
   })
 
   router.get('/documents/:id', async (req, res) => {

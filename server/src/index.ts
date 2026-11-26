@@ -16,6 +16,10 @@ import { createPgRepoStore } from './db/repoStore.js'
 import { createPgIndexStore, ensureSource } from './db/indexStore.js'
 import { createPgStatusStore } from './db/statusStore.js'
 import { createPgLlmExclusionStore } from './db/llmExclusionStore.js'
+import { createPgProfileStore } from './db/profileStore.js'
+import { createProfileService } from './profile/profileService.js'
+import { createPgRecentQueryStore } from './db/recentQueryStore.js'
+import { createRecentQueryService } from './recent/recentQueryService.js'
 import { createSettingsService } from './settings/settingsService.js'
 import { createImportService } from './ingest/importService.js'
 import { createRepoService } from './search/repoService.js'
@@ -89,6 +93,8 @@ const server = createServer(
     repos: repoService,
     imports,
     settings,
+    profile: createProfileService(createPgProfileStore(pool)),
+    recent: createRecentQueryService(createPgRecentQueryStore(pool)),
     ...(config.webDir === null ? {} : { webDir: config.webDir }),
   }),
 )
