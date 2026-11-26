@@ -1,0 +1,63 @@
+# Always-on host (T18, R10). Layered on the base file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# What it adds:
+# - app: host networking, so the server's 127.0.0.1:3000 is the host's
+#   127.0.0.1:3000 and `tailscale serve` on the host can reach it (T19). It
+#   then talks to postgres and ollama through their 127.0.0.1 published ports.
+#   Nothing listens on a public interface.
+# - app: the vault pulled by rclone, mounted read-only at /vault, and a named
+#   volume for the repo mirrors.
+# - rclone: a one-way pull of the Remotely Save folder from Dropbox into the
+#   vault directory every PYTHIA_RCLONE_INTERVAL_SECONDS. It never writes to
+#   Dropbox. A failed pull logs and retries next round; rclone skips deletions
+#   when a run had errors, and the vault indexer never empties the index on an
+#   empty vault, so a network failure cannot wipe notes.
+#
+# Host .env needs, on top of .env.example:
+#   PYTHIA_HOST_VAULT_DIR      host folder rclone writes and the app reads (default ./data/vault)
+#   PYTHIA_RCLONE_CONFIG_DIR   host folder holding rclone.conf with a Dropbox remote (default ./data/rclone)
+#   PYTHIA_RCLONE_SOURCE       remote path, e.g. dropbox:Apps/remotely-save/<vault name>
+#   PYTHIA_REPOS_CONFIG=/config/repos.json  (optional; put repos.json in ./data/config)
+services:
+  app:
+    network_mode: host
+    environment:
+      PYTHIA_DB_HOST: 127.0.0.1
+      PYTHIA_DB_PORT: ${PYTHIA_DB_PORT:-5433}
+      OLLAMA_URL: http://127.0.0.1:${PYTHIA_OLLAMA_PORT:-11434}
+      PYTHIA_VAULT_PATH: /vault
+      PYTHIA_REPOS_DIR: /data/repos
+    volumes:
+      - ${PYTHIA_HOST_VAULT_DIR:-./data/vault}:/vault:ro
+      - ${PYTHIA_HOST_CONFIG_DIR:-./data/config}:/config:ro
+      - repos:/data/repos
+
+  rclone:
+    image: rclone/rclone:1
+    environment:
+      SOURCE: ${PYTHIA_RCLONE_SOURCE:?set PYTHIA_RCLONE_SOURCE, e.g. dropbox:Apps/remotely-save/<vault>}
+      INTERVAL: ${PYTHIA_RCLONE_INTERVAL_SECONDS:-300}
+    # The config folder is writable because rclone saves refreshed Dropbox
+    # tokens back into rclone.conf.
+    volumes:
+      - ${PYTHIA_RCLONE_CONFIG_DIR:-./data/rclone}:/config/rclone
+      - ${PYTHIA_HOST_VAULT_DIR:-./data/vault}:/vault
+    entrypoint: ["/bin/sh", "-c"]
+    # `sync` makes /vault an exact copy of the remote (one way only). Obsidian's
+    # own settings folder is not needed for search.
+    command:
+      - |
+        while true; do
+          if rclone sync "$$SOURCE" /vault --exclude '.obsidian/**' --exclude '.trash/**' --stats-one-line --stats 0 -v; then
+            echo "rclone: pulled $$(date -u +%FT%TZ)"
+          else
+            echo "rclone: pull failed; keeping the local copy and retrying in $$INTERVAL s"
+          fi
+          sleep "$$INTERVAL"
+        done
+    restart: unless-stopped
+
+volumes:
+  repos:
