@@ -62,7 +62,7 @@ export function ImportScreen() {
 
   return (
     <>
-      <ScreenHeader title="Import" description="Google Keep exports and index status." />
+      <ScreenHeader title="Sources and sync" description="Index status and Google Keep imports." />
       <div className="space-y-4">
         <KeepUpload online={online} onImported={refresh} />
         <section className="rounded-card border border-line bg-surface p-4" aria-labelledby="index-status-heading">
@@ -141,7 +141,7 @@ function KeepUpload({ online, onImported }: { online: boolean; onImported: () =>
         <button
           type="submit"
           disabled={file === null || busy || !online}
-          className="inline-flex min-h-11 items-center gap-2 rounded-control bg-accent px-4 text-sm font-medium text-canvas transition-opacity disabled:opacity-50"
+          className="inline-flex min-h-11 items-center gap-2 rounded-control bg-accent px-4 text-sm font-medium text-on-accent transition-opacity disabled:opacity-50"
         >
           {busy ? (
             <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />
@@ -155,7 +155,7 @@ function KeepUpload({ online, onImported }: { online: boolean; onImported: () =>
       <div aria-live="polite">
         {upload.status === 'done' ? (
           <p className="mt-3 flex items-start gap-2 text-sm text-ink">
-            <CheckCircle2 aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-accent" />
+            <CheckCircle2 aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-accent-ink" />
             <span>
               {importSummary(upload.result)}
               {upload.result.failed > 0

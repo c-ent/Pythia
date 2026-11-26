@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import { DEFAULT_PROFILE } from './api/profile'
 import App from './App'
 
 const json = (status: number, body: unknown) =>
@@ -16,20 +17,30 @@ describe('App', () => {
   it('shows the shell when the session is valid', async () => {
     vi.stubGlobal('fetch', async () => json(200, { authenticated: true }))
     render(<App />)
-    expect(await screen.findByRole('navigation', { name: 'Main' })).toBeTruthy()
+    expect(await screen.findAllByRole('navigation', { name: 'Main' })).toBeTruthy()
   })
 
   it('logs in, then signs out back to the login screen', async () => {
+    let signedIn = false
     vi.stubGlobal('fetch', async (url: string) => {
-      if (url === '/api/login' || url === '/api/logout') return new Response(null, { status: 204 })
+      if (url === '/api/login' || url === '/api/logout') {
+        signedIn = url === '/api/login'
+        return new Response(null, { status: 204 })
+      }
+      // The shell loads the profile once signed in; a 401 here would end the session.
+      if (url === '/api/profile' && signedIn) return json(200, { profile: DEFAULT_PROFILE })
+      // Home's cards load recent changes and recent queries.
+      if (url.startsWith('/api/recent') && signedIn) return json(200, { documents: [], queries: [] })
       return unauthenticated()
     })
     render(<App />)
     fireEvent.change(await screen.findByLabelText('Password'), { target: { value: 'right one' } })
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
-    expect(await screen.findByRole('navigation', { name: 'Main' })).toBeTruthy()
+    expect(await screen.findAllByRole('navigation', { name: 'Main' })).toBeTruthy()
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Sign out' })[0] as HTMLElement)
+    // Sign out lives on Settings › Profile.
+    fireEvent.click(screen.getAllByRole('link', { name: 'Settings' })[0] as HTMLElement)
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
     expect(await screen.findByLabelText('Password')).toBeTruthy()
   })
 
@@ -47,7 +58,7 @@ describe('App', () => {
     let signedIn = true
     vi.stubGlobal('fetch', async () => (signedIn ? json(200, { authenticated: true }) : unauthenticated()))
     render(<App />)
-    await screen.findByRole('navigation', { name: 'Main' })
+    await screen.findAllByRole('navigation', { name: 'Main' })
     signedIn = false
     const { apiFetch } = await import('./api/client')
     await apiFetch('/api/recent').catch(() => {})
