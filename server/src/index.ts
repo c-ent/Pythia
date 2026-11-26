@@ -32,6 +32,11 @@ const pool = new pg.Pool(config.db)
 // retries; on failure the search service falls back to full text only.
 const queryEmbedder = createOllamaEmbedder({ baseUrl: config.ollamaUrl, timeoutMs: 10_000, retries: 0 })
 const search = createSearchService({ store: createPgSearchStore(pool), embedder: queryEmbedder })
+// Indexing (vault, repos, Keep) can wait; batch size and timeout come from
+// PYTHIA_EMBED_BATCH_SIZE / PYTHIA_EMBED_TIMEOUT_MS for slow CPU-only hosts.
+const indexEmbedder = () =>
+  createOllamaEmbedder({ baseUrl: config.ollamaUrl, batchSize: config.embed.batchSize, timeoutMs: config.embed.timeoutMs })
+console.log(`embed: indexing batches of ${config.embed.batchSize}, timeout ${config.embed.timeoutMs} ms`)
 // Ask (R8): Gemini only with a key; the local model unless OLLAMA_CHAT_MODEL is empty.
 const ask = createAskService({
   search,
@@ -60,7 +65,7 @@ let vault: RunningVault | undefined
 if (config.vault === null) {
   console.log('PYTHIA_VAULT_PATH is not set; vault indexing is off')
 } else {
-  vault = await startVault(pool, config.vault, createOllamaEmbedder({ baseUrl: config.ollamaUrl }), llmExclusions)
+  vault = await startVault(pool, config.vault, indexEmbedder(), llmExclusions)
 }
 
 const settings = createSettingsService({
@@ -72,7 +77,7 @@ let repos: RunningRepos | undefined
 if (config.repos === null) {
   console.log('PYTHIA_REPOS_CONFIG is not set; repo fetching is off')
 } else {
-  repos = await startRepos(pool, config.repos, createOllamaEmbedder({ baseUrl: config.ollamaUrl }))
+  repos = await startRepos(pool, config.repos, indexEmbedder())
 }
 
 // Keep import (R12) and the Import page's status and re-index button.
@@ -80,7 +85,7 @@ const imports = createImportService({
   status: createPgStatusStore(pool),
   keepSource: () => ensureSource(pool, 'keep', 'keep', 'takeout'),
   store: createPgIndexStore(pool),
-  embedder: createOllamaEmbedder({ baseUrl: config.ollamaUrl }),
+  embedder: indexEmbedder(),
   reindexers: { vault: vault?.rescan, repos: repos?.runNow },
 })
 console.log(config.webDir === null ? 'PYTHIA_WEB_DIR is not set; serving the API only' : `web: ${config.webDir}`)
