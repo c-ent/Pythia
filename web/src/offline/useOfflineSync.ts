@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { offlineDb } from './db'
-import { syncOnce } from './sync'
+import { offlineCacheChanged, syncOnce } from './sync'
 
 /** Minimum time between automatic syncs while the app stays open. */
 export const SYNC_INTERVAL_MS = 5 * 60 * 1000
@@ -28,6 +28,9 @@ export function useOfflineSync(enabled = true, pinnedRepos: readonly string[] = 
       if (running || !navigator.onLine) return
       running = true
       syncOnce(offlineDb(), { pinnedRepos, signal: controller.signal })
+        .then((result) => {
+          if (result.updated > 0 || result.removed > 0 || result.reset) offlineCacheChanged()
+        })
         .catch(() => {
           // Try again on the next trigger.
         })

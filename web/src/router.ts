@@ -3,7 +3,7 @@ import { useSyncExternalStore, type MouseEvent } from 'react'
 export const ROUTES = ['search', 'ask', 'repos', 'pinned', 'sources', 'settings'] as const
 export type RouteName = (typeof ROUTES)[number]
 
-export const SETTINGS_SECTIONS = ['profile', 'gemini', 'devices', 'storage'] as const
+export const SETTINGS_SECTIONS = ['profile', 'gemini', 'devices'] as const
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
 
 function isSettingsSection(value: string | undefined): value is SettingsSection {
@@ -38,13 +38,14 @@ export function pathFor(route: RouteName): string {
 
 /**
  * Where an old or partial address lives now, or null when it is current:
- * `/import` became Sources, `/search` is Home, and `/settings` (or an unknown
- * section) opens Profile.
+ * `/import` became Sources, `/search` is Home, `/settings/storage` moved to
+ * Pinned (T45), and `/settings` (or an unknown section) opens Profile.
  */
 export function redirectFor(pathname: string): string | null {
   const parts = segments(pathname)
   if (parts.length === 1 && parts[0] === 'import') return pathFor('sources')
   if (parts.length === 1 && parts[0] === 'search') return pathFor('search')
+  if (parts.length === 2 && parts[0] === 'settings' && parts[1] === 'storage') return pathFor('pinned')
   if (parts[0] === 'settings') {
     const target = settingsPath(settingsSectionFromPath(pathname))
     return target === pathname ? null : target

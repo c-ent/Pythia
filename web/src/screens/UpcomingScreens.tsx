@@ -24,7 +24,7 @@ export function PinnedPlaceholder() {
       <ScreenHeader title="Pinned" description="Repos and notes kept on this device for offline search." />
       <Placeholder icon={Pin} title="The Pinned page is on its way">
         For now, pin repos on the <TextLink path={pathFor('repos')}>Repos</TextLink> page and check offline storage
-        in <TextLink path={settingsPath('storage')}>Settings, Storage</TextLink>.
+        in <TextLink path={settingsPath('profile')}>Settings</TextLink>.
       </Placeholder>
     </>
   )

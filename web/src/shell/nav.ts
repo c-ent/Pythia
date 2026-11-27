@@ -20,7 +20,6 @@ export const SETTINGS_SECTION_LABELS: Record<SettingsSection, string> = {
   profile: 'Profile',
   gemini: 'Gemini access',
   devices: 'Connect devices',
-  storage: 'Storage',
 }
 
 /** Whether the desktop sidebar is collapsed to the rail, kept on this device. */

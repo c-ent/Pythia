@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { OfflineDb } from './db'
-import { clearOfflineCache, readSyncState, syncOnce, type SyncPage } from './sync'
+import { CACHE_CLEARED, clearOfflineCache, readSyncState, syncOnce, type SyncPage } from './sync'
 
 type PageDoc = SyncPage['documents'][number]
 type ServerDoc = PageDoc & { seq: number }
@@ -190,6 +190,25 @@ describe('offline sync store', () => {
     await clearOfflineCache(db)
     expect(await db.documents.count()).toBe(0)
     expect(await readSyncState(db)).toBeNull()
+  })
+
+  it('stops a running sync when the cache is cleared, and the next one starts from 0', async () => {
+    const server = fakeServer()
+    for (let id = 1; id <= 6; id++) server.put(id, `N${id}.md`, 'x')
+    let calls = 0
+    const clearing = async (query: URLSearchParams) => {
+      calls += 1
+      // Clear offline cache is pressed while the second page is on its way.
+      if (calls === 2) await clearOfflineCache(db)
+      return server.fetchPage(query)
+    }
+    await expect(syncOnce(db, { fetchPage: clearing, limit: 3, now })).rejects.toThrow(CACHE_CLEARED)
+    expect(await db.documents.count()).toBe(0)
+    expect(await readSyncState(db)).toBeNull()
+
+    await syncOnce(db, { fetchPage: server.fetchPage, limit: 3, now })
+    expect(server.requests.at(-2)).toBe('since=0&limit=3')
+    expect(await db.documents.count()).toBe(6)
   })
 
   it('uses GET /api/sync by default', async () => {

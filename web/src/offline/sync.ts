@@ -85,6 +85,8 @@ export async function syncOnce(db: OfflineDb, options: SyncOptions = {}): Promis
   const sameRepos = stored !== null && stored.repos.join('\n') === repos.join('\n')
   let cursor = sameRepos ? stored.cursor : '0'
   const result: SyncResult = { updated: 0, removed: 0, pages: 0, reset: false, cursor }
+  // Whether sync state exists that this run wrote or resumed from.
+  let wrote = stored !== null
 
   for (;;) {
     options.signal?.throwIfAborted()
@@ -104,12 +106,17 @@ export async function syncOnce(db: OfflineDb, options: SyncOptions = {}): Promis
         await db.documents.clear()
         await db.state.put({ key: SYNC_STATE_KEY, cursor: '0', repos, syncedAt: null })
       })
+      wrote = true
       cursor = '0'
       continue
     }
 
     const finished = !page.hasMore
     await db.transaction('rw', db.documents, db.state, async () => {
+      // Clear offline cache ran while this sync was between pages: writing
+      // this page's cursor would skip the pages it removed. Stop; the next
+      // sync starts from cursor 0.
+      if (wrote && (await readSyncState(db)) === null) throw new Error(CACHE_CLEARED)
       if (page.deleted.length > 0) {
         const present = await db.documents.bulkGet(page.deleted)
         result.removed += present.filter((doc) => doc !== undefined).length
@@ -124,16 +131,31 @@ export async function syncOnce(db: OfflineDb, options: SyncOptions = {}): Promis
         syncedAt: finished ? now().toISOString() : (stored?.syncedAt ?? null),
       })
     })
+    wrote = true
     cursor = page.cursor
     result.cursor = cursor
     if (finished) return result
   }
 }
 
-/** Removes every cached document and the sync state (for sign-out or a storage reset). */
+/** Message of the error `syncOnce` throws when the cache was cleared while it ran. */
+export const CACHE_CLEARED = 'offline cache was cleared during sync'
+
+/**
+ * Removes every cached document and the sync state (Pinned page "Clear offline
+ * cache", sign-out). The cursor goes with the state, so the next sync starts
+ * from 0; a sync running at the time stops at its next page.
+ */
 export async function clearOfflineCache(db: OfflineDb): Promise<void> {
   await db.transaction('rw', db.documents, db.state, async () => {
     await db.documents.clear()
     await db.state.clear()
   })
+}
+
+/** Window event fired when this device's offline copy changed (an automatic sync, Clear offline cache). */
+export const OFFLINE_CACHE_CHANGED = 'pythia:offline-cache'
+
+export function offlineCacheChanged(): void {
+  window.dispatchEvent(new Event(OFFLINE_CACHE_CHANGED))
 }

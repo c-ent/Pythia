@@ -48,6 +48,7 @@ describe('router', () => {
     ['/settings', '/settings/profile'],
     ['/settings/', '/settings/profile'],
     ['/settings/nope', '/settings/profile'],
+    ['/settings/storage', '/pinned'],
   ])('redirects the old or partial address %s to %s', (from, to) => {
     expect(redirectFor(from)).toBe(to)
   })

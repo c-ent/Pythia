@@ -3,7 +3,7 @@ import type { OfflineDb } from './db'
 import { readSyncState } from './sync'
 
 /**
- * What the Settings storage panel shows (R11): browser storage use, whether
+ * What the Pinned and offline page shows (R11): browser storage use, whether
  * the browser promised to keep it (`navigator.storage.persist()`), and how
  * much of the index is cached on this device. Every value is null when the
  * browser does not offer it (older Safari, private mode, tests).
@@ -54,6 +54,43 @@ export async function readCacheCounts(db: OfflineDb): Promise<CacheCounts> {
     readSyncState(db),
   ])
   return { notes: total - repoFiles, repoFiles, syncedAt: state?.syncedAt ?? null }
+}
+
+export interface CachedSize {
+  /** Documents (notes, or one repo's files). */
+  count: number
+  /** UTF-8 size of their text. */
+  bytes: number
+}
+
+/** What the Pinned page shows: cached text per kind and per repo, and what the last sync covered. */
+export interface CacheBreakdown {
+  /** Obsidian, Keep and chat notes. */
+  notes: CachedSize
+  /** Cached files per repo name. */
+  repos: ReadonlyMap<string, CachedSize>
+  /** Pinned repos the last sync was run for. */
+  syncedRepos: readonly string[]
+  syncedAt: string | null
+}
+
+const encoder = new TextEncoder()
+
+export async function readCacheBreakdown(db: OfflineDb): Promise<CacheBreakdown> {
+  const notes: CachedSize = { count: 0, bytes: 0 }
+  const repos = new Map<string, CachedSize>()
+  await db.documents.each((doc) => {
+    const bytes = encoder.encode(doc.content).length
+    let entry = notes
+    if (doc.sourceKind === 'repo') {
+      entry = repos.get(doc.sourceName) ?? { count: 0, bytes: 0 }
+      repos.set(doc.sourceName, entry)
+    }
+    entry.count += 1
+    entry.bytes += bytes
+  })
+  const state = await readSyncState(db)
+  return { notes, repos, syncedRepos: state?.repos ?? [], syncedAt: state?.syncedAt ?? null }
 }
 
 const UNITS = ['B', 'KB', 'MB', 'GB', 'TB']
