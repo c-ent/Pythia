@@ -74,9 +74,17 @@ describe('apiFetch', () => {
 })
 
 describe('session calls', () => {
-  it('getSession is true on 200 and false on 401', async () => {
+  it('getSession follows the authenticated flag, and is false on 401', async () => {
     stubFetch(() => json(200, { authenticated: true }))
     expect(await getSession()).toBe(true)
+    const signedOut = vi.fn()
+    const stop = onSignedOut(signedOut)
+    stubFetch(() => json(200, { authenticated: false }))
+    expect(await getSession()).toBe(false)
+    expect(signedOut).not.toHaveBeenCalled()
+    stop()
+    stubFetch(() => new Response('not json', { status: 200 }))
+    expect(await getSession()).toBe(false)
     stubFetch(() => json(401, { error: { code: 'unauthenticated', message: 'Sign in required' } }))
     expect(await getSession()).toBe(false)
   })

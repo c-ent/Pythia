@@ -62,11 +62,16 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   throw new ApiError(res.status, code, message, parseRetryAfter(res.headers.get('retry-after')))
 }
 
-/** True when the browser holds a valid session cookie. */
+/**
+ * True when the browser holds a valid session cookie. The server answers 200
+ * with `authenticated: false` when signed out (no 401 in the console on every
+ * load); a 401 still counts as signed out.
+ */
 export async function getSession(): Promise<boolean> {
   try {
-    await apiFetch('/api/session')
-    return true
+    const res = await apiFetch('/api/session')
+    const body: unknown = await res.json().catch(() => null)
+    return body !== null && typeof body === 'object' && 'authenticated' in body && body.authenticated === true
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) return false
     throw error

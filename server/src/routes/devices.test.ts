@@ -115,7 +115,8 @@ describe('devices routes', () => {
     expect((await me(`/devices/${otherId}`, { method: 'DELETE' })).status).toBe(404)
 
     const again = await start(restarted(auth, store))
-    expect((await fetch(`${again}/api/session`, { headers: { cookie: otherCookie } })).status).toBe(401)
+    expect(await sessionProbe(again, otherCookie)).toEqual({ authenticated: false })
+    expect((await fetch(`${again}/api/devices`, { headers: { cookie: otherCookie } })).status).toBe(401)
   })
 
   it('clears the cookie when a device signs itself out', async () => {
@@ -138,13 +139,20 @@ describe('devices routes', () => {
 
     const again = await start(restarted(auth, store))
     for (const c of [cookie, otherCookie]) {
-      expect((await fetch(`${again}/api/session`, { headers: { cookie: c } })).status).toBe(401)
+      expect(await sessionProbe(again, c)).toEqual({ authenticated: false })
+      expect((await fetch(`${again}/api/devices`, { headers: { cookie: c } })).status).toBe(401)
     }
   })
 
   it('keeps a session working across a restart', async () => {
     const { auth, store, cookie } = await setup()
     const again = await start(restarted(auth, store))
-    expect((await fetch(`${again}/api/session`, { headers: { cookie } })).status).toBe(200)
+    expect(await sessionProbe(again, cookie)).toEqual({ authenticated: true })
   })
 })
+
+async function sessionProbe(base: string, cookie: string): Promise<unknown> {
+  const res = await fetch(`${base}/api/session`, { headers: { cookie } })
+  expect(res.status).toBe(200)
+  return res.json()
+}

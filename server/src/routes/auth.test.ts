@@ -91,9 +91,17 @@ describe('auth', () => {
     expect(await res.json()).toEqual({ error: { code: 'unauthenticated', message: 'Sign in required' } })
     expect((await fetch(`${base}/api/recent`)).status).toBe(401)
     expect((await fetch(`${base}/api/documents/7`)).status).toBe(401)
-    expect((await fetch(`${base}/api/session`)).status).toBe(401)
     expect((await fetch(`${base}/api/nope`)).status).toBe(401)
     expect((await fetch(`${base}/healthz`)).status).toBe(200)
+  })
+
+  it('answers the session probe with 200 and authenticated false when signed out', async () => {
+    for (const cookie of [undefined, `${SESSION_COOKIE}=${'A'.repeat(43)}`]) {
+      const res = await fetch(`${base}/api/session`, cookie === undefined ? {} : { headers: { cookie } })
+      expect(res.status).toBe(200)
+      expect(res.headers.get('cache-control')).toBe('no-store')
+      expect(await res.json()).toEqual({ authenticated: false })
+    }
   })
 
   it('returns 401 for a forged or unknown session cookie', async () => {

@@ -119,9 +119,12 @@ export function createAuthRouter(deps: AuthDeps): Router {
     res.status(204).end()
   })
 
+  // The web app asks this on every load. Signed out is a normal answer here
+  // (200, `authenticated: false`), not a 401, so the browser does not log an
+  // error each time the login screen opens. It grants nothing: every other
+  // `/api` route still answers 401 without a session.
   router.get('/session', async (req, res) => {
-    if ((await findSession(deps, req.headers.cookie)) === null) throw unauthenticated()
-    res.json({ authenticated: true })
+    res.json({ authenticated: (await findSession(deps, req.headers.cookie)) !== null })
   })
 
   return router
