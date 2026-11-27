@@ -7,6 +7,8 @@
  * themselves; `embedDocuments` and `embedQuery` do it.
  */
 
+import { UNGATED, type EmbedGate, type EmbedPriority } from './embedGate.js'
+
 export const EMBED_MODEL = 'nomic-embed-text'
 export const EMBED_DIMENSIONS = 768
 export const DOCUMENT_PREFIX = 'search_document: '
@@ -36,6 +38,22 @@ export interface OllamaEmbedderOptions {
   retryDelayMs?: number
   fetch?: FetchFn
   sleep?: (ms: number) => Promise<void>
+  /**
+   * Shared with the other embedders of the process so queries go ahead of
+   * index batches (T51). Defaults to no gate.
+   */
+  gate?: EmbedGate
+  /**
+   * `query`: the timeout also counts the wait at the gate, so a search still
+   * gives up on time. `index` (default): the timeout starts when the request is sent.
+   */
+  priority?: EmbedPriority
+  /**
+   * Texts per request to Ollama, at most `batchSize`. A search waits behind
+   * one request at most, so with a gate keep this small on CPU-only hosts.
+   * Defaults to `batchSize`.
+   */
+  turnSize?: number
 }
 
 export interface Embedder {
@@ -93,12 +111,33 @@ export function createOllamaEmbedder(options: OllamaEmbedderOptions): Embedder {
   const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS
   const fetchFn: FetchFn = options.fetch ?? ((url, init) => fetch(url, init))
   const sleep = options.sleep ?? defaultSleep
+  const gate = options.gate ?? UNGATED
+  const priority = options.priority ?? 'index'
+  const turnSize = Math.min(options.turnSize ?? batchSize, batchSize)
   const url = `${options.baseUrl.replace(/\/+$/, '')}/api/embed`
 
   if (!Number.isInteger(batchSize) || batchSize < 1) throw new RangeError('batchSize must be a positive integer')
   if (!Number.isInteger(retries) || retries < 0) throw new RangeError('retries must be a non-negative integer')
+  if (!Number.isInteger(turnSize) || turnSize < 1) throw new RangeError('turnSize must be a positive integer')
 
   async function requestOnce(input: string[]): Promise<number[][]> {
+    if (priority === 'index') return gate.run('index', () => send(input, AbortSignal.timeout(timeoutMs)))
+    const signal = AbortSignal.timeout(timeoutMs)
+    try {
+      return await gate.run('query', () => send(input, signal), signal)
+    } catch (error) {
+      // Timed out while still waiting at the gate: never sent.
+      if (!(error instanceof OllamaError) && error instanceof Error && error.name === 'TimeoutError') {
+        throw new OllamaError(`Ollama embed request failed: timed out after ${timeoutMs} ms`, {
+          retryable: true,
+          cause: error,
+        })
+      }
+      throw error
+    }
+  }
+
+  async function send(input: string[], signal: AbortSignal): Promise<number[][]> {
     let response: Response
     try {
       response = await fetchFn(url, {
@@ -108,7 +147,7 @@ export function createOllamaEmbedder(options: OllamaEmbedderOptions): Embedder {
         // sized well under that; `truncate` keeps an outlier from failing the
         // whole batch.
         body: JSON.stringify({ model, input, truncate: true }),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal,
       })
     } catch (error) {
       const reason =
@@ -163,7 +202,9 @@ export function createOllamaEmbedder(options: OllamaEmbedderOptions): Embedder {
       const vectors: number[][] = []
       for (let start = 0; start < texts.length; start += batchSize) {
         const batch = texts.slice(start, start + batchSize).map((text) => DOCUMENT_PREFIX + text)
-        vectors.push(...(await request(batch)))
+        for (let turn = 0; turn < batch.length; turn += turnSize) {
+          vectors.push(...(await request(batch.slice(turn, turn + turnSize))))
+        }
       }
       return vectors
     },

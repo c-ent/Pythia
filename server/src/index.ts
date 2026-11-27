@@ -7,6 +7,7 @@ import { createGeminiSettings } from './settings/geminiSettings.js'
 import { createOllamaChatModel } from './ask/ollamaChat.js'
 import { loadConfig } from './config.js'
 import { createPgChunkTextLoader, createPgSearchStore } from './db/searchStore.js'
+import { createEmbedGate } from './embed/embedGate.js'
 import { createOllamaEmbedder } from './embed/ollama.js'
 import { startRepos, type RunningRepos } from './ingest/startRepos.js'
 import { startVault, type RunningVault } from './ingest/startVault.js'
@@ -35,14 +36,33 @@ import { createSyncNow } from './sync/syncNow.js'
 const config = loadConfig(process.env)
 const pool = new pg.Pool(config.db)
 
-// Search waits on the query embedding, so it gets a short timeout and no
-// retries; on failure the search service falls back to full text only.
-const queryEmbedder = createOllamaEmbedder({ baseUrl: config.ollamaUrl, timeoutMs: 10_000, retries: 0 })
+// Every embed request goes through one gate, queries first (T51): a search
+// waits for the one index request already running at most, never for a queue
+// of batches.
+const embedGate = createEmbedGate()
+// Search waits on the query embedding, so it gets a short timeout (counting the
+// wait at the gate) and no retries; on failure the search service falls back
+// to full text only.
+const queryEmbedder = createOllamaEmbedder({
+  baseUrl: config.ollamaUrl,
+  timeoutMs: 10_000,
+  retries: 0,
+  gate: embedGate,
+  priority: 'query',
+})
 const search = createSearchService({ store: createPgSearchStore(pool), embedder: queryEmbedder })
 // Indexing (vault, repos, Keep) can wait; batch size and timeout come from
 // PYTHIA_EMBED_BATCH_SIZE / PYTHIA_EMBED_TIMEOUT_MS for slow CPU-only hosts.
+// One text per request, so the request a search waits behind is a single chunk.
 const indexEmbedder = () =>
-  createOllamaEmbedder({ baseUrl: config.ollamaUrl, batchSize: config.embed.batchSize, timeoutMs: config.embed.timeoutMs })
+  createOllamaEmbedder({
+    baseUrl: config.ollamaUrl,
+    batchSize: config.embed.batchSize,
+    timeoutMs: config.embed.timeoutMs,
+    gate: embedGate,
+    priority: 'index',
+    turnSize: 1,
+  })
 console.log(`embed: indexing batches of ${config.embed.batchSize}, timeout ${config.embed.timeoutMs} ms`)
 // Gemini key (R16, T39): GEMINI_API_KEY in .env wins; otherwise the key saved
 // in Settings, encrypted with PYTHIA_SECRETS_KEY. Every Gemini request is counted per day.
