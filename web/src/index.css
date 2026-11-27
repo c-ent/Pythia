@@ -204,6 +204,40 @@
   .markdown blockquote {
     @apply border-l-2 border-line pl-4 text-muted;
   }
+  /* Obsidian callouts (web/src/document/obsidian.ts): a div, or details when foldable. */
+  .markdown .callout {
+    --callout: var(--color-muted);
+    @apply rounded-card border border-line bg-raised px-4 py-3;
+    border-left: 3px solid var(--callout);
+  }
+  .markdown .callout[data-callout-tone='info'] {
+    --callout: var(--color-accent-ink);
+  }
+  .markdown .callout[data-callout-tone='success'] {
+    --callout: var(--color-success);
+  }
+  .markdown .callout[data-callout-tone='warning'] {
+    --callout: var(--color-warning);
+  }
+  .markdown .callout[data-callout-tone='danger'] {
+    --callout: var(--color-danger);
+  }
+  .markdown .callout > * + * {
+    @apply mt-2;
+  }
+  .markdown .callout-title {
+    @apply font-semibold;
+    color: var(--callout);
+  }
+  .markdown summary.callout-title {
+    @apply cursor-pointer rounded-control;
+  }
+  .markdown details.callout:not([open]) > summary.callout-title {
+    @apply mb-0;
+  }
+  .markdown summary.callout-title:focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent-ink;
+  }
   .markdown hr {
     @apply border-line;
   }
