@@ -95,7 +95,8 @@ Pythia (named after the Oracle at Delphi) is a private, read-only Personal Knowl
   - Skips `.gitignore` matches, `node_modules`, `vendor`, `dist`, `build`, lockfiles, binaries, images/data assets, and files > 200 KB. Indexes source code, READMEs, and package manifests only.
   - Chunks code by function/class using `tree-sitter`, falling back to 80-line windows for unsupported languages.
   - Generates one deterministic `SUMMARY` chunk (`heading_path` starting with `SUMMARY`) per repo from its README, file tree, and dependency manifest (`package.json`, `composer.json`, `requirements.txt`). No LLM required.
-- Edge cases: Repo without a README, unsupported file language, fetch failure (log error and keep previous index), file exceeding 200 KB.
+  - Repo discovery (owner request 2026-11-27): when `PYTHIA_REPOS_DISCOVER=1` (off by default), each 30-minute round first lists the token owner's repos (`GET /user/repos?affiliation=owner`, forks and private included) and adds any repo not already configured, so a new GitHub repo is cloned and indexed without editing the config or restarting. Only the new repo is embedded; configured repos are untouched. Repos named in the config's `exclude` list are never added. Discovery only adds: a repo deleted or renamed on GitHub keeps its index until it is removed from the config by hand. Discovered repos are `kind = 'repo'`, never `work`.
+- Edge cases: Repo without a README, unsupported file language, fetch failure (log error and keep previous index), file exceeding 200 KB, discovery listing fails or is rate-limited (log the error class, keep the current repo list, try again next round).
 - Acceptance criteria:
   - Given a configured repo, when ingested, then source files are chunked by symbol (or 80-line fallback), ignored paths and >200 KB files are excluded, and one `SUMMARY` chunk exists.
   - Given a query "which repo has X?", when searched, then the matching repo ranks in the top 5.

@@ -66,7 +66,8 @@ The theme choice is stored in `localStorage` under `pythia.theme` (`src/theme/th
 - Long code blocks scroll horizontally inside their container without page-level horizontal overflow (`pre` is `overflow-x-auto` in the base layer).
 - Routing is the History API router in `web/src/router.ts`: `/` (Home and Search), `/ask`, `/repos`, `/pinned`, `/sources`, `/settings/<section>` (`profile`, `gemini`, `devices`, `storage`) and `/doc/<id>`. `/import` and `/settings` redirect to `/sources` and `/settings/profile`. Unknown paths show Home. Nav links are real `<a href>`; in-app links use `followLink`.
 - A document at `/doc/<id>` opens over Search: Search stays mounted but hidden, so Back returns to the same query and results.
-- Rendered Markdown is styled by the `.markdown` component class in `web/src/index.css`; syntax colors map highlight.js classes (`.hljs-*`) to the theme tokens. Raw HTML in notes is never rendered, images never load (they show as a link), and only `http(s):`/`mailto:` links stay links.
+- Rendered Markdown is styled by the `.markdown` component class in `web/src/index.css`; syntax colors map highlight.js classes (`.hljs-*`) to the theme tokens. Raw HTML in notes is never rendered, images never load (they show as a link), and only `http(s):`/`mailto:` links and links to a heading in the same note stay links.
+- Obsidian syntax goes through `remarkObsidian` (`web/src/document/obsidian.ts`): callouts (`> [!type] Title`) render as a `.callout` box tinted by tone (info, success, warning, danger, neutral), and as a `<details>` when foldable (`-` starts closed, `+` open). Wikilinks show their alias or `Note > Heading` text; `[[#Heading]]` and `[text](#Heading)` scroll to the heading (ids `h-<slug>`) without changing the URL; links to other notes stay text; `![[embed]]` shows as `[Embed: name]`.
 
 ## Screens
 
