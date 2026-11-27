@@ -4,22 +4,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from '../app.js'
 import type { AskService } from '../ask/askService.js'
 import { createMemoryLlmExclusionStore, type LlmExclusionStore } from '../ingest/llmExclusions.js'
-import { createVisitorLimiter } from '../security/rateLimit.js'
-import { createSessionSigner } from '../security/session.js'
+import { testAuth } from './testAuth.js'
 import type { SearchService } from '../search/searchService.js'
 import { createSettingsService, MAX_LLM_EXCLUSIONS } from '../settings/settingsService.js'
-import { SESSION_COOKIE, type AuthDeps } from './auth.js'
 
-const sessions = createSessionSigner({ secret: 'r'.repeat(32), passwordHash: 'test-hash' })
-const auth: AuthDeps = {
-  login: {
-    password: { cost: { memory: 1024, passes: 2, parallelism: 1 }, salt: Buffer.alloc(16), key: Buffer.alloc(32) },
-    sessions,
-    limiter: createVisitorLimiter({ max: 10, windowMs: 60_000 }),
-  },
-  mcpToken: null,
-}
-const cookie = `${SESSION_COOKIE}=${sessions.issue().token}`
+const { auth, cookie } = await testAuth()
 
 const search = {} as SearchService
 const ask = {} as AskService
@@ -36,7 +25,11 @@ describe('settings routes: Gemini exclusion list', () => {
       ask,
       auth,
       settings: createSettingsService({
-        exclusions: { list: () => store.list(), replace: (list) => store.replace(list) },
+        exclusions: {
+          list: () => store.list(),
+          replace: (list) => store.replace(list),
+          countDocuments: (list) => store.countDocuments(list),
+        },
         refreshAllowLlm: async () => {
           refreshes++
         },
@@ -65,6 +58,9 @@ describe('settings routes: Gemini exclusion list', () => {
       body: typeof body === 'string' ? body : JSON.stringify(body),
     })
 
+  /** Rules as the API returns them; the memory store holds no documents, so every count is 0. */
+  const counted = (list: { kind: string; path: string }[]) => list.map((rule) => ({ ...rule, documents: 0 }))
+
   it('starts empty', async () => {
     const res = await get()
     expect(res.status).toBe(200)
@@ -83,21 +79,44 @@ describe('settings routes: Gemini exclusion list', () => {
     })
     expect(res.status).toBe(200)
     const saved = {
-      exclusions: [
+      exclusions: counted([
         { kind: 'folder', path: 'Private' },
         { kind: 'folder', path: 'Work/Secret' },
         { kind: 'note', path: 'Journal/2026/today.md' },
-      ],
+      ]),
     }
     expect(await res.json()).toEqual(saved)
     expect(await (await get()).json()).toEqual(saved)
     expect(refreshes).toBe(1)
   })
 
+  it('saves tag, repo and Keep rules, normalized, and returns their document counts', async () => {
+    store = createMemoryLlmExclusionStore([], (rule) => (rule.kind === 'keep' ? 7 : rule.kind === 'tag' ? 3 : 0))
+    const res = await put({
+      exclusions: [
+        { kind: 'keep' },
+        { kind: 'repo', path: ' pythia ' },
+        { kind: 'tag', path: '#Private/' },
+        { kind: 'tag', path: 'private' },
+        { kind: 'keep', path: 'anything' },
+      ],
+    })
+    expect(res.status).toBe(200)
+    const saved = {
+      exclusions: [
+        { kind: 'tag', path: 'private', documents: 3 },
+        { kind: 'repo', path: 'pythia', documents: 0 },
+        { kind: 'keep', path: 'keep', documents: 7 },
+      ],
+    }
+    expect(await res.json()).toEqual(saved)
+    expect(await (await get()).json()).toEqual(saved)
+  })
+
   it('removes entries by saving the shorter list', async () => {
     await put({ exclusions: [{ kind: 'folder', path: 'Private' }, { kind: 'note', path: 'a.md' }] })
     await put({ exclusions: [{ kind: 'note', path: 'a.md' }] })
-    expect(await (await get()).json()).toEqual({ exclusions: [{ kind: 'note', path: 'a.md' }] })
+    expect(await (await get()).json()).toEqual({ exclusions: counted([{ kind: 'note', path: 'a.md' }]) })
     await put({ exclusions: [] })
     expect(await (await get()).json()).toEqual({ exclusions: [] })
     expect(refreshes).toBe(3)
@@ -107,7 +126,9 @@ describe('settings routes: Gemini exclusion list', () => {
     [{ exclusions: [{ kind: 'folder', path: '../outside' }] }, /exclusions\.0\.path/],
     [{ exclusions: [{ kind: 'folder', path: '   ' }] }, /exclusions\.0\.path/],
     [{ exclusions: [{ kind: 'note', path: 'Notes/plan' }] }, /\.md/],
-    [{ exclusions: [{ kind: 'tag', path: 'x' }] }, /exclusions\.0\.kind/],
+    [{ exclusions: [{ kind: 'secret', path: 'x' }] }, /exclusions\.0\.kind/],
+    [{ exclusions: [{ kind: 'tag', path: '#' }] }, /exclusions\.0\.path/],
+    [{ exclusions: [{ kind: 'repo', path: '../pythia' }] }, /exclusions\.0\.path/],
     [{ exclusions: [{ kind: 'folder', path: 'a\u0000b' }] }, /control characters/],
     [{ exclusions: 'Private' }, /exclusions/],
     [{}, /exclusions/],
@@ -118,7 +139,7 @@ describe('settings routes: Gemini exclusion list', () => {
     const json = (await res.json()) as { error: { code: string; message: string } }
     expect(json.error.code).toBe('invalid_input')
     expect(json.error.message).toMatch(message)
-    expect(await (await get()).json()).toEqual({ exclusions: [{ kind: 'folder', path: 'Keep' }] })
+    expect(await (await get()).json()).toEqual({ exclusions: counted([{ kind: 'folder', path: 'Keep' }]) })
   })
 
   it('rejects a list longer than the limit', async () => {

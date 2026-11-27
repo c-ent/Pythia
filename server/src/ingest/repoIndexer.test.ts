@@ -115,7 +115,7 @@ afterEach(async () => {
   await rm(work, { recursive: true, force: true, maxRetries: 5 })
 })
 
-async function setup() {
+async function setup(extra: Partial<RepoIndexerOptions> = {}) {
   const { store, docs } = memoryStore()
   const embedder = fakeEmbedder()
   const secrets: SecretsDropEvent[] = []
@@ -128,9 +128,10 @@ async function setup() {
     embedder,
     mirror: { mirrorsDir: mirrors },
     logSecrets: (event) => secrets.push(event),
+    ...extra,
   }
   const index = async () => indexRepoCommit(options, (await syncRepo(spec, { mirrorsDir: mirrors })).commit)
-  return { docs, embedder, secrets, index }
+  return { docs, embedder, secrets, index, options }
 }
 
 describe('indexRepoCommit', () => {
@@ -172,6 +173,20 @@ describe('indexRepoCommit', () => {
     expect(embedder.texts.some((text) => text.includes(FAKE_GITHUB_TOKEN))).toBe(false)
     expect(secrets).toEqual([{ file: 'src/config.ts', droppedCount: 1 }])
     expect(JSON.stringify(secrets)).not.toContain(FAKE_GITHUB_TOKEN)
+  }, 60_000)
+
+  it('a locked repo gets allow_llm = false everywhere, and unlocking flips it back without Ollama', async () => {
+    const { docs, embedder, index, options } = await setup({ allowLlm: false })
+    await index()
+    expect([...docs.values()].every((stored) => !stored.doc.allowLlm)).toBe(true)
+    const calls = embedder.calls
+
+    options.allowLlm = true
+    const second = await index()
+    expect(second.indexed).toEqual([])
+    expect(embedder.calls).toBe(calls)
+    expect([...docs.values()].every((stored) => stored.doc.allowLlm)).toBe(true)
+    expect(docs.get(SUMMARY_PATH)?.doc.allowLlm).toBe(true)
   }, 60_000)
 
   it('skips Ollama for an unchanged commit', async () => {

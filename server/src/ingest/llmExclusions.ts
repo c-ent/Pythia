@@ -1,13 +1,32 @@
+import { REPO_NAME_PATTERN } from './repoConfig.js'
+import { normalizeTag, tagCovers } from './noteTags.js'
+
 /**
- * The Gemini exclusion list (R3): vault folders and single notes whose
- * documents get `allow_llm = false`. Empty means every note may reach Gemini;
- * frontmatter `llm: false` keeps a note away regardless of the list.
+ * The "Kept away from Gemini" list (R3, R16). Every matching document gets
+ * `allow_llm = false`; it stays searchable. Empty means everything may reach
+ * Gemini; frontmatter `llm: false` keeps a note away regardless of the list.
+ *
+ * - `folder`, `note`: vault-relative paths of Obsidian notes.
+ * - `tag`: Obsidian notes whose frontmatter `tags` or inline `#tag` is the
+ *   tag or nested under it (`private` covers `#private/health`).
+ * - `repo`: every document of the repo with that name ("Allow Ask to read
+ *   this repo" switched off).
+ * - `keep`: every Google Keep note; its `path` is always `keep`.
  */
-export type LlmExclusionKind = 'folder' | 'note'
+export type LlmExclusionKind = 'folder' | 'note' | 'tag' | 'repo' | 'keep'
+
+export const LLM_EXCLUSION_KINDS = ['folder', 'note', 'tag', 'repo', 'keep'] as const satisfies readonly LlmExclusionKind[]
+
+/** The only `path` of a `keep` rule. */
+export const KEEP_RULE_PATH = 'keep'
 
 export interface LlmExclusion {
   kind: LlmExclusionKind
-  /** Vault-relative, `/`-separated, no leading `./` or `/`, no trailing `/`. */
+  /**
+   * `folder` / `note`: vault-relative, `/`-separated, no leading `./` or `/`,
+   * no trailing `/`. `tag`: lower case, without `#`. `repo`: the repo name.
+   * `keep`: `keep`.
+   */
   path: string
 }
 
@@ -15,12 +34,15 @@ export interface LlmExclusion {
 export interface LlmExclusionStore {
   list(): Promise<LlmExclusion[]>
   /**
-   * Replaces the whole list. The Postgres store also sets `allow_llm = false`
-   * on every vault note the new list excludes, in the same transaction, so an
-   * exclusion holds as soon as it is saved. Giving notes back needs their
-   * frontmatter, so that is left to `VaultIndexer.refreshAllowLlm`.
+   * Replaces the whole list. The Postgres store also, in the same transaction,
+   * sets `allow_llm = false` on every vault note the new list excludes (by
+   * path or stored tag) and sets repo and Keep documents to match their rule
+   * both ways, so a change holds as soon as it is saved. Giving vault notes
+   * back needs their frontmatter, so that is left to `VaultIndexer.refreshAllowLlm`.
    */
   replace(list: readonly LlmExclusion[]): Promise<void>
+  /** How many stored documents each rule covers, in the order given. */
+  countDocuments(list: readonly LlmExclusion[]): Promise<number[]>
 }
 
 /**
@@ -37,38 +59,88 @@ export function normalizeVaultPath(input: string): string | null {
   return segments.join('/')
 }
 
-/** True when the note sits in an excluded folder or is itself excluded (case-insensitive). */
-export function isExcludedFromLlm(notePath: string, exclusions: readonly LlmExclusion[]): boolean {
+/** A repo name as `repos.json` allows it (`REPO_NAME_PATTERN`, not ending in `.git`), trimmed; else null. */
+export function normalizeRepoName(input: string): string | null {
+  const name = input.trim()
+  return REPO_NAME_PATTERN.test(name) && !name.toLowerCase().endsWith('.git') ? name : null
+}
+
+/** The rule's `path` in its stored form, or null when it is not valid for that kind. */
+export function normalizeRulePath(kind: LlmExclusionKind, input: string): string | null {
+  switch (kind) {
+    case 'folder':
+    case 'note':
+      return normalizeVaultPath(input)
+    case 'tag':
+      return normalizeTag(input)
+    case 'repo':
+      return normalizeRepoName(input)
+    case 'keep':
+      return KEEP_RULE_PATH
+  }
+}
+
+/**
+ * True when the vault note sits in an excluded folder, is itself excluded, or
+ * carries an excluded tag (paths ignore case; `tags` are already lower case).
+ */
+export function isExcludedFromLlm(
+  notePath: string,
+  exclusions: readonly LlmExclusion[],
+  tags: readonly string[] = [],
+): boolean {
   const note = notePath.toLowerCase()
   return exclusions.some((exclusion) => {
     const path = exclusion.path.toLowerCase()
-    return exclusion.kind === 'folder' ? note.startsWith(`${path}/`) : note === path
+    switch (exclusion.kind) {
+      case 'folder':
+        return note.startsWith(`${path}/`)
+      case 'note':
+        return note === path
+      case 'tag':
+        return tags.some((tag) => tagCovers(tag, path))
+      default:
+        return false
+    }
   })
 }
 
+/** True when a `repo` rule names this repo (ignoring case, as repo names are unique that way). */
+export function isRepoLocked(repo: string, exclusions: readonly LlmExclusion[]): boolean {
+  const name = repo.toLowerCase()
+  return exclusions.some((exclusion) => exclusion.kind === 'repo' && exclusion.path.toLowerCase() === name)
+}
+
+/** True when the list holds the `keep` rule. */
+export function isKeepLocked(exclusions: readonly LlmExclusion[]): boolean {
+  return exclusions.some((exclusion) => exclusion.kind === 'keep')
+}
+
+const KIND_ORDER: Record<LlmExclusionKind, number> = { folder: 0, note: 1, tag: 2, repo: 3, keep: 4 }
+
 function compareExclusions(a: LlmExclusion, b: LlmExclusion): number {
-  if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1
+  if (a.kind !== b.kind) return KIND_ORDER[a.kind] - KIND_ORDER[b.kind]
   const left = a.path.toLowerCase()
   const right = b.path.toLowerCase()
   if (left !== right) return left < right ? -1 : 1
   return a.path < b.path ? -1 : a.path > b.path ? 1 : 0
 }
 
-/** Folders first, then notes, each by path ignoring case. */
+/** Folders, notes, tags, repos, then Keep; within a kind by path ignoring case. */
 export function sortExclusions(list: readonly LlmExclusion[]): LlmExclusion[] {
   return list.map((exclusion) => ({ kind: exclusion.kind, path: exclusion.path })).sort(compareExclusions)
 }
 
 /**
  * Normalizes every path, drops duplicates (ignoring case; the first spelling
- * wins) and sorts. Throws on a path `normalizeVaultPath` rejects: callers
+ * wins) and sorts. Throws on a path `normalizeRulePath` rejects: callers
  * validate input before it gets here.
  */
 export function cleanExclusions(list: readonly LlmExclusion[]): LlmExclusion[] {
   const seen = new Set<string>()
   const clean: LlmExclusion[] = []
   for (const exclusion of list) {
-    const path = normalizeVaultPath(exclusion.path)
+    const path = normalizeRulePath(exclusion.kind, exclusion.path)
     if (path === null) throw new Error('invalid exclusion path')
     const key = `${exclusion.kind}:${path.toLowerCase()}`
     if (seen.has(key)) continue
@@ -78,8 +150,14 @@ export function cleanExclusions(list: readonly LlmExclusion[]): LlmExclusion[] {
   return sortExclusions(clean)
 }
 
-/** In-memory store for tests and for running without a database. */
-export function createMemoryLlmExclusionStore(initial: readonly LlmExclusion[] = []): LlmExclusionStore {
+/**
+ * In-memory store for tests and for running without a database. `count`
+ * stands in for the document counts; without it every rule covers 0.
+ */
+export function createMemoryLlmExclusionStore(
+  initial: readonly LlmExclusion[] = [],
+  count: (exclusion: LlmExclusion) => number = () => 0,
+): LlmExclusionStore {
   let items = sortExclusions(initial)
   return {
     async list() {
@@ -87,6 +165,9 @@ export function createMemoryLlmExclusionStore(initial: readonly LlmExclusion[] =
     },
     async replace(list) {
       items = sortExclusions(list)
+    },
+    async countDocuments(list) {
+      return list.map(count)
     },
   }
 }

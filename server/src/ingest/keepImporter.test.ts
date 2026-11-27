@@ -6,6 +6,7 @@ import type { SecretsDropEvent } from '../security/secrets.js'
 import { createImportService } from './importService.js'
 import { createKeepImporter } from './keepImporter.js'
 import { KeepTakeoutError, parseKeepTakeout } from './keepTakeout.js'
+import type { LlmExclusion } from './llmExclusions.js'
 import { keepJson, takeoutZip } from './testKeepTakeout.js'
 
 /** In-memory IndexStore with the same contract as the Postgres one. */
@@ -71,7 +72,7 @@ function fakeEmbedder(): Embedder & { texts: string[]; fail: boolean } {
 // Built at runtime so no literal secret is ever committed.
 const FAKE_GITHUB_TOKEN = 'gh' + 'p_' + 'Q1w2E3r4T5'.repeat(4)
 
-function setup() {
+function setup(rules: { list: LlmExclusion[] } = { list: [] }) {
   const mem = memoryStore()
   const embedder = fakeEmbedder()
   const secrets: SecretsDropEvent[] = []
@@ -79,6 +80,7 @@ function setup() {
     sourceId: 5,
     store: mem.store,
     embedder,
+    exclusions: async () => rules.list,
     logSecrets: (event) => secrets.push(event),
   })
   const importZip = (entries: Record<string, Uint8Array | string>) => importer.importNotes(parseKeepTakeout(takeoutZip(entries)))
@@ -121,6 +123,20 @@ describe('Keep importer', () => {
     expect(embedder.texts.length).toBe(embedded)
     expect(allowLlmCalls).toEqual([{ path: 'Keep/a', allowLlm: true }])
     expect([...docs.values()].map((stored) => stored.doc.allowLlm)).toEqual([true, true])
+  })
+
+  it('a keep rule locks every note, and lifting it gives them back, without calling Ollama again', async () => {
+    const rules = { list: [{ kind: 'keep', path: 'keep' }] as LlmExclusion[] }
+    const { docs, embedder, importZip } = setup(rules)
+    const zip = { 'a.json': keepJson({ title: 'A' }), 'b.json': keepJson({ title: 'B' }) }
+    await importZip(zip)
+    expect([...docs.values()].map((stored) => stored.doc.allowLlm)).toEqual([false, false])
+    const embedded = embedder.texts.length
+
+    rules.list = []
+    expect(await importZip(zip)).toMatchObject({ indexed: 0, unchanged: 2 })
+    expect([...docs.values()].map((stored) => stored.doc.allowLlm)).toEqual([true, true])
+    expect(embedder.texts.length).toBe(embedded)
   })
 
   it('a second import of the same zip changes nothing and skips Ollama', async () => {

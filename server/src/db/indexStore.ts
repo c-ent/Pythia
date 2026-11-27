@@ -13,6 +13,8 @@ export interface DocumentState {
   allowLlm: boolean
   /** Some chunk was embedded with a different model (or none) and needs re-embedding. */
   stale: boolean
+  /** Obsidian note tags as last stored (R16 tag rules); empty for other sources. Absent means none. */
+  tags?: string[]
 }
 
 export interface DocumentWrite {
@@ -22,6 +24,8 @@ export interface DocumentWrite {
   contentHash: string
   allowLlm: boolean
   mtime: Date | null
+  /** Obsidian note tags, lower case, without `#`. Absent means none. */
+  tags?: readonly string[]
 }
 
 export interface ChunkWrite {
@@ -39,7 +43,8 @@ export interface IndexStore {
   getDocumentStates(sourceId: number, embedModel: string, paths?: readonly string[]): Promise<Map<string, DocumentState>>
   /** Upserts the document and replaces all of its chunks in one transaction. */
   replaceDocument(sourceId: number, doc: DocumentWrite, chunks: readonly ChunkWrite[], embedModel: string): Promise<void>
-  setAllowLlm(sourceId: number, path: string, allowLlm: boolean): Promise<void>
+  /** Sets `allow_llm`, and the stored tags too when `tags` is given. Never touches chunks. */
+  setAllowLlm(sourceId: number, path: string, allowLlm: boolean, tags?: readonly string[]): Promise<void>
   /** Deletes the documents (chunks cascade) and returns how many existed. */
   deleteDocuments(sourceId: number, paths: readonly string[]): Promise<number>
 }
@@ -78,8 +83,14 @@ export async function ensureSource(
 export function createPgIndexStore(pool: Pool): IndexStore {
   return {
     async getDocumentStates(sourceId, embedModel, paths) {
-      const { rows } = await pool.query<{ path: string; content_hash: string; allow_llm: boolean; stale: boolean }>(
-        `SELECT d.path, d.content_hash, d.allow_llm,
+      const { rows } = await pool.query<{
+        path: string
+        content_hash: string
+        allow_llm: boolean
+        stale: boolean
+        tags: string[]
+      }>(
+        `SELECT d.path, d.content_hash, d.allow_llm, d.tags,
                 EXISTS (
                   SELECT 1 FROM chunks c
                   WHERE c.document_id = d.id AND c.embed_model IS DISTINCT FROM $2
@@ -89,7 +100,10 @@ export function createPgIndexStore(pool: Pool): IndexStore {
         [sourceId, embedModel, paths === undefined ? null : [...paths]],
       )
       return new Map(
-        rows.map((row) => [row.path, { contentHash: row.content_hash, allowLlm: row.allow_llm, stale: row.stale }]),
+        rows.map((row) => [
+          row.path,
+          { contentHash: row.content_hash, allowLlm: row.allow_llm, stale: row.stale, tags: row.tags },
+        ]),
       )
     },
 
@@ -99,17 +113,27 @@ export function createPgIndexStore(pool: Pool): IndexStore {
         await client.query('BEGIN')
         try {
           const { rows } = await client.query<{ id: string }>(
-            `INSERT INTO documents (source_id, path, title, language, content_hash, allow_llm, mtime)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `INSERT INTO documents (source_id, path, title, language, content_hash, allow_llm, mtime, tags)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              ON CONFLICT (source_id, path) DO UPDATE SET
                title = EXCLUDED.title,
                language = EXCLUDED.language,
                content_hash = EXCLUDED.content_hash,
                allow_llm = EXCLUDED.allow_llm,
                mtime = EXCLUDED.mtime,
+               tags = EXCLUDED.tags,
                updated_at = now()
              RETURNING id`,
-            [sourceId, doc.path, stripNul(doc.title), doc.language, doc.contentHash, doc.allowLlm, doc.mtime],
+            [
+              sourceId,
+              doc.path,
+              stripNul(doc.title),
+              doc.language,
+              doc.contentHash,
+              doc.allowLlm,
+              doc.mtime,
+              (doc.tags ?? []).map(stripNul),
+            ],
           )
           const documentId = rows[0]?.id
           if (documentId === undefined) throw new Error('document upsert returned no row')
@@ -142,12 +166,12 @@ export function createPgIndexStore(pool: Pool): IndexStore {
       }
     },
 
-    async setAllowLlm(sourceId, path, allowLlm) {
-      await pool.query('UPDATE documents SET allow_llm = $3, updated_at = now() WHERE source_id = $1 AND path = $2', [
-        sourceId,
-        path,
-        allowLlm,
-      ])
+    async setAllowLlm(sourceId, path, allowLlm, tags) {
+      await pool.query(
+        `UPDATE documents SET allow_llm = $3, tags = COALESCE($4::text[], tags), updated_at = now()
+         WHERE source_id = $1 AND path = $2`,
+        [sourceId, path, allowLlm, tags === undefined ? null : tags.map(stripNul)],
+      )
     },
 
     async deleteDocuments(sourceId, paths) {

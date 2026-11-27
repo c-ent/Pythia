@@ -28,6 +28,7 @@ export function memoryStore() {
           contentHash: stored.doc.contentHash,
           allowLlm: stored.doc.allowLlm,
           stale: stored.chunks.length > 0 && stored.embedModel !== embedModel,
+          ...(stored.doc.tags === undefined ? {} : { tags: [...stored.doc.tags] }),
         })
       }
       return states
@@ -35,9 +36,11 @@ export function memoryStore() {
     async replaceDocument(sourceId, doc, chunks, embedModel) {
       docs.set(key(sourceId, doc.path), { doc: { ...doc }, chunks: [...chunks], embedModel })
     },
-    async setAllowLlm(sourceId, relPath, allowLlm) {
+    async setAllowLlm(sourceId, relPath, allowLlm, tags) {
       const stored = docs.get(key(sourceId, relPath))
-      if (stored) stored.doc.allowLlm = allowLlm
+      if (!stored) return
+      stored.doc.allowLlm = allowLlm
+      if (tags !== undefined) stored.doc.tags = [...tags]
     },
     async deleteDocuments(sourceId, paths) {
       let n = 0
@@ -390,6 +393,53 @@ describe('Gemini exclusion list', () => {
     await put('Projects/Pythia.md', '# Goals\n\nEdited too.')
     await indexer.refreshAllowLlm()
     expect(mem.get('Projects/Pythia.md')?.doc.allowLlm).toBe(false)
+  })
+
+  it('keeps a tagged note away, with nested tags, from frontmatter or body', async () => {
+    await put('Health/log.md', '---\ntags: [Private/Health]\n---\n# Log\n\nRan 5k.')
+    await put('Inline.md', '# Inline\n\nA thought #private today.')
+    await put('Other.md', '# Other\n\nSimilar #privateish tag, no match.')
+    const { indexer, mem } = setup({ exclusions: [{ kind: 'tag', path: 'private' }] })
+    await indexer.fullScan()
+    expect(mem.get('Health/log.md')?.doc.allowLlm).toBe(false)
+    expect(mem.get('Inline.md')?.doc.allowLlm).toBe(false)
+    expect(mem.get('Other.md')?.doc.allowLlm).toBe(true)
+    expect(mem.get('Projects/Pythia.md')?.doc.allowLlm).toBe(true)
+    expect(mem.get('Health/log.md')?.doc.tags).toEqual(['private/health'])
+    expect(mem.get('Other.md')?.doc.tags).toEqual(['privateish'])
+  })
+
+  it('applies a tag rule saved later, and its removal, without embedding', async () => {
+    await put('Health/log.md', '---\ntags:\n  - private/health\n---\n# Log\n\nRan 5k.')
+    const { indexer, mem, embedder, exclusions } = setup({ exclusions: [] })
+    await indexer.fullScan()
+    expect(mem.get('Health/log.md')?.doc.allowLlm).toBe(true)
+    const calls = embedder.calls
+    const replaceDocument = vi.spyOn(mem.store, 'replaceDocument')
+
+    await exclusions.replace([{ kind: 'tag', path: 'private' }])
+    expect(await indexer.refreshAllowLlm()).toEqual({ updated: 1 })
+    expect(mem.get('Health/log.md')?.doc.allowLlm).toBe(false)
+
+    await exclusions.replace([])
+    expect(await indexer.refreshAllowLlm()).toEqual({ updated: 1 })
+    expect(mem.get('Health/log.md')?.doc.allowLlm).toBe(true)
+
+    expect(embedder.calls).toBe(calls)
+    expect(replaceDocument).not.toHaveBeenCalled()
+  })
+
+  it('fills in tags for notes stored before T40 without embedding', async () => {
+    await put('Inline.md', '# Inline\n\nA thought #private today.')
+    const { indexer, mem, embedder, exclusions } = setup({ exclusions: [] })
+    await indexer.fullScan()
+    const stored = mem.get('Inline.md')
+    if (stored !== undefined) delete stored.doc.tags // as stored before migration 009
+    const calls = embedder.calls
+    await exclusions.replace([{ kind: 'tag', path: 'private' }])
+    expect(await indexer.fullScan()).toMatchObject({ indexed: [] })
+    expect(mem.get('Inline.md')?.doc).toMatchObject({ allowLlm: false, tags: ['private'] })
+    expect(embedder.calls).toBe(calls)
   })
 
   it('refresh never deletes a note whose file is gone', async () => {

@@ -3,12 +3,18 @@ import type { DocumentState, IndexStore } from '../db/indexStore.js'
 import type { Embedder } from '../embed/ollama.js'
 import { dropSecretChunks, logSecretsDrop, type SecretsDropLogger } from '../security/secrets.js'
 import { keepNoteMarkdown, type KeepNote, type KeepSkipped, type KeepTakeout } from './keepTakeout.js'
+import { isKeepLocked, type LlmExclusion } from './llmExclusions.js'
 import { chunkMarkdown } from './markdownChunker.js'
 
 export interface KeepImporterOptions {
   sourceId: number
   store: IndexStore
   embedder: Embedder
+  /**
+   * The Gemini list (R16), read at the start of every import. A `keep` rule
+   * locks every Keep note (`allow_llm = false`). Absent means empty.
+   */
+  exclusions?: () => Promise<readonly LlmExclusion[]>
   logSecrets?: SecretsDropLogger
 }
 
@@ -50,12 +56,12 @@ export function createKeepImporter(options: KeepImporterOptions): KeepImporter {
   let queue: Promise<unknown> = Promise.resolve()
 
   /** Returns false when the stored copy was already current (its `allow_llm` may still be corrected). */
-  async function writeNote(note: KeepNote, state: DocumentState | undefined): Promise<boolean> {
+  async function writeNote(note: KeepNote, state: DocumentState | undefined, allowLlm: boolean): Promise<boolean> {
     const markdown = keepNoteMarkdown(note)
     const contentHash = hashOf(note.title, markdown)
     if (state !== undefined && state.contentHash === contentHash && !state.stale) {
-      // Notes imported before T26 were stored with allow_llm = false; fix them without re-embedding.
-      if (state.allowLlm !== KEEP_ALLOW_LLM) await store.setAllowLlm(sourceId, note.path, KEEP_ALLOW_LLM)
+      // Bring the flag in line with the Keep lock (and notes stored before T26) without re-embedding.
+      if (state.allowLlm !== allowLlm) await store.setAllowLlm(sourceId, note.path, allowLlm)
       return false
     }
     const chunked = chunkMarkdown(`${note.path}.md`, markdown, { title: note.title })
@@ -73,7 +79,7 @@ export function createKeepImporter(options: KeepImporterOptions): KeepImporter {
         title: note.title,
         language: 'markdown',
         contentHash,
-        allowLlm: KEEP_ALLOW_LLM,
+        allowLlm,
         mtime: note.editedAt,
       },
       clean.map((chunk, i) => ({
@@ -98,11 +104,13 @@ export function createKeepImporter(options: KeepImporterOptions): KeepImporter {
       failed: 0,
       skipped: { ...takeout.skipped },
     }
+    const exclusions = (await options.exclusions?.()) ?? []
+    const allowLlm = KEEP_ALLOW_LLM && !isKeepLocked(exclusions)
     const states = await store.getDocumentStates(sourceId, embedder.model)
     for (const note of takeout.notes) {
       const state = states.get(note.path)
       try {
-        if (await writeNote(note, state)) result.indexed++
+        if (await writeNote(note, state, allowLlm)) result.indexed++
         else result.unchanged++
       } catch {
         // Counted, not logged with detail: the error can quote note text.

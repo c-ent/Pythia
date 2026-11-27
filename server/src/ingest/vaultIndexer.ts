@@ -5,7 +5,11 @@ import type { DocumentState, IndexStore } from '../db/indexStore.js'
 import type { Embedder } from '../embed/ollama.js'
 import { dropSecretChunks, isBlockedPath, logSecretsDrop, type SecretsDropLogger } from '../security/secrets.js'
 import { isExcludedFromLlm, type LlmExclusion } from './llmExclusions.js'
-import { chunkMarkdown, frontmatterAllowsLlm } from './markdownChunker.js'
+import { chunkMarkdown, noteLlmMeta } from './markdownChunker.js'
+
+/** Stored tags (absent before T40) against the note's tags; both sorted. */
+const sameTags = (stored: readonly string[] | undefined, current: readonly string[]): boolean =>
+  (stored ?? []).length === current.length && (stored ?? []).every((tag, i) => tag === current[i])
 
 export interface VaultIndexerOptions {
   /** Absolute path of the vault on disk. Read only; nothing is ever written there. */
@@ -126,12 +130,14 @@ export function createVaultIndexer(options: VaultIndexerOptions): VaultIndexer {
     const [bytes, info] = await Promise.all([readFile(absPath), stat(absPath)])
     const contentHash = sha256(bytes)
     const note = chunkMarkdown(relPath, bytes.toString('utf8'))
-    // Frontmatter `llm: false` and the exclusion list each keep a note away on their own.
-    const allowLlm = note.allowLlm && !isExcludedFromLlm(relPath, exclusions)
+    // Frontmatter `llm: false` and the exclusion list (paths and tags) each keep a note away on their own.
+    const allowLlm = note.allowLlm && !isExcludedFromLlm(relPath, exclusions, note.tags)
 
     if (state !== undefined && state.contentHash === contentHash && !state.stale) {
-      // Same text, but the exclusion list may have changed.
-      if (state.allowLlm !== allowLlm) await store.setAllowLlm(sourceId, relPath, allowLlm)
+      // Same text, but the list may have changed, or the tags were never stored (before T40).
+      if (state.allowLlm !== allowLlm || !sameTags(state.tags, note.tags)) {
+        await store.setAllowLlm(sourceId, relPath, allowLlm, note.tags)
+      }
       return 'unchanged'
     }
 
@@ -153,6 +159,7 @@ export function createVaultIndexer(options: VaultIndexerOptions): VaultIndexer {
         contentHash,
         allowLlm,
         mtime: info.mtime,
+        tags: note.tags,
       },
       clean.map((chunk, i) => ({
         ordinal: i,
@@ -193,12 +200,12 @@ export function createVaultIndexer(options: VaultIndexerOptions): VaultIndexer {
     result.deleted.push(...known)
   }
 
-  /** The note's `allow_llm` from its current file, or null when it changed on disk or cannot be read. */
-  async function allowLlmFromDisk(relPath: string, state: DocumentState): Promise<boolean | null> {
+  /** Frontmatter `allow_llm` and tags from the current file, or null when it changed on disk or cannot be read. */
+  async function metaFromDisk(relPath: string, state: DocumentState): Promise<{ allowLlm: boolean; tags: string[] } | null> {
     try {
       const bytes = await readFile(notePath(relPath))
       if (sha256(bytes) !== state.contentHash) return null
-      return frontmatterAllowsLlm(bytes.toString('utf8'))
+      return noteLlmMeta(bytes.toString('utf8'))
     } catch {
       return null
     }
@@ -246,11 +253,20 @@ export function createVaultIndexer(options: VaultIndexerOptions): VaultIndexer {
         const states = await store.getDocumentStates(sourceId, embedder.model)
         let updated = 0
         for (const [relPath, state] of states) {
-          // A listed note needs no file read: it is kept away whatever it says.
-          const allowLlm = isExcludedFromLlm(relPath, exclusions) ? false : await allowLlmFromDisk(relPath, state)
-          if (allowLlm === null || allowLlm === state.allowLlm) continue
-          await store.setAllowLlm(sourceId, relPath, allowLlm)
-          updated++
+          // A note listed by path or by its stored tags needs no file read: it is kept away whatever it says.
+          if (isExcludedFromLlm(relPath, exclusions, state.tags ?? [])) {
+            if (state.allowLlm) {
+              await store.setAllowLlm(sourceId, relPath, false)
+              updated++
+            }
+            continue
+          }
+          const meta = await metaFromDisk(relPath, state)
+          if (meta === null) continue
+          const allowLlm = meta.allowLlm && !isExcludedFromLlm(relPath, exclusions, meta.tags)
+          if (allowLlm === state.allowLlm && sameTags(state.tags, meta.tags)) continue
+          await store.setAllowLlm(sourceId, relPath, allowLlm, meta.tags)
+          if (allowLlm !== state.allowLlm) updated++
         }
         return { updated }
       }),

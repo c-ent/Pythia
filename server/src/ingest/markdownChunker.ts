@@ -1,4 +1,5 @@
 import { parse as parseYaml } from 'yaml'
+import { noteTags } from './noteTags.js'
 
 export const DEFAULT_MIN_TOKENS = 300
 export const DEFAULT_MAX_TOKENS = 500
@@ -27,6 +28,8 @@ export interface MarkdownChunk {
 export interface ChunkedNote {
   title: string
   allowLlm: boolean
+  /** Frontmatter and inline tags, lower case, without `#`, sorted (R16 tag rules). */
+  tags: string[]
   chunks: MarkdownChunk[]
 }
 
@@ -231,6 +234,7 @@ export function chunkMarkdown(path: string, markdown: string, options: ChunkOpti
   const { yaml, bodyStart } = splitFrontmatter(rawLines)
   // Frontmatter only; the vault indexer applies the Gemini exclusion list (R3) on top.
   const allowLlm = !(yaml !== null && frontmatterDisablesLlm(yaml))
+  const tags = noteTags(yaml, rawLines.slice(bodyStart))
 
   const lines: Line[] = rawLines.slice(bodyStart).map((text, i) => ({ no: bodyStart + i + 1, text }))
 
@@ -286,7 +290,7 @@ export function chunkMarkdown(path: string, markdown: string, options: ChunkOpti
     })
   }
 
-  return { title, allowLlm, chunks }
+  return { title, allowLlm, tags, chunks }
 }
 
 /**
@@ -295,6 +299,15 @@ export function chunkMarkdown(path: string, markdown: string, options: ChunkOpti
  * the caller.
  */
 export function frontmatterAllowsLlm(markdown: string): boolean {
-  const { yaml } = splitFrontmatter(markdown.replace(/^\uFEFF/, '').split(/\r?\n/))
-  return !(yaml !== null && frontmatterDisablesLlm(yaml))
+  return noteLlmMeta(markdown).allowLlm
+}
+
+/** `allowLlm` from frontmatter and the note's tags, read as `chunkMarkdown` does, without chunking. */
+export function noteLlmMeta(markdown: string): { allowLlm: boolean; tags: string[] } {
+  const rawLines = markdown.replace(/^\uFEFF/, '').split(/\r?\n/)
+  const { yaml, bodyStart } = splitFrontmatter(rawLines)
+  return {
+    allowLlm: !(yaml !== null && frontmatterDisablesLlm(yaml)),
+    tags: noteTags(yaml, rawLines.slice(bodyStart)),
+  }
 }

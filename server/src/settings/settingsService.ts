@@ -1,9 +1,11 @@
 import { z } from 'zod'
 import {
   cleanExclusions,
-  normalizeVaultPath,
+  LLM_EXCLUSION_KINDS,
+  normalizeRulePath,
   sortExclusions,
   type LlmExclusion,
+  type LlmExclusionKind,
   type LlmExclusionStore,
 } from '../ingest/llmExclusions.js'
 
@@ -12,18 +14,28 @@ const MAX_PATH_LENGTH = 1024
 // eslint-disable-next-line no-control-regex -- matching control characters is the point
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/
 
+const INVALID_PATH: Record<LlmExclusionKind, string> = {
+  folder: 'path must be a vault-relative path without ..',
+  note: 'path must be a vault-relative path without ..',
+  tag: 'path must be a tag: letters, digits, "_", "-" or "/", with or without #',
+  repo: 'path must be a repo name: 1–100 letters, digits, ".", "_" or "-", starting with a letter or digit',
+  keep: 'path is not used for keep',
+}
+
 const exclusionSchema = z
   .object({
-    kind: z.enum(['folder', 'note']),
+    kind: z.enum(LLM_EXCLUSION_KINDS),
+    // A `keep` rule needs no path: it covers all of Google Keep.
     path: z
       .string()
       .max(MAX_PATH_LENGTH)
-      .refine((path) => !CONTROL_CHARACTER.test(path), 'path must not contain control characters'),
+      .refine((path) => !CONTROL_CHARACTER.test(path), 'path must not contain control characters')
+      .default(''),
   })
   .transform((value, ctx): LlmExclusion => {
-    const path = normalizeVaultPath(value.path)
+    const path = normalizeRulePath(value.kind, value.path)
     if (path === null) {
-      ctx.addIssue({ code: 'custom', message: 'path must be a vault-relative path without ..', path: ['path'] })
+      ctx.addIssue({ code: 'custom', message: INVALID_PATH[value.kind], path: ['path'] })
       return z.NEVER
     }
     // A single note is matched by its full file name; without `.md` it would never match.
@@ -39,14 +51,20 @@ export const llmExclusionsInputSchema = z.object({
   exclusions: z.array(exclusionSchema).max(MAX_LLM_EXCLUSIONS),
 })
 
+/** A rule with how many stored documents it covers now (R16). */
+export interface CountedLlmExclusion extends LlmExclusion {
+  documents: number
+}
+
 export interface SettingsService {
-  getLlmExclusions(): Promise<LlmExclusion[]>
+  getLlmExclusions(): Promise<CountedLlmExclusion[]>
   /**
    * Saves the whole list (validated by `llmExclusionsInputSchema`), deduplicated
-   * and sorted, and returns it. New exclusions hold once this resolves; notes
-   * that were given back follow when the background refresh has run.
+   * and sorted, and returns it with counts. New exclusions, and repo and Keep
+   * rules either way, hold once this resolves; vault notes that were given
+   * back follow when the background refresh has run.
    */
-  setLlmExclusions(list: readonly LlmExclusion[]): Promise<LlmExclusion[]>
+  setLlmExclusions(list: readonly LlmExclusion[]): Promise<CountedLlmExclusion[]>
 }
 
 export interface SettingsServiceOptions {
@@ -58,9 +76,15 @@ export interface SettingsServiceOptions {
 
 export function createSettingsService(options: SettingsServiceOptions): SettingsService {
   const log = options.log ?? console.error
+
+  const withCounts = async (list: LlmExclusion[]): Promise<CountedLlmExclusion[]> => {
+    const counts = await options.exclusions.countDocuments(list)
+    return list.map((exclusion, i) => ({ ...exclusion, documents: counts[i] ?? 0 }))
+  }
+
   return {
     async getLlmExclusions() {
-      return sortExclusions(await options.exclusions.list())
+      return withCounts(sortExclusions(await options.exclusions.list()))
     },
 
     async setLlmExclusions(list) {
@@ -73,7 +97,7 @@ export function createSettingsService(options: SettingsServiceOptions): Settings
           log(`allow_llm refresh failed: ${error instanceof Error ? error.name : 'unknown'}`)
         })
       }
-      return clean
+      return withCounts(clean)
     },
   }
 }

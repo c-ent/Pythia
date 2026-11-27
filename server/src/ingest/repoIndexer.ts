@@ -24,6 +24,12 @@ export interface RepoIndexerOptions {
   store: IndexStore
   embedder: Embedder
   mirror: MirrorOptions
+  /**
+   * False when the repo is locked on the Gemini list (R16, "Allow Ask to read
+   * this repo" off). Every document written gets it, and unchanged ones are
+   * corrected without re-embedding. Default true.
+   */
+  allowLlm?: boolean
   logSecrets?: SecretsDropLogger
 }
 
@@ -81,6 +87,7 @@ async function chunkFile(repo: string, file: RepoFile, text: string): Promise<Pe
  */
 export async function indexRepoCommit(options: RepoIndexerOptions, commit: string): Promise<RepoIndexResult> {
   const { repo, dir, sourceId, store, embedder, mirror } = options
+  const allowLlm = options.allowLlm ?? true
   const logSecrets = options.logSecrets ?? logSecretsDrop
 
   const tree = (await listTree(dir, commit, mirror)).filter((file) => file.path !== SUMMARY_PATH)
@@ -106,7 +113,7 @@ export async function indexRepoCommit(options: RepoIndexerOptions, commit: strin
     const embeddings = clean.length > 0 ? await embedder.embedDocuments(clean.map((chunk) => chunk.embedText)) : []
     await store.replaceDocument(
       sourceId,
-      { path: docPath, title, language, contentHash: hash, allowLlm: true, mtime: null },
+      { path: docPath, title, language, contentHash: hash, allowLlm, mtime: null },
       clean.map((chunk, i) => ({
         ordinal: i,
         headingPath: chunk.headingPath,
@@ -189,6 +196,14 @@ export async function indexRepoCommit(options: RepoIndexerOptions, commit: strin
   if (gone.length > 0) {
     await store.deleteDocuments(sourceId, gone)
     result.deleted = gone
+  }
+
+  // Documents left as they were keep the flag they had; bring them in line
+  // with the lock without re-embedding.
+  const written = new Set([...result.indexed, ...(result.summary === 'indexed' ? [SUMMARY_PATH] : [])])
+  for (const [docPath, state] of states) {
+    if (written.has(docPath) || !kept.has(docPath) || state.allowLlm === allowLlm) continue
+    await store.setAllowLlm(sourceId, docPath, allowLlm)
   }
   return result
 }
