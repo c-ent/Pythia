@@ -1,4 +1,5 @@
 import { apiFetch } from './client'
+import { recentQueriesChanged } from './recent'
 import type { Snippet, SourceKind, SourceRef } from './search'
 
 // Mirrors the server's Ask types (server/src/ask/askService.ts).
@@ -56,5 +57,8 @@ export async function askQuestion(params: AskParams, signal?: AbortSignal): Prom
     body: JSON.stringify(params),
     signal,
   })
-  return (await res.json()) as AskResponse
+  const response = (await res.json()) as AskResponse
+  // The server recorded the question before answering (R14).
+  recentQueriesChanged('ask')
+  return response
 }

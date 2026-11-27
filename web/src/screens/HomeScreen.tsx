@@ -1,4 +1,4 @@
-import { ArrowRight, Clock, History, Pin, Sparkles, type LucideIcon } from 'lucide-react'
+import { ArrowRight, Clock, History, Pin, Sparkles, X, type LucideIcon } from 'lucide-react'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import type { DocumentInfo } from '../api/documents'
 import { getRecentDocuments, getRecentQueries, type RecentQuery } from '../api/recent'
@@ -8,6 +8,8 @@ import { readSyncState } from '../offline/sync'
 import { usePinnedRepos } from '../repos/pins'
 import { documentPath, followLink, pathFor } from '../router'
 import { timeAgo } from '../search/format'
+import { rerunQuery } from '../shell/rerun'
+import { useRecentQueries } from '../shell/useRecentQueries'
 import { RECENT_CHANGES_DAYS, TRY_ASKING_EXAMPLES } from './home'
 
 // Home (T31): what `/` shows before anything is searched. SearchScreen owns
@@ -58,8 +60,6 @@ const loadRecentChanges = (signal: AbortSignal): Promise<DocumentInfo[]> =>
   getRecentDocuments({ days: RECENT_CHANGES_DAYS, limit: RECENT_CHANGES_SHOWN }, signal)
 const loadRecentQuestions = (signal: AbortSignal): Promise<RecentQuery[]> =>
   getRecentQueries('ask', QUESTIONS_SHOWN, signal)
-const loadRecentSearches = (signal: AbortSignal): Promise<RecentQuery[]> =>
-  getRecentQueries('search', SEARCHES_SHOWN, signal)
 
 function Card({
   icon: Icon,
@@ -282,21 +282,46 @@ function TryAsking({ online, onAsk }: { online: boolean; onAsk: (question: strin
   )
 }
 
-/** The latest searches, on phones only (R14); hidden until there are some. */
-function RecentSearches({ online, onSearch }: { online: boolean; onSearch: (query: string) => void }) {
-  const state = useServerData(online, loadRecentSearches)
-  if (state.status !== 'ready' || state.value.length === 0) return null
+/** The latest searches, on phones only (R14); hidden until there are some. Each can be run again or removed. */
+function RecentSearches({ online }: { online: boolean }) {
+  const { status, queries, actionError, remove, clear } = useRecentQueries('search', SEARCHES_SHOWN, online)
+  if (status !== 'ready' || (queries.length === 0 && actionError === null)) return null
   return (
-    <Card icon={History} title="Recent searches" className="md:hidden">
+    <Card
+      icon={History}
+      title="Recent searches"
+      className="md:hidden"
+      action={
+        queries.length > 0 ? (
+          <button
+            type="button"
+            onClick={clear}
+            aria-label="Clear recent searches"
+            className="min-h-9 rounded-control px-2.5 text-[0.8125rem] text-muted transition-colors hover:bg-raised hover:text-ink"
+          >
+            Clear
+          </button>
+        ) : null
+      }
+    >
+      {actionError === null ? null : <CardNote alert>{actionError}</CardNote>}
       <ul className="space-y-0.5">
-        {state.value.slice(0, SEARCHES_SHOWN).map((entry) => (
-          <li key={entry.id}>
+        {queries.slice(0, SEARCHES_SHOWN).map((entry) => (
+          <li key={entry.id} className="flex items-center gap-1">
             <button
               type="button"
-              onClick={() => onSearch(entry.query)}
-              className={`${rowClass} truncate text-sm`}
+              onClick={() => rerunQuery(entry)}
+              className={`${rowClass} min-w-0 flex-1 truncate text-sm`}
             >
               {entry.query}
+            </button>
+            <button
+              type="button"
+              onClick={() => remove(entry.id)}
+              aria-label={`Remove “${entry.query}”`}
+              className="grid size-10 shrink-0 place-items-center rounded-control text-muted transition-colors hover:bg-raised hover:text-ink"
+            >
+              <X aria-hidden="true" className="size-4" />
             </button>
           </li>
         ))}
@@ -309,18 +334,16 @@ export function HomeCards({
   online,
   timeZone,
   onAsk,
-  onSearch,
 }: {
   online: boolean
   timeZone: string
   onAsk: (question: string) => void
-  onSearch: (query: string) => void
 }) {
   // Ages ("2h ago") are measured from when Home opened, and move on each minute.
   const now = useNow()
   return (
     <div className="grid w-full gap-3.5 md:grid-cols-2 lg:grid-cols-3">
-      <RecentSearches online={online} onSearch={onSearch} />
+      <RecentSearches online={online} />
       <RecentChanges online={online} timeZone={timeZone} now={now} />
       <PinnedOffline timeZone={timeZone} now={now} />
       <TryAsking online={online} onAsk={onAsk} />

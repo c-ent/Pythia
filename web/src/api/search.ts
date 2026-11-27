@@ -1,4 +1,5 @@
 import { apiFetch } from './client'
+import { recentQueriesChanged } from './recent'
 
 // Mirrors the server's search types (server/src/search/searchService.ts).
 
@@ -51,5 +52,8 @@ export async function searchNotes(params: SearchParams, signal?: AbortSignal): P
     body: JSON.stringify(params),
     signal,
   })
-  return (await res.json()) as SearchResponse
+  const response = (await res.json()) as SearchResponse
+  // The server recorded the search before answering (R14).
+  recentQueriesChanged('search')
+  return response
 }

@@ -1,4 +1,4 @@
-import { apiFetch } from './client'
+import { ApiError, apiFetch } from './client'
 import type { DocumentInfo } from './documents'
 import type { SourceKind } from './search'
 
@@ -43,4 +43,30 @@ export async function getRecentQueries(
   const queries = body !== null && typeof body === 'object' && 'queries' in body ? body.queries : null
   if (!Array.isArray(queries)) return []
   return (queries as RecentQuery[]).filter((entry) => typeof entry?.query === 'string' && entry.query !== '')
+}
+
+/** Removes one entry. One already gone (removed on another device) counts as removed. */
+export async function removeRecentQuery(id: number): Promise<void> {
+  try {
+    await apiFetch(`/api/recent-queries/${id}`, { method: 'DELETE' })
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return
+    throw error
+  }
+}
+
+/** Empties one list. */
+export async function clearRecentQueries(kind: RecentQueryKind): Promise<void> {
+  await apiFetch(`/api/recent-queries?${new URLSearchParams({ kind }).toString()}`, { method: 'DELETE' })
+}
+
+/**
+ * Window event fired when a list may have changed: a search or question ran on
+ * the server (which records it), or an entry was removed or cleared. `detail`
+ * is the kind. Every open list of that kind reloads.
+ */
+export const RECENT_QUERIES_CHANGED = 'pythia:recent-queries'
+
+export function recentQueriesChanged(kind: RecentQueryKind): void {
+  window.dispatchEvent(new CustomEvent<RecentQueryKind>(RECENT_QUERIES_CHANGED, { detail: kind }))
 }

@@ -18,6 +18,7 @@ import type { SourceKind } from '../api/search'
 import { ScreenHeader } from '../components/Screen'
 import { useClipboard } from '../hooks/useClipboard'
 import { useOnline } from '../hooks/useOnline'
+import { useRerun } from '../shell/rerun'
 import { AnswerText, Source, type AnswerState } from '../search/AskAnswer'
 import { engineNote } from '../search/citations'
 import { askErrorMessage } from '../search/format'
@@ -67,6 +68,12 @@ export function AskScreen() {
     setTurn({ question, sources: kinds, state: { status: 'loading' } })
     request(question, kinds)
   }
+
+  // A recent question clicked in the sidebar is asked again with its own filter.
+  useRerun('ask', ({ query: question, sources: kinds }) => {
+    setSources(kinds)
+    ask(question, kinds)
+  })
 
   // Back from a source: a question that was still loading is asked again.
   useEffect(() => {

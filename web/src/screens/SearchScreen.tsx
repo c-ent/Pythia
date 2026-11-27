@@ -24,6 +24,7 @@ import { ResultCard } from '../search/ResultCard'
 import { SourceChips } from '../search/SourceChips'
 import { readProfile, useProfile } from '../profile/profile'
 import { useNewSearch } from '../shell/newSearch'
+import { useRerun } from '../shell/rerun'
 import { Greeting, HomeCards } from './HomeScreen'
 
 type Mode = 'search' | 'ask'
@@ -177,12 +178,20 @@ export function SearchScreen() {
     }
   }
 
-  // Home cards: Try asking asks, a recent search runs again.
+  // Home's Try asking card asks.
   const startFromHome = (text: string, next: Mode): void => {
     setMode(next)
     setQuery(text)
     void run(text, sources, next === 'ask')
   }
+
+  // A recent search clicked in the sidebar or on Home runs again with its own filter.
+  useRerun('search', ({ query: text, sources: kinds }) => {
+    setMode('search')
+    setSources(kinds)
+    setQuery(text)
+    void run(text, kinds, false)
+  })
 
   // Home is the idle screen: nothing searched or asked yet (or New search).
   const home = outcome.status === 'idle' && answer === null
@@ -289,7 +298,6 @@ export function SearchScreen() {
           online={online}
           timeZone={profile.timeZone}
           onAsk={(question) => startFromHome(question, 'ask')}
-          onSearch={(text) => startFromHome(text, 'search')}
         />
       </div>
     )
