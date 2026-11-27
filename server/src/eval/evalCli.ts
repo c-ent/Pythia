@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
-import pg from 'pg'
+import { createPool } from '../db/pool.js'
 import { loadConfig } from '../config.js'
 import { createPgSearchStore } from '../db/searchStore.js'
 import { createOllamaEmbedder } from '../embed/ollama.js'
@@ -44,7 +44,7 @@ try {
 
 const set = parseEvalSet(text)
 const config = loadConfig(process.env)
-const pool = new pg.Pool(config.db)
+const pool = createPool(config.db)
 
 try {
   // Same settings as the server's query embedder, so scores match what the app sees.

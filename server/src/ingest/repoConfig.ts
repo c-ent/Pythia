@@ -81,7 +81,11 @@ const repoSchema = z
   .strict()
 
 const fileSchema = z
-  .object({ repos: z.array(repoSchema).max(MAX_REPOS) })
+  .object({
+    repos: z.array(repoSchema).max(MAX_REPOS),
+    // Repo discovery (T54) never adds these. Names compare case-insensitively.
+    exclude: z.array(z.string().trim().min(1).max(100)).max(MAX_REPOS).optional(),
+  })
   .strict()
   .superRefine((file, ctx) => {
     // Case-insensitive: mirrors are directories, and Windows and macOS
@@ -94,8 +98,17 @@ const fileSchema = z
     })
   })
 
-/** Validates a parsed config file and returns the enabled repos. */
-export function parseRepoConfig(value: unknown): RepoSpec[] {
+export interface RepoConfigFile {
+  /** The enabled repos, in file order. */
+  repos: RepoSpec[]
+  /** Every repo name in the file, disabled ones too, lowercased: discovery never adds these again. */
+  configured: string[]
+  /** The `exclude` list, lowercased. */
+  exclude: string[]
+}
+
+/** Validates a parsed config file: the enabled repos plus what repo discovery (T54) needs. */
+export function parseRepoConfigFile(value: unknown): RepoConfigFile {
   const result = fileSchema.safeParse(value)
   if (!result.success) {
     const problems = result.error.issues.map((issue) => {
@@ -104,12 +117,25 @@ export function parseRepoConfig(value: unknown): RepoSpec[] {
     })
     throw new RepoConfigError(`Invalid repo config: ${problems.join('; ')}`)
   }
-  return result.data.repos
-    .filter((repo) => repo.enabled)
-    .map((repo) => ({ name: repo.name, url: repo.url, branch: repo.branch ?? null }))
+  return {
+    repos: result.data.repos
+      .filter((repo) => repo.enabled)
+      .map((repo) => ({ name: repo.name, url: repo.url, branch: repo.branch ?? null })),
+    configured: result.data.repos.map((repo) => repo.name.toLowerCase()),
+    exclude: (result.data.exclude ?? []).map((name) => name.toLowerCase()),
+  }
+}
+
+/** Validates a parsed config file and returns the enabled repos. */
+export function parseRepoConfig(value: unknown): RepoSpec[] {
+  return parseRepoConfigFile(value).repos
 }
 
 export async function loadRepoConfig(file: string): Promise<RepoSpec[]> {
+  return (await loadRepoConfigFile(file)).repos
+}
+
+export async function loadRepoConfigFile(file: string): Promise<RepoConfigFile> {
   let text: string
   try {
     text = await readFile(file, 'utf8')
@@ -123,5 +149,5 @@ export async function loadRepoConfig(file: string): Promise<RepoSpec[]> {
   } catch {
     throw new RepoConfigError('The repo config file is not valid JSON')
   }
-  return parseRepoConfig(value)
+  return parseRepoConfigFile(value)
 }

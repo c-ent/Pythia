@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import pg from 'pg'
+import { createPool } from './db/pool.js'
 import { createApp } from './app.js'
 import { createAskService } from './ask/askService.js'
 import { createPgGeminiKeyStore, createPgGeminiUsageStore } from './db/geminiStore.js'
@@ -34,7 +34,8 @@ import { createStatusService } from './sync/statusService.js'
 import { createSyncNow } from './sync/syncNow.js'
 
 const config = loadConfig(process.env)
-const pool = new pg.Pool(config.db)
+// A dropped Postgres connection is logged and reconnected, never fatal (T53).
+const pool = createPool(config.db)
 
 // Every embed request goes through one gate, queries first (T51): a search
 // waits for the one index request already running at most, never for a queue
@@ -144,6 +145,8 @@ const status = createStatusService({
   repos:
     repos === undefined ? null : { names: repos.names, intervalMs: repos.intervalMs, configError: repos.configError },
   syncing: () => syncNow.state(),
+  // The startup round and the 30-minute rounds show as syncing too, not only Sync now (T52).
+  ...(repos?.state === undefined ? {} : { repoRound: repos.state }),
 })
 console.log(config.webDir === null ? 'PYTHIA_WEB_DIR is not set; serving the API only' : `web: ${config.webDir}`)
 const server = createServer(

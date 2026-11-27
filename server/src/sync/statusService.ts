@@ -42,7 +42,7 @@ export interface SourceStatus {
   schedule: Schedule
   documents: number
   chunks: number
-  /** A scan or fetch started by Sync now or Re-sync is running. */
+  /** A scan or fetch started by Sync now or Re-sync, or a scheduled repo round (github), is running. */
   syncing: boolean
 }
 
@@ -68,7 +68,7 @@ export interface ServerStatus {
   sources: SourceStatus[]
   /** Configured repos in config order. */
   repos: RepoStatus[]
-  /** A Sync now run is in progress. */
+  /** A Sync now run or a scheduled repo round (startup or every 30 minutes) is in progress. */
   syncing: boolean
   /** The last 50 events, newest first. */
   activity: ActivityEvent[]
@@ -92,6 +92,12 @@ export interface StatusServiceOptions {
   repos: { names: readonly string[]; intervalMs: number; configError: string | null } | null
   /** Sync now state (syncNow.ts); absent means nothing is running. */
   syncing?: () => { running: boolean; repos: readonly string[] }
+  /**
+   * The repo scheduler's own state (T52): a round is running (the startup
+   * round, the 30-minute round or one started by Sync now) and the repo being
+   * fetched right now. Absent means repos are off.
+   */
+  repoRound?: () => { running: boolean; repo: string | null }
   now?: () => number
   /** Error classes only. */
   log?: (message: string) => void
@@ -128,6 +134,7 @@ export function createStatusService(options: StatusServiceOptions): StatusServic
         safely('gemini', options.gemini, false),
       ])
       const syncing = options.syncing?.() ?? { running: false, repos: [] }
+      const round = (options.repos === null ? undefined : options.repoRound?.()) ?? { running: false, repo: null }
       const names = options.repos?.names ?? []
       const derived = deriveSourceStates(events, names)
 
@@ -173,7 +180,7 @@ export function createStatusService(options: StatusServiceOptions): StatusServic
           lastSyncAt: later(state?.lastSyncAt ?? null, options.activity.lastSynced(name)),
           documents: row?.documents ?? 0,
           chunks: row?.chunks ?? 0,
-          syncing: syncing.running || syncing.repos.includes(name),
+          syncing: syncing.running || syncing.repos.includes(name) || round.repo === name,
         }
       })
 
@@ -196,7 +203,7 @@ export function createStatusService(options: StatusServiceOptions): StatusServic
               schedule: { kind: 'interval', everyMinutes: Math.round(options.repos.intervalMs / 60_000) },
             }),
         ...repoTotals,
-        syncing: options.repos !== null && (syncing.running || syncing.repos.length > 0),
+        syncing: options.repos !== null && (syncing.running || syncing.repos.length > 0 || round.running),
       }
 
       // Keep has no sync to fail on its own: it changes only when a Takeout zip is uploaded (R12).
@@ -221,7 +228,7 @@ export function createStatusService(options: StatusServiceOptions): StatusServic
         documents,
         sources: [vault, github, keep],
         repos,
-        syncing: syncing.running,
+        syncing: syncing.running || round.running,
         activity: events,
       }
     },

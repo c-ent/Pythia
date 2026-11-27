@@ -5,7 +5,8 @@ import { createPgIndexStore, ensureSource } from '../db/indexStore.js'
 import type { Embedder } from '../embed/ollama.js'
 import { createRepoActivity, type ActivityLog } from '../sync/activity.js'
 import { isRepoLocked, type LlmExclusionStore } from './llmExclusions.js'
-import { loadRepoConfig } from './repoConfig.js'
+import { loadRepoConfigFile, type RepoSpec } from './repoConfig.js'
+import { createRepoDiscovery, listOwnedRepos, type RepoDiscover } from './repoDiscovery.js'
 import { indexRepoCommit, type RepoIndexResult } from './repoIndexer.js'
 import { mirrorPath } from './repoMirror.js'
 import { startRepoScheduler, type RepoRoundResult, type RepoScheduler } from './repoScheduler.js'
@@ -15,7 +16,9 @@ export interface RunningRepos {
   runNow?: () => Promise<unknown>
   /** Fetches one configured repo (Repos page re-sync); null for a name not in the config. */
   runOne?: (name: string) => Promise<RepoRoundResult> | null
-  /** Configured repo names, in config order; empty when the config did not load. */
+  /** The scheduler's round state for Status (T52); absent when the config did not load. */
+  state?: () => { running: boolean; repo: string | null }
+  /** Repo names in config order, then any added by discovery (T54); empty when the config did not load. */
   names: readonly string[]
   /** Time between fetch rounds, in ms. */
   intervalMs: number
@@ -46,24 +49,45 @@ export async function startRepos(
   exclusions?: Pick<LlmExclusionStore, 'list'>,
   activity?: ActivityLog,
 ): Promise<RunningRepos> {
-  let specs
+  let file
   try {
-    specs = await loadRepoConfig(repos.configFile)
+    file = await loadRepoConfigFile(repos.configFile)
   } catch (error) {
     console.error('repo config not loaded; repo fetching is off:', error instanceof Error ? error.message : error)
     const name = error instanceof Error ? error.name : 'unknown error'
     return { names: [], intervalMs: repos.fetchIntervalMs, configError: `repo config not loaded: ${name}`, close: async () => {} }
   }
+  const specs = file.repos
   console.log(`repos: ${specs.length} configured, fetch every ${Math.round(repos.fetchIntervalMs / 60_000)} min`)
   const mirrorsDir = path.resolve(repos.mirrorsDir)
   const mirror = { mirrorsDir, githubToken: repos.githubToken }
   const store = createPgIndexStore(pool)
   const recorder = createRepoActivity(activity)
+  // Shared with Status, which reads it on every request, so repos added by
+  // discovery show up there without a restart. Only ever grows.
+  const names = specs.map((spec) => spec.name)
+
+  // Repo discovery (T54): off unless PYTHIA_REPOS_DISCOVER=1, and it needs the token.
+  let discover: RepoDiscover | undefined
+  const token = repos.githubToken
+  if (repos.discover && token === null) {
+    console.log('PYTHIA_REPOS_DISCOVER=1 needs GITHUB_TOKEN; repo discovery is off')
+  } else if (repos.discover && token !== null) {
+    console.log(`repo discovery: on, ${file.exclude.length} excluded`)
+    discover = createRepoDiscovery({
+      list: () => listOwnedRepos({ token }),
+      configured: file.configured,
+      exclude: file.exclude,
+    })
+  }
 
   const scheduler: RepoScheduler = startRepoScheduler({
     repos: specs,
     ...mirror,
     intervalMs: repos.fetchIntervalMs,
+    ...(discover === undefined
+      ? {}
+      : { discover, onDiscovered: (added: readonly RepoSpec[]) => names.push(...added.map((spec) => spec.name)) }),
     async onSynced(synced, spec) {
       const dir = mirrorPath(mirrorsDir, spec.name)
       const source = await ensureSource(pool, 'repo', spec.name, dir)
@@ -103,7 +127,8 @@ export async function startRepos(
   return {
     runNow: () => scheduler.runNow(),
     runOne: (name) => scheduler.runOne(name),
-    names: specs.map((spec) => spec.name),
+    state: () => scheduler.state(),
+    names,
     intervalMs: repos.fetchIntervalMs,
     configError: null,
     close: () => scheduler.close(),

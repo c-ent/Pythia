@@ -41,6 +41,7 @@ interface Setup {
   sync?: SyncNowOptions
   gemini?: () => Promise<boolean>
   devices?: () => Promise<number>
+  repoRound?: StatusServiceOptions['repoRound']
 }
 
 let clock = Date.UTC(2026, 10, 27, 1, 0, 0)
@@ -60,6 +61,7 @@ async function start(setup: Setup = {}) {
     vault: setup.vault === undefined ? { watching: true } : setup.vault,
     repos: setup.repos === undefined ? { names: ['pythia', 'notes'], intervalMs: 30 * 60_000, configError: null } : setup.repos,
     syncing: () => sync.state(),
+    ...(setup.repoRound === undefined ? {} : { repoRound: setup.repoRound }),
     now: () => clock,
     log: () => {},
   })
@@ -214,6 +216,22 @@ describe('GET /api/status', () => {
     expect(JSON.stringify(store.rows())).not.toContain('aws-keys')
     expect(JSON.stringify(result)).not.toContain('aws-keys')
     expect(source(result, 'obsidian')).toMatchObject({ state: 'healthy', lastSyncAt: new Date(clock - 1000).toISOString() })
+  })
+
+  it('shows a scheduled repo round as syncing, not only Sync now (T52)', async () => {
+    let round: { running: boolean; repo: string | null } = { running: true, repo: 'notes' }
+    const { status } = await start({ repoRound: () => round })
+    const during = await status()
+    expect(during.syncing).toBe(true)
+    expect(source(during, 'github').syncing).toBe(true)
+    expect(source(during, 'obsidian').syncing).toBe(false)
+    expect(repo(during, 'notes').syncing).toBe(true)
+    expect(repo(during, 'pythia').syncing).toBe(false)
+    round = { running: false, repo: null }
+    const after = await status()
+    expect(after.syncing).toBe(false)
+    expect(source(after, 'github').syncing).toBe(false)
+    expect(after.repos.some((entry) => entry.syncing)).toBe(false)
   })
 
   it('shows a failed vault scan as error by error class only', async () => {

@@ -40,6 +40,9 @@ const envSchema = z.object({
     .transform((value) => (value === '' ? undefined : value)),
   PYTHIA_REPOS_DIR: z.string().trim().min(1).default('data/repos'),
   PYTHIA_REPOS_FETCH_MINUTES: z.coerce.number().int().min(5).max(1440).default(30),
+  // Repo discovery (T54): `1` lists the token owner's GitHub repos each round
+  // and adds new ones. Off by default; needs GITHUB_TOKEN.
+  PYTHIA_REPOS_DISCOVER: z.enum(['0', '1']).default('0'),
   // Read-only, fine-grained token for private repos on github.com. Unset
   // still works for public repos and local paths.
   GITHUB_TOKEN: optionalSecret(20),
@@ -100,6 +103,8 @@ export interface ReposConfig {
   mirrorsDir: string
   fetchIntervalMs: number
   githubToken: string | null
+  /** `PYTHIA_REPOS_DISCOVER=1`: add the token owner's new GitHub repos each round (T54). */
+  discover: boolean
 }
 
 export interface DbConfig {
@@ -185,6 +190,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
             mirrorsDir: data.PYTHIA_REPOS_DIR,
             fetchIntervalMs: data.PYTHIA_REPOS_FETCH_MINUTES * 60_000,
             githubToken: data.GITHUB_TOKEN ?? null,
+            discover: data.PYTHIA_REPOS_DISCOVER === '1',
           },
     auth: {
       passwordHash: data.PYTHIA_PASSWORD_HASH ?? null,

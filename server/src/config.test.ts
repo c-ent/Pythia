@@ -128,6 +128,7 @@ describe('loadConfig', () => {
       mirrorsDir: 'data/repos',
       fetchIntervalMs: 30 * 60_000,
       githubToken: null,
+      discover: false,
     })
     const token = 'github_' + 'pat_' + 'x'.repeat(30)
     expect(
@@ -136,9 +137,11 @@ describe('loadConfig', () => {
         PYTHIA_REPOS_CONFIG: '/r.json',
         PYTHIA_REPOS_DIR: '/mirrors',
         PYTHIA_REPOS_FETCH_MINUTES: '60',
+        PYTHIA_REPOS_DISCOVER: '1',
         GITHUB_TOKEN: token,
       }).repos,
-    ).toEqual({ configFile: '/r.json', mirrorsDir: '/mirrors', fetchIntervalMs: 60 * 60_000, githubToken: token })
+    ).toEqual({ configFile: '/r.json', mirrorsDir: '/mirrors', fetchIntervalMs: 60 * 60_000, githubToken: token, discover: true })
+    expect(() => loadConfig({ ...base, PYTHIA_REPOS_DISCOVER: 'yes' })).toThrow(ConfigError)
   })
 
   it('rejects a fetch interval under 5 minutes and a short token without echoing it', () => {

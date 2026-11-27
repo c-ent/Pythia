@@ -58,6 +58,22 @@ describe('startRepoScheduler', () => {
     await scheduler.close()
   })
 
+  it('reports the round and the repo being fetched in state(), for the startup round too', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const sync = vi.fn(async (spec: RepoSpec) => {
+      await gate
+      return ok(spec.name)
+    })
+    const scheduler = startRepoScheduler({ repos, mirrorsDir: '/m', sync, onRound: () => {} })
+    await vi.waitFor(() => expect(sync).toHaveBeenCalledTimes(1))
+    expect(scheduler.state()).toEqual({ running: true, repo: 'a' })
+    release()
+    await scheduler.runNow()
+    expect(scheduler.state()).toEqual({ running: false, repo: null })
+    await scheduler.close()
+  })
+
   it('counts a failing onSynced as that repo failing', async () => {
     const scheduler = startRepoScheduler({
       repos: [repos[0] as RepoSpec],

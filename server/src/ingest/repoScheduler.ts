@@ -29,6 +29,15 @@ export interface RepoSchedulerOptions extends MirrorOptions {
   onSingle?: (name: string, result: RepoRoundResult) => unknown
   /** Called with the error of each repo that failed to fetch or index, in a round or in `runOne`. */
   onFailed?: (spec: RepoSpec, error: unknown) => void
+  /**
+   * Repo discovery (T54): run at the start of every round, before any fetch.
+   * Returns repos to add; they are fetched and indexed in that same round and
+   * kept for later rounds. Repos are only ever added, never removed. With a
+   * `discover` hook the startup round runs even when no repo is configured.
+   */
+  discover?: (current: readonly RepoSpec[]) => Promise<RepoSpec[]>
+  /** Called with the repos `discover` added, before they are fetched. */
+  onDiscovered?: (added: readonly RepoSpec[]) => void
   /** Injected for tests. */
   sync?: typeof syncRepo
 }
@@ -43,6 +52,12 @@ export interface RepoScheduler {
    * that is not configured.
    */
   runOne(name: string): Promise<RepoRoundResult> | null
+  /**
+   * `running`: a round is queued or running, whoever started it (startup, the
+   * interval timer or `runNow`). `repo`: the repo being fetched or indexed
+   * right now, in a round or a single fetch; null between repos.
+   */
+  state(): { running: boolean; repo: string | null }
   close(): Promise<void>
 }
 
@@ -59,6 +74,8 @@ export function startRepoScheduler(options: RepoSchedulerOptions): RepoScheduler
       }))
 
   let closed = false
+  // Configured repos, plus any discovery adds (T54). Only ever grows.
+  const specs: RepoSpec[] = [...options.repos]
   let current: Promise<RepoRoundResult> | null = null
   const singles = new Map<string, Promise<RepoRoundResult>>()
   let timer: NodeJS.Timeout | null = null
@@ -70,7 +87,11 @@ export function startRepoScheduler(options: RepoSchedulerOptions): RepoScheduler
     return next
   }
 
+  // Only one repo is ever fetched at a time (see `exclusive`), so one name is enough.
+  let active: string | null = null
+
   async function syncOne(spec: RepoSpec, result: RepoRoundResult): Promise<void> {
+    active = spec.name
     try {
       const synced = await sync(spec, options)
       result.synced.push(synced)
@@ -78,17 +99,42 @@ export function startRepoScheduler(options: RepoSchedulerOptions): RepoScheduler
     } catch (error) {
       result.failed.push({ name: spec.name, error: error instanceof Error ? error.message : 'unknown error' })
       options.onFailed?.(spec, error)
+    } finally {
+      active = null
     }
   }
 
   async function round(): Promise<RepoRoundResult> {
     const result: RepoRoundResult = { synced: [], failed: [] }
-    for (const spec of options.repos) {
+    await discoverNew()
+    for (const spec of [...specs]) {
       if (closed) break
       await syncOne(spec, result)
     }
     await report(() => onRound(result))
     return result
+  }
+
+  /** Adds the repos discovery found; a failing hook never stops the round. */
+  async function discoverNew(): Promise<void> {
+    if (options.discover === undefined || closed) return
+    let added: RepoSpec[]
+    try {
+      added = await options.discover(specs)
+    } catch (error) {
+      console.error(`repo discovery failed: ${error instanceof Error ? error.name : 'unknown'}`)
+      return
+    }
+    const known = new Set(specs.map((spec) => spec.name.toLowerCase()))
+    const fresh = added.filter((spec) => {
+      const key = spec.name.toLowerCase()
+      if (known.has(key)) return false
+      known.add(key)
+      return true
+    })
+    if (fresh.length === 0) return
+    specs.push(...fresh)
+    options.onDiscovered?.(fresh)
   }
 
   /** A failing report hook is logged by class and never turns a round into a failure. */
@@ -111,7 +157,7 @@ export function startRepoScheduler(options: RepoSchedulerOptions): RepoScheduler
   }
 
   function runOne(name: string): Promise<RepoRoundResult> | null {
-    const spec = options.repos.find((candidate) => candidate.name === name)
+    const spec = specs.find((candidate) => candidate.name === name)
     if (spec === undefined) return null
     const running = singles.get(name)
     if (running !== undefined) return running
@@ -135,11 +181,12 @@ export function startRepoScheduler(options: RepoSchedulerOptions): RepoScheduler
     timer.unref()
   }
 
-  if (options.repos.length > 0) void runNow()
+  if (specs.length > 0 || options.discover !== undefined) void runNow()
 
   return {
     runNow,
     runOne,
+    state: () => ({ running: current !== null, repo: active }),
     async close() {
       closed = true
       if (timer !== null) clearTimeout(timer)
