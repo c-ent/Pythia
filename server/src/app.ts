@@ -4,12 +4,19 @@ import type { ImportService } from './ingest/importService.js'
 import { createMcpRouter } from './mcp/mcpServer.js'
 import { createApiRouter, jsonErrorHandler } from './routes/api.js'
 import { createAuthRouter, requireBearer, requireSession, type AuthDeps } from './routes/auth.js'
+import { createDevicesRouter } from './routes/devices.js'
+import { createMcpTokenRouter } from './routes/mcpToken.js'
 import type { ProfileService } from './profile/profileService.js'
 import { createProfileRouter } from './routes/profile.js'
 import type { RecentQueryService } from './recent/recentQueryService.js'
 import { createRecentQueriesRouter } from './routes/recentQueries.js'
 import { createSettingsRouter } from './routes/settings.js'
+import { createGeminiSettingsRouter } from './routes/geminiSettings.js'
+import type { GeminiSettingsService } from './settings/geminiSettings.js'
 import { createStaticRouter } from './routes/static.js'
+import { createStatusRouter } from './routes/status.js'
+import type { StatusService } from './sync/statusService.js'
+import type { SyncNowService } from './sync/syncNow.js'
 import type { RepoService } from './search/repoService.js'
 import type { SearchService } from './search/searchService.js'
 import type { SettingsService } from './settings/settingsService.js'
@@ -27,10 +34,14 @@ export interface AppDeps {
   imports?: ImportService
   /** Settings, starting with the Gemini exclusion list (R3); `/api/settings` exists only with it. */
   settings?: SettingsService
+  /** Gemini key and usage (R16); `/api/settings/gemini` exists only with it. */
+  gemini?: GeminiSettingsService
   /** Profile and preferences (R17); `/api/profile` exists only with it. */
   profile?: ProfileService
   /** Recent searches and questions (R14); `/api/recent-queries` exists only with it, and search and ask record into it. */
   recent?: RecentQueryService
+  /** Status, activity, Sync now and repo re-sync (R18); those routes exist only with it. */
+  status?: { service: StatusService; sync: SyncNowService }
   /** Built PWA directory (T18); without it only the API, `/mcp` and `/healthz` are served. */
   webDir?: string
 }
@@ -46,12 +57,16 @@ export function createApp(deps: AppDeps): Express {
   // session; everything after `requireSession` answers 401 without one.
   app.use('/api', createAuthRouter(deps.auth))
   app.use('/api', requireSession(deps.auth))
+  if (deps.auth.login !== null) app.use('/api', createDevicesRouter(deps.auth.login.sessions))
+  app.use('/api', createMcpTokenRouter(deps.auth.mcp))
   if (deps.settings !== undefined) app.use('/api', createSettingsRouter(deps.settings))
+  if (deps.gemini !== undefined) app.use('/api', createGeminiSettingsRouter(deps.gemini))
   if (deps.profile !== undefined) app.use('/api', createProfileRouter(deps.profile))
   if (deps.recent !== undefined) app.use('/api', createRecentQueriesRouter(deps.recent))
+  if (deps.status !== undefined) app.use('/api', createStatusRouter(deps.status.service, deps.status.sync))
   app.use('/api', createApiRouter(deps.search, deps.ask, deps.sync, deps.repos, deps.imports, deps.recent))
-  // The MCP server (R7) has its own static bearer token, separate from login.
-  app.use('/mcp', requireBearer(deps.auth.mcpToken), createMcpRouter(deps.search, console.error, deps.repos))
+  // The MCP server (R7) has its own bearer token, separate from login (rotated under Settings, T37).
+  app.use('/mcp', requireBearer(deps.auth.mcp), createMcpRouter(deps.search, console.error, deps.repos))
   // The app shell is public: it has to load before the login screen can show.
   // It never answers /api, /mcp or /healthz paths (see routes/static.ts).
   if (deps.webDir !== undefined) app.use(createStaticRouter(deps.webDir))

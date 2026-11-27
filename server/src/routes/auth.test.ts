@@ -4,7 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createApp } from '../app.js'
 import { hashPassword, parsePasswordHash } from '../security/password.js'
 import { createVisitorLimiter } from '../security/rateLimit.js'
-import { createSessionSigner } from '../security/session.js'
+import { createMcpTokenService, createMemoryMcpTokenStore } from '../mcp/mcpToken.js'
+import { createMemorySessionStore, createSessionManager } from '../security/sessionStore.js'
 import type { AskService } from '../ask/askService.js'
 import type { SearchService } from '../search/searchService.js'
 import { createAuthDeps, SESSION_COOKIE, type AuthDeps } from './auth.js'
@@ -54,10 +55,10 @@ async function loginDeps(max: number): Promise<AuthDeps> {
   return {
     login: {
       password,
-      sessions: createSessionSigner({ secret: 's'.repeat(40), passwordHash: hash }),
+      sessions: createSessionManager({ store: createMemorySessionStore(), passwordHash: hash }),
       limiter: createVisitorLimiter({ max, windowMs: 60_000 }),
     },
-    mcpToken,
+    mcp: createMcpTokenService({ envToken: mcpToken, store: createMemoryMcpTokenStore() }),
   }
 }
 
@@ -97,6 +98,7 @@ describe('auth', () => {
 
   it('returns 401 for a forged or unknown session cookie', async () => {
     expect((await searchWith(base, `${SESSION_COOKIE}=1.${'A'.repeat(22)}.${'A'.repeat(43)}`)).status).toBe(401)
+    expect((await searchWith(base, `${SESSION_COOKIE}=${'A'.repeat(43)}`)).status).toBe(401)
     expect((await searchWith(base, 'pythia_session=whatever')).status).toBe(401)
   })
 
@@ -224,7 +226,7 @@ describe('per-visitor login limit', () => {
 describe('auth not configured', () => {
   it('keeps /api and /mcp closed and answers 503 on login', async () => {
     const logs: string[] = []
-    const base = await start(createAuthDeps({ passwordHash: null, sessionSecret: null, mcpToken: null }, (line) => logs.push(line)))
+    const base = await start(createAuthDeps({ passwordHash: null, mcpToken: null, sessionStore: createMemorySessionStore(), mcpTokenStore: createMemoryMcpTokenStore() }, (line) => logs.push(line)))
     expect((await searchWith(base)).status).toBe(401)
     const res = await login(base, { password: pw })
     expect(res.status).toBe(503)
@@ -235,7 +237,7 @@ describe('auth not configured', () => {
   })
 
   it('rejects an invalid hash at startup', () => {
-    expect(() => createAuthDeps({ passwordHash: 'nope', sessionSecret: null, mcpToken: null }, () => {})).toThrow(
+    expect(() => createAuthDeps({ passwordHash: 'nope', mcpToken: null, sessionStore: createMemorySessionStore(), mcpTokenStore: createMemoryMcpTokenStore() }, () => {})).toThrow(
       /PYTHIA_PASSWORD_HASH/,
     )
   })

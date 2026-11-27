@@ -1,9 +1,9 @@
-import express, { type CookieOptions, type RequestHandler, type Router } from 'express'
+import express, { type CookieOptions, type RequestHandler, type Response, type Router } from 'express'
 import { z } from 'zod'
 import { parsePasswordHash, verifyPassword, type PasswordHash } from '../security/password.js'
 import { createVisitorLimiter, visitorKey, type VisitorLimiter } from '../security/rateLimit.js'
-import { createSessionSigner, type SessionSigner } from '../security/session.js'
-import { randomSecret, secretsEqual } from '../security/tokens.js'
+import { createSessionManager, type Session, type SessionManager, type SessionStore } from '../security/sessionStore.js'
+import { createMcpTokenService, type McpTokenService, type McpTokenStore } from '../mcp/mcpToken.js'
 import { HttpError } from './api.js'
 
 // `__Host-` makes browsers require Secure and Path=/ and refuse a Domain, so
@@ -13,27 +13,31 @@ export const SESSION_COOKIE = '__Host-pythia_session'
 // 10 attempts per 15 minutes per visitor (see `visitorKey`).
 export const LOGIN_LIMIT = { max: 10, windowMs: 15 * 60 * 1000 }
 
-const cookieOptions: CookieOptions = { httpOnly: true, secure: true, sameSite: 'lax', path: '/' }
+export const sessionCookieOptions: CookieOptions = { httpOnly: true, secure: true, sameSite: 'lax', path: '/' }
 
 const loginSchema = z.object({ password: z.string().min(1).max(1024) })
 
 export interface LoginDeps {
   password: PasswordHash
-  sessions: SessionSigner
+  sessions: SessionManager
   limiter: VisitorLimiter
 }
 
 export interface AuthDeps {
   /** null when no password hash is configured: login answers 503 and `/api` 401. */
   login: LoginDeps | null
-  /** null when no MCP token is configured: `/mcp` answers 401. */
-  mcpToken: string | null
+  /** The `/mcp` bearer token: `.env` until the first rotation, then the database (T37). */
+  mcp: McpTokenService
 }
 
 export interface AuthSettings {
   passwordHash: string | null
-  sessionSecret: string | null
+  /** PYTHIA_MCP_TOKEN; used until the token is rotated. */
   mcpToken: string | null
+  /** Where web sessions live (the `sessions` table in production). */
+  sessionStore: SessionStore
+  /** Where a rotated MCP token's hash lives (the `mcp_token` table in production). */
+  mcpTokenStore: McpTokenStore
 }
 
 /** Builds auth from config. A missing value turns a feature off; it never opens it. */
@@ -44,15 +48,14 @@ export function createAuthDeps(settings: AuthSettings, log: (line: string) => vo
   } else {
     const password = parsePasswordHash(settings.passwordHash)
     if (password === null) throw new Error('PYTHIA_PASSWORD_HASH is not a valid argon2id hash')
-    if (settings.sessionSecret === null) log('PYTHIA_SESSION_SECRET is not set; sessions end when the server restarts')
     login = {
       password,
-      sessions: createSessionSigner({ secret: settings.sessionSecret ?? randomSecret(), passwordHash: settings.passwordHash }),
+      sessions: createSessionManager({ store: settings.sessionStore, passwordHash: settings.passwordHash }),
       limiter: createVisitorLimiter(LOGIN_LIMIT),
     }
   }
-  if (settings.mcpToken === null) log('PYTHIA_MCP_TOKEN is not set; /mcp answers 401')
-  return { login, mcpToken: settings.mcpToken }
+  if (settings.mcpToken === null) log('PYTHIA_MCP_TOKEN is not set; /mcp answers 401 until a token is rotated in Settings')
+  return { login, mcp: createMcpTokenService({ envToken: settings.mcpToken, store: settings.mcpTokenStore }) }
 }
 
 function readCookie(header: string | undefined, name: string): string | null {
@@ -64,12 +67,20 @@ function readCookie(header: string | undefined, name: string): string | null {
   return null
 }
 
-function hasSession(deps: AuthDeps, cookieHeader: string | undefined): boolean {
+async function findSession(deps: AuthDeps, cookieHeader: string | undefined): Promise<Session | null> {
   const token = readCookie(cookieHeader, SESSION_COOKIE)
-  return token !== null && deps.login !== null && deps.login.sessions.verify(token)
+  if (token === null || deps.login === null) return null
+  return deps.login.sessions.verify(token)
 }
 
-const unauthenticated = (): HttpError => new HttpError(401, 'unauthenticated', 'Sign in required')
+const CURRENT_SESSION = 'pythiaSession'
+
+/** The session `requireSession` let through, for routes that need to know the current device. */
+export function currentSession(res: Response): Session | null {
+  return (res.locals[CURRENT_SESSION] as Session | undefined) ?? null
+}
+
+export const unauthenticated = (): HttpError => new HttpError(401, 'unauthenticated', 'Sign in required')
 
 /** `POST /login`, `POST /logout` and `GET /session`; mounted on `/api` in front of `requireSession`. */
 export function createAuthRouter(deps: AuthDeps): Router {
@@ -95,39 +106,47 @@ export function createAuthRouter(deps: AuthDeps): Router {
       throw new HttpError(401, 'invalid_credentials', 'Wrong password')
     }
     login.limiter.reset(visitor)
-    const session = login.sessions.issue()
-    res.cookie(SESSION_COOKIE, session.token, { ...cookieOptions, maxAge: session.maxAgeMs })
+    const session = await login.sessions.issue(req.headers['user-agent'])
+    res.cookie(SESSION_COOKIE, session.token, { ...sessionCookieOptions, maxAge: session.maxAgeMs })
     res.status(204).end()
   })
 
-  router.post('/logout', (req, res) => {
+  router.post('/logout', async (req, res) => {
     const token = readCookie(req.headers.cookie, SESSION_COOKIE)
-    if (token !== null) deps.login?.sessions.revoke(token)
-    res.clearCookie(SESSION_COOKIE, cookieOptions)
+    if (token !== null) await deps.login?.sessions.revoke(token)
+    res.clearCookie(SESSION_COOKIE, sessionCookieOptions)
     res.status(204).end()
   })
 
-  router.get('/session', (req, res) => {
-    if (!hasSession(deps, req.headers.cookie)) throw unauthenticated()
+  router.get('/session', async (req, res) => {
+    if ((await findSession(deps, req.headers.cookie)) === null) throw unauthenticated()
     res.json({ authenticated: true })
   })
 
   return router
 }
 
-/** 401 unless the request carries a valid session cookie. */
+/** 401 unless the request carries the cookie of an active session. */
 export function requireSession(deps: AuthDeps): RequestHandler {
-  return (req, _res, next) => {
-    if (hasSession(deps, req.headers.cookie)) next()
-    else next(unauthenticated())
+  return async (req, res, next) => {
+    const session = await findSession(deps, req.headers.cookie)
+    if (session === null) {
+      next(unauthenticated())
+      return
+    }
+    res.locals[CURRENT_SESSION] = session
+    next()
   }
 }
 
-/** 401 unless `Authorization: Bearer <token>` matches, compared in constant time. */
-export function requireBearer(token: string | null): RequestHandler {
-  return (req, res, next) => {
+/**
+ * 401 unless `Authorization: Bearer <token>` is the MCP token in use, compared
+ * in constant time. Checked on every request, so a rotation applies at once.
+ */
+export function requireBearer(mcp: McpTokenService): RequestHandler {
+  return async (req, res, next) => {
     const match = /^Bearer (\S+)$/i.exec(req.headers.authorization ?? '')
-    if (token !== null && match !== null && secretsEqual(match[1] ?? '', token)) {
+    if (match !== null && (await mcp.verify(match[1] ?? ''))) {
       next()
       return
     }

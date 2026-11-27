@@ -2,7 +2,8 @@ import { createServer } from 'node:http'
 import pg from 'pg'
 import { createApp } from './app.js'
 import { createAskService } from './ask/askService.js'
-import { createGeminiModel } from './ask/gemini.js'
+import { createPgGeminiKeyStore, createPgGeminiUsageStore } from './db/geminiStore.js'
+import { createGeminiSettings } from './settings/geminiSettings.js'
 import { createOllamaChatModel } from './ask/ollamaChat.js'
 import { loadConfig } from './config.js'
 import { createPgChunkTextLoader, createPgSearchStore } from './db/searchStore.js'
@@ -19,11 +20,17 @@ import { createPgLlmExclusionStore } from './db/llmExclusionStore.js'
 import { createPgProfileStore } from './db/profileStore.js'
 import { createProfileService } from './profile/profileService.js'
 import { createPgRecentQueryStore } from './db/recentQueryStore.js'
+import { createPgSessionStore } from './db/sessionStore.js'
+import { createPgMcpTokenStore } from './db/mcpTokenStore.js'
 import { createRecentQueryService } from './recent/recentQueryService.js'
 import { createSettingsService } from './settings/settingsService.js'
 import { createImportService } from './ingest/importService.js'
 import { createRepoService } from './search/repoService.js'
 import { createSyncService } from './sync/syncService.js'
+import { createPgActivityStore } from './db/activityStore.js'
+import { createActivityLog } from './sync/activity.js'
+import { createStatusService } from './sync/statusService.js'
+import { createSyncNow } from './sync/syncNow.js'
 
 const config = loadConfig(process.env)
 const pool = new pg.Pool(config.db)
@@ -37,35 +44,51 @@ const search = createSearchService({ store: createPgSearchStore(pool), embedder:
 const indexEmbedder = () =>
   createOllamaEmbedder({ baseUrl: config.ollamaUrl, batchSize: config.embed.batchSize, timeoutMs: config.embed.timeoutMs })
 console.log(`embed: indexing batches of ${config.embed.batchSize}, timeout ${config.embed.timeoutMs} ms`)
-// Ask (R8): Gemini only with a key; the local model unless OLLAMA_CHAT_MODEL is empty.
+// Gemini key (R16, T39): GEMINI_API_KEY in .env wins; otherwise the key saved
+// in Settings, encrypted with PYTHIA_SECRETS_KEY. Every Gemini request is counted per day.
+const gemini = createGeminiSettings({
+  envKey: config.ask.geminiApiKey,
+  secretsKey: config.secretsKey,
+  geminiModel: config.ask.geminiModel,
+  keys: createPgGeminiKeyStore(pool),
+  usage: createPgGeminiUsageStore(pool),
+})
+// Ask (R8): Gemini only with a key, looked up per question so a key saved in
+// Settings applies at once; the local model unless OLLAMA_CHAT_MODEL is empty.
 const ask = createAskService({
   search,
   chunks: createPgChunkTextLoader(pool),
-  gemini:
-    config.ask.geminiApiKey === null
-      ? null
-      : createGeminiModel({ apiKey: config.ask.geminiApiKey, model: config.ask.geminiModel }),
+  gemini: () => gemini.model(),
   local:
     config.ask.ollamaChatModel === null
       ? null
       : createOllamaChatModel({ baseUrl: config.ollamaUrl, model: config.ask.ollamaChatModel }),
 })
 console.log(
-  `ask: gemini ${config.ask.geminiApiKey === null ? 'off (no GEMINI_API_KEY)' : config.ask.geminiModel}, ` +
+  `ask: gemini ${config.ask.geminiApiKey === null ? 'key from Settings if saved' : `${config.ask.geminiModel} (GEMINI_API_KEY)`}, ` +
     `local ${config.ask.ollamaChatModel ?? 'off'}`,
 )
-const auth = createAuthDeps(config.auth)
+if (config.secretsKey === null) console.log('PYTHIA_SECRETS_KEY is not set; a Gemini key cannot be saved in Settings')
+// Web sessions live in the `sessions` table (T36), so signing a device out survives a restart.
+// A rotated MCP token's hash lives in `mcp_token` (T37); until then PYTHIA_MCP_TOKEN is used.
+const auth = createAuthDeps({
+  ...config.auth,
+  sessionStore: createPgSessionStore(pool),
+  mcpTokenStore: createPgMcpTokenStore(pool),
+})
 const sync = createSyncService({ store: createPgSyncStore(pool) })
 const repoService = createRepoService({ store: createPgRepoStore(pool) })
 
 // The Gemini exclusion list (R3, T24), edited under Settings. Empty by default.
 const llmExclusions = createPgLlmExclusionStore(pool)
+// Sync activity (R18, T42): the last 50 events, counts and error classes only.
+const activity = createActivityLog(createPgActivityStore(pool))
 
 let vault: RunningVault | undefined
 if (config.vault === null) {
   console.log('PYTHIA_VAULT_PATH is not set; vault indexing is off')
 } else {
-  vault = await startVault(pool, config.vault, indexEmbedder(), llmExclusions)
+  vault = await startVault(pool, config.vault, indexEmbedder(), llmExclusions, activity)
 }
 
 const settings = createSettingsService({
@@ -77,7 +100,7 @@ let repos: RunningRepos | undefined
 if (config.repos === null) {
   console.log('PYTHIA_REPOS_CONFIG is not set; repo fetching is off')
 } else {
-  repos = await startRepos(pool, config.repos, indexEmbedder())
+  repos = await startRepos(pool, config.repos, indexEmbedder(), llmExclusions, activity)
 }
 
 // Keep import (R12) and the Import page's status and re-index button.
@@ -86,7 +109,21 @@ const imports = createImportService({
   keepSource: () => ensureSource(pool, 'keep', 'keep', 'takeout'),
   store: createPgIndexStore(pool),
   embedder: indexEmbedder(),
+  exclusions: () => llmExclusions.list(),
   reindexers: { vault: vault?.rescan, repos: repos?.runNow },
+  activity,
+})
+// Status, Sync now and per-repo re-sync (R18, T42).
+const syncNow = createSyncNow({ vault: vault?.rescan, repos: repos?.runNow, repo: repos?.runOne })
+const status = createStatusService({
+  sources: createPgStatusStore(pool),
+  activity,
+  devices: async () => (await auth.login?.sessions.list())?.length ?? 0,
+  gemini: () => gemini.available(),
+  vault: vault?.rescan === undefined ? null : { watching: vault.watching },
+  repos:
+    repos === undefined ? null : { names: repos.names, intervalMs: repos.intervalMs, configError: repos.configError },
+  syncing: () => syncNow.state(),
 })
 console.log(config.webDir === null ? 'PYTHIA_WEB_DIR is not set; serving the API only' : `web: ${config.webDir}`)
 const server = createServer(
@@ -98,8 +135,10 @@ const server = createServer(
     repos: repoService,
     imports,
     settings,
+    gemini,
     profile: createProfileService(createPgProfileStore(pool)),
     recent: createRecentQueryService(createPgRecentQueryStore(pool)),
+    status: { service: status, sync: syncNow },
     ...(config.webDir === null ? {} : { webDir: config.webDir }),
   }),
 )
@@ -114,6 +153,7 @@ const shutdown = (): void => {
   stopping = true
   server.close()
   void (async () => {
+    await syncNow.idle()
     await vault?.close()
     await repos?.close()
     await pool.end()
