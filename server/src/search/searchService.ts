@@ -7,7 +7,7 @@ import {
   type SearchStore,
   type StoredDocument,
 } from '../db/searchStore.js'
-import type { Embedder } from '../embed/ollama.js'
+import { OllamaError, type Embedder } from '../embed/ollama.js'
 
 /** Rows each of the FTS and vector CTEs keep before fusion (spec R4). */
 export const SEARCH_CANDIDATES = 50
@@ -171,7 +171,10 @@ const toResult = (hit: ChunkHit): SearchResult => ({
 function describeError(error: unknown): string {
   if (!(error instanceof Error)) return 'unknown error'
   const status = 'status' in error && typeof error.status === 'number' ? ` ${error.status}` : ''
-  return `${error.name}${status}`
+  // OllamaError messages never contain the input text (see embed/ollama.ts),
+  // so they are safe to log; other errors still log their kind only.
+  const detail = error instanceof OllamaError ? `: ${error.message}` : ''
+  return `${error.name}${status}${detail}`
 }
 
 /** The one search path shared by REST routes and `/mcp` tools. */

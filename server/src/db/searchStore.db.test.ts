@@ -117,6 +117,10 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('hybrid search against Post
     const keep = await ensureSource(pool, 'chat', 'chat', '/chat')
     // Same topic, older embedding model: its vector must not be compared.
     await addDoc(keep.id, 'chat/kitten.md', 'Kitten adoption chat log.', 'old-model')
+    // T50: notes that share only some words with a full question.
+    const takeout = await ensureSource(pool, 'keep', 'takeout', '/takeout')
+    await addDoc(takeout.id, 'Career/Personal Branding.md', 'Share a LinkedIn post every week about projects you shipped.')
+    await addDoc(takeout.id, 'Career/Photo.md', 'LinkedIn profile photo tips.')
 
     search = createSearchService({ store: createPgSearchStore(pool), embedder, log: () => {} })
     // Migrations plus ~65 indexed documents: under the full parallel suite this
@@ -192,6 +196,30 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('hybrid search against Post
       expect(response.degraded).toBe(true)
       expect(response.results[0]).toMatchObject({ path: 'Pets/Cats.md', vectorRank: null })
       expect((await search.search({ query: 'feline', sources: ['obsidian'] })).results).toEqual([])
+    } finally {
+      ollamaDown = false
+    }
+  })
+
+  it('matches some of the words of a full question when the query is not embedded (T50)', async () => {
+    const question = 'what should I post on LinkedIn to get noticed'
+    // With a vector, full text still needs every word, so neither note matches by words.
+    const strict = (await search.search({ query: question, limit: 50 })).results
+    expect(strict.every((r) => r.ftsRank === null)).toBe(true)
+
+    ollamaDown = true
+    try {
+      const response = await search.search({ query: question, limit: 5 })
+      expect(response.degraded).toBe(true)
+      // The note matching more of the words ranks first.
+      expect(response.results.map((r) => r.path)).toEqual(['Career/Personal Branding.md', 'Career/Photo.md'])
+      const marked = response.results[0]?.snippet.highlights.map(([s, e]) => response.results[0]?.snippet.text.slice(s, e))
+      expect(marked).toEqual(expect.arrayContaining(['LinkedIn', 'post']))
+      // Exclusions keep the strict form.
+      expect(await paths({ query: 'cats -radiator', sources: ['obsidian'] })).toEqual([])
+      expect(await paths({ query: 'linkedin -photo' })).toEqual(['Career/Personal Branding.md'])
+      // A phrase keeps the strict form too.
+      expect(await paths({ query: '"profile photo"' })).toEqual(['Career/Photo.md'])
     } finally {
       ollamaDown = false
     }

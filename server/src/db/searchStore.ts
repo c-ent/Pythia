@@ -116,8 +116,22 @@ const SOURCE_FILTER = `s.enabled AND s.kind <> 'work'
   AND ($3::text[] IS NULL OR s.kind = ANY ($3::text[]))
   AND ($4::text IS NULL OR (s.kind = 'repo' AND s.name = $4::text))`
 
+// With a query vector, full text needs every word (`websearch_to_tsquery`).
+// Without one (Ollama down or timed out, T50) a question like "what should I
+// post on LinkedIn to get noticed" would match nothing, so the words are ORed
+// instead and `ts_rank_cd` puts chunks matching more of them first. Queries
+// with a phrase (`<->`) or an exclusion (`!`) keep the strict form, so
+// "-word" still excludes. Lexemes never contain spaces, `!` or `<`.
 const HYBRID_SQL = `
-WITH q AS (SELECT websearch_to_tsquery('english', $1) AS tsq),
+WITH strict AS (SELECT websearch_to_tsquery('english', $1) AS tsq),
+q AS (
+  SELECT CASE
+    WHEN $2::vector IS NULL AND strpos(tsq::text, '!') = 0 AND strpos(tsq::text, '<') = 0
+      THEN replace(tsq::text, ' & ', ' | ')::tsquery
+    ELSE tsq
+  END AS tsq
+  FROM strict
+),
 fts AS (
   SELECT id, row_number() OVER (ORDER BY score DESC, id) AS rank
   FROM (
