@@ -31,6 +31,36 @@ describe('App', () => {
       if (url === '/api/profile' && signedIn) return json(200, { profile: DEFAULT_PROFILE })
       // Home's cards load recent changes and recent queries.
       if (url.startsWith('/api/recent') && signedIn) return json(200, { documents: [], queries: [] })
+      // The top bar loads the signed-in device count.
+      if (url === '/api/devices' && signedIn) return json(200, { devices: [] })
+      // The shell reads the server status for the Online and Gemini pills.
+      if (url === '/api/status' && signedIn) {
+        return json(200, {
+          reachable: true,
+          checkedAt: '2026-11-27T08:00:00.000Z',
+          gemini: { available: false },
+          devices: { active: 1 },
+          documents: { obsidian: 0, keep: 0, repo: 0, chat: 0 },
+          syncing: false,
+          sources: [],
+          repos: [],
+          activity: [],
+        })
+      }
+      // The top bar loads the Gemini key status for its Gemini pill.
+      if (url === '/api/settings/gemini' && signedIn) {
+        return json(200, {
+          configured: false,
+          source: null,
+          last4: null,
+          savedAt: null,
+          envOverridesSaved: false,
+          canSave: true,
+          warning: null,
+          model: 'gemini',
+          usedToday: 0,
+        })
+      }
       return unauthenticated()
     })
     render(<App />)

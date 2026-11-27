@@ -73,12 +73,20 @@ describe('AppShell', () => {
   })
 
   it('opens a Settings section from its address', () => {
-    window.history.replaceState(null, '', '/settings/storage')
+    window.history.replaceState(null, '', '/settings/devices')
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 404 })))
     render(<AppShell onSignOut={() => {}} />)
     const sections = screen.getByRole('navigation', { name: 'Settings' })
-    expect(within(sections).getByRole('link', { name: 'Storage' }).getAttribute('aria-current')).toBe('page')
-    expect(window.location.pathname).toBe('/settings/storage')
+    expect(within(sections).getByRole('link', { name: 'Connect devices' }).getAttribute('aria-current')).toBe('page')
+    expect(window.location.pathname).toBe('/settings/devices')
+  })
+
+  it('sends the old Settings storage address to Pinned', () => {
+    window.history.replaceState(null, '', '/settings/storage')
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 404 })))
+    render(<AppShell onSignOut={() => {}} />)
+    expect(window.location.pathname).toBe('/pinned')
+    expect(screen.getByRole('heading', { level: 1, name: 'Pinned' })).toBeTruthy()
   })
 
   it('sends the old /import address to Sources', () => {

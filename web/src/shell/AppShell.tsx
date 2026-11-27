@@ -14,15 +14,21 @@ import {
 } from '../router'
 import { AskScreen } from '../screens/AskScreen'
 import { DocumentScreen } from '../screens/DocumentScreen'
-import { ImportScreen } from '../screens/ImportScreen'
 import { ReposScreen } from '../screens/ReposScreen'
 import { SearchScreen } from '../screens/SearchScreen'
 import { SettingsScreen } from '../screens/SettingsScreen'
-import { PinnedPlaceholder } from '../screens/UpcomingScreens'
+import { SourcesScreen } from '../screens/SourcesScreen'
+import { PinnedScreen } from '../screens/PinnedScreen'
+import { useServerStatus } from '../sources/useServerStatus'
 import { NAV, SETTINGS_SECTION_LABELS, readSidebarCollapsed, saveSidebarCollapsed } from './nav'
 import { MobileTabBar, MobileTopBar, Rail, Sidebar, type CurrentFor } from './Navigation'
 import { isNewSearchShortcut, startNewSearch } from './newSearch'
 import { TopBar } from './TopBar'
+import { useDeviceCount } from './useDeviceCount'
+import { useGeminiStatus } from './useGeminiStatus'
+
+/** How often the shell rereads `GET /api/status` while online, so the top bar's pills stay current. */
+export const STATUS_REFRESH_MS = 60_000
 
 /**
  * Mobile first (ui.md, Layout): below md a top bar and a floating tab bar; md
@@ -40,6 +46,12 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
   const documentId = documentIdFromPath(pathname)
   const section = settingsSectionFromPath(pathname)
   const online = useOnline()
+  const devices = useDeviceCount(online)
+  const geminiConfigured = useGeminiStatus(online)
+  // The status says whether Gemini is usable (a key is set and the last call
+  // did not fail on it); until it arrives, or if it fails, the key status stands in.
+  const server = useServerStatus(online, { refreshMs: STATUS_REFRESH_MS })
+  const gemini = server.status?.gemini.available ?? geminiConfigured
   const pinnedRepos = usePinnedRepos()
   useOfflineSync(true, pinnedRepos)
   const [collapsed, setCollapsed] = useState(readSidebarCollapsed)
@@ -99,10 +111,14 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
       screen = <ReposScreen />
       break
     case 'pinned':
-      screen = <PinnedPlaceholder />
+      // Pinned repos beside the storage card from lg.
+      width = 'max-w-5xl'
+      screen = <PinnedScreen />
       break
     case 'sources':
-      screen = <ImportScreen />
+      // The sources list and the activity side by side from lg.
+      width = 'max-w-6xl'
+      screen = <SourcesScreen />
       break
     case 'settings':
       screen = <SettingsScreen key={section} section={section} onSignOut={onSignOut} />
@@ -134,18 +150,21 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
         className={collapsed ? 'hidden' : 'hidden lg:flex'}
         current={current}
         pinned={pinnedRepos.length}
+        recentKind={route === 'ask' ? 'ask' : 'search'}
+        online={online}
         onCollapse={() => collapse(true)}
       />
       <Rail
         className={collapsed ? 'hidden md:flex' : 'hidden md:flex lg:hidden'}
         current={current}
         collapsed={collapsed}
+        online={online}
         onExpand={() => collapse(false)}
       />
 
       <div className="panel-glow flex min-h-dvh min-w-0 flex-1 flex-col md:min-h-[calc(100dvh-1.5rem)] md:rounded-panel">
-        <MobileTopBar online={online} />
-        <TopBar online={online} />
+        <MobileTopBar online={online} reachable={server.reachable} />
+        <TopBar online={online} reachable={server.reachable} devices={devices} gemini={gemini} />
         <main
           id="main"
           tabIndex={-1}

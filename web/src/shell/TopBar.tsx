@@ -3,11 +3,17 @@ import { useProfile } from '../profile/profile'
 import { plural } from '../repos/format'
 import { followLink, settingsPath } from '../router'
 
-export function OnlinePill({ online }: { online: boolean }) {
+/**
+ * Online, Offline, or "Server unreachable" when this device has a connection
+ * but the last `GET /api/status` could not reach the server (R18).
+ */
+export function OnlinePill({ online, reachable }: { online: boolean; reachable?: boolean }) {
+  const up = online && reachable !== false
+  const label = !online ? 'Offline' : up ? 'Online' : 'Server unreachable'
   return (
     <span className="inline-flex h-9 items-center gap-2 rounded-full bg-surface/75 px-3.5 text-sm text-ink">
-      <span aria-hidden="true" className={`size-2 rounded-full ${online ? 'bg-success' : 'bg-warning'}`} />
-      {online ? 'Online' : 'Offline'}
+      <span aria-hidden="true" className={`size-2 rounded-full ${up ? 'bg-success' : 'bg-warning'}`} />
+      {label}
     </span>
   )
 }
@@ -35,11 +41,14 @@ export function Avatar({ name, className = '' }: { name?: string; className?: st
  */
 export function TopBar({
   online,
+  reachable,
   devices,
   gemini,
   name,
 }: {
   online: boolean
+  /** From `GET /api/status`; undefined until it answers or fails. */
+  reachable?: boolean
   devices?: number
   gemini?: boolean
   name?: string
@@ -64,7 +73,7 @@ export function TopBar({
         </a>
       </div>
       <div className="flex flex-wrap items-center gap-2.5">
-        <OnlinePill online={online} />
+        <OnlinePill online={online} reachable={reachable} />
         {gemini === undefined ? null : (
           <span className="inline-flex h-9 items-center rounded-full bg-surface/75 px-3.5 text-sm text-ink">
             {gemini ? 'Gemini on' : 'Gemini off'}

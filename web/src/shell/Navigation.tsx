@@ -1,9 +1,12 @@
 import { KeyRound, PanelLeftClose, PanelLeftOpen, SquarePen, Upload } from 'lucide-react'
 import type { ReactNode } from 'react'
+import type { RecentQueryKind } from '../api/recent'
 import { BrandMark } from '../components/BrandMark'
 import { followLink, pathFor, settingsPath, type RouteName } from '../router'
 import { NAV, TAB_BAR } from './nav'
 import { shortcutLabel, startNewSearch } from './newSearch'
+import { OfflineCard, OfflineRailButton } from './OfflineCard'
+import { RecentQueries } from './RecentQueries'
 import { Avatar, OnlinePill } from './TopBar'
 
 /** `aria-current` for a nav item: "page" on its screen, "true" while a document is open over it. */
@@ -44,16 +47,21 @@ function AppLink({
 const SIDEBAR_LINK =
   'flex min-h-11 items-center gap-3 rounded-control px-3 text-sm text-nav-muted transition-colors hover:bg-nav-raised hover:text-nav-ink aria-[current]:bg-nav-raised aria-[current]:font-medium aria-[current]:text-nav-ink'
 
-/** Desktop (lg): logo, New search, the main nav, then Gemini access and Import Keep. */
+/** Desktop (lg): logo, New search, the main nav, recent searches or questions, then Gemini access and Import Keep. */
 export function Sidebar({
   className,
   current,
   pinned,
+  recentKind,
+  online,
   onCollapse,
 }: {
   className: string
   current: CurrentFor
   pinned: number
+  /** Recent questions on the Ask page, recent searches everywhere else. */
+  recentKind: RecentQueryKind
+  online: boolean
   onCollapse: () => void
 }) {
   return (
@@ -107,7 +115,11 @@ export function Sidebar({
         </ul>
       </nav>
 
+      <RecentQueries key={recentKind} kind={recentKind} online={online} />
+
       <div className="flex-1" />
+
+      <OfflineCard online={online} pinned={pinned} />
 
       <ul className="mt-6 space-y-1 border-t border-nav-line py-3">
         <li>
@@ -135,11 +147,13 @@ export function Rail({
   className,
   current,
   collapsed,
+  online,
   onExpand,
 }: {
   className: string
   current: CurrentFor
   collapsed: boolean
+  online: boolean
   onExpand: () => void
 }) {
   return (
@@ -176,13 +190,14 @@ export function Rail({
         </ul>
       </nav>
       <div className="flex-1" />
+      <OfflineRailButton online={online} />
       <Avatar className="mt-4 mb-1" />
     </aside>
   )
 }
 
 /** Phones (below md): logo, Online pill and avatar. */
-export function MobileTopBar({ online }: { online: boolean }) {
+export function MobileTopBar({ online, reachable }: { online: boolean; reachable?: boolean }) {
   return (
     <header
       data-layout="mobile-top"
@@ -193,7 +208,7 @@ export function MobileTopBar({ online }: { online: boolean }) {
         <span className="text-xl font-semibold tracking-tight">Pythia</span>
       </AppLink>
       <div className="flex items-center gap-2">
-        <OnlinePill online={online} />
+        <OnlinePill online={online} reachable={reachable} />
         <Avatar />
       </div>
     </header>
