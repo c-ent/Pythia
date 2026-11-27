@@ -30,7 +30,9 @@ export function RecentQueries({ kind, online }: { kind: RecentQueryKind; online:
   else if (queries.length === 0) note = EMPTY[kind]
 
   return (
-    <section aria-labelledby={headingId} className="mt-6">
+    // Fills the sidebar's free height and scrolls on its own, so the logo, nav
+    // and footer stay put on short windows (how chat-style sidebars do it).
+    <section aria-labelledby={headingId} className="mt-6 flex min-h-28 flex-1 flex-col">
       <div className="flex min-h-8 items-center justify-between gap-2 px-3">
         <h2 id={headingId} className="text-xs font-medium tracking-wide text-nav-muted uppercase">
           {title}
@@ -52,7 +54,7 @@ export function RecentQueries({ kind, online }: { kind: RecentQueryKind; online:
         </p>
       )}
       {note === null ? (
-        <ul className="mt-1 space-y-0.5">
+        <ul data-testid="recent-list" className="nav-scroll -mx-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-1 py-1">
           {queries.map((entry) => (
             <li key={entry.id} className="group relative">
               <button

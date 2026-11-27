@@ -115,9 +115,8 @@ export function Sidebar({
         </ul>
       </nav>
 
+      {/* Takes the free height and scrolls itself; the rest of the sidebar stays fixed. */}
       <RecentQueries key={recentKind} kind={recentKind} online={online} />
-
-      <div className="flex-1" />
 
       <OfflineCard online={online} pinned={pinned} />
 

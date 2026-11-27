@@ -110,6 +110,20 @@ describe('Recent queries', () => {
     )
   })
 
+  it('scrolls only the list, so the logo, nav and footer stay in place', async () => {
+    stubServer(Array.from({ length: 8 }, (_, i) => entry(i + 1, 'search', `query ${i + 1}`)))
+    render(<AppShell onSignOut={() => {}} />)
+    const region = await sidebarList('Recent searches')
+    await within(region).findByRole('button', { name: 'query 1' })
+    // jsdom applies no CSS, so check the classes that make the list its own scroll area.
+    const list = within(region).getByTestId('recent-list')
+    expect(list.className).toMatch(/\boverflow-y-auto\b/)
+    expect(list.className).toMatch(/\bmin-h-0\b/)
+    expect(region.className).toMatch(/\bflex-1\b/)
+    expect(list.contains(within(sidebar()).getByRole('navigation', { name: 'Main' }))).toBe(false)
+    expect(list.contains(within(sidebar()).getByRole('link', { name: 'Gemini access' }))).toBe(false)
+  })
+
   it('says so when there are none yet', async () => {
     stubServer()
     render(<AppShell onSignOut={() => {}} />)
