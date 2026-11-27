@@ -55,13 +55,18 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('runMigrations against Post
       "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
     )
     expect(tables.rows.map((row) => row.table_name)).toEqual([
+      'activity',
       'chunks',
       'document_tombstones',
       'documents',
+      'gemini_key',
+      'gemini_usage',
       'llm_exclusions',
+      'mcp_token',
       'profile',
       'recent_queries',
       'schema_migrations',
+      'sessions',
       'sources',
     ])
 

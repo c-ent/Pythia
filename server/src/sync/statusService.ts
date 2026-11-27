@@ -1,0 +1,229 @@
+import type { SearchableKind } from '../db/searchStore.js'
+import { SEARCHABLE_KINDS } from '../db/searchStore.js'
+import type { StatusStore } from '../db/statusStore.js'
+import {
+  deriveSourceStates,
+  KEEP_SOURCE,
+  REPOS_SOURCE,
+  VAULT_SOURCE,
+  type ActivityEvent,
+  type ActivityLog,
+  type DerivedState,
+} from './activity.js'
+
+/**
+ * `GET /api/status` (R18, T42): what Sources and sync, the Repos page, the
+ * Pinned page and the top bar show about the server. States come from the
+ * configuration (`off`), Keep being upload-only (`manual`) and the kept
+ * activity events (`healthy` / `error`).
+ */
+
+export type SourceState = 'healthy' | 'error' | 'manual' | 'off'
+export type SourceId = typeof VAULT_SOURCE | typeof REPOS_SOURCE | typeof KEEP_SOURCE
+
+/**
+ * - `watch`: the vault watcher indexes changes as they arrive (plus a scan at start and on Sync now).
+ * - `interval`: fetched every `everyMinutes` (repos, R9).
+ * - `manual`: only on demand (Keep upload; a vault without the watcher: scan at start and on Sync now).
+ * - `off`: not configured.
+ */
+export interface Schedule {
+  kind: 'watch' | 'interval' | 'manual' | 'off'
+  everyMinutes: number | null
+}
+
+export interface SourceStatus {
+  id: SourceId
+  kind: 'obsidian' | 'repo' | 'keep'
+  state: SourceState
+  /** Short reason for `error` (an error class or a count), else null. */
+  reason: string | null
+  lastSyncAt: Date | null
+  schedule: Schedule
+  documents: number
+  chunks: number
+  /** A scan or fetch started by Sync now or Re-sync is running. */
+  syncing: boolean
+}
+
+export interface RepoStatus {
+  name: string
+  /** `off` when the repo's source is switched off (`sources.enabled = false`). */
+  state: 'healthy' | 'error' | 'off'
+  reason: string | null
+  lastSyncAt: Date | null
+  documents: number
+  chunks: number
+  syncing: boolean
+}
+
+export interface ServerStatus {
+  /** Always true: a response means the server answered. */
+  reachable: true
+  checkedAt: Date
+  gemini: { available: boolean }
+  devices: { active: number }
+  /** Documents per source kind (`work` is never counted). */
+  documents: Record<SearchableKind, number>
+  sources: SourceStatus[]
+  /** Configured repos in config order. */
+  repos: RepoStatus[]
+  /** A Sync now run is in progress. */
+  syncing: boolean
+  /** The last 50 events, newest first. */
+  activity: ActivityEvent[]
+}
+
+export interface StatusService {
+  status(): Promise<ServerStatus>
+  activity(): Promise<ActivityEvent[]>
+}
+
+export interface StatusServiceOptions {
+  sources: Pick<StatusStore, 'listSources'>
+  activity: ActivityLog
+  /** Active signed-in devices (R15); absent means 0 (login off). */
+  devices?: () => Promise<number>
+  /** R16 key set and last call not failed on the key; absent means false. */
+  gemini?: () => Promise<boolean>
+  /** Null when the vault is off (no PYTHIA_VAULT_PATH, or its source switched off). */
+  vault: { watching: boolean } | null
+  /** Null when repos are off (no PYTHIA_REPOS_CONFIG). */
+  repos: { names: readonly string[]; intervalMs: number; configError: string | null } | null
+  /** Sync now state (syncNow.ts); absent means nothing is running. */
+  syncing?: () => { running: boolean; repos: readonly string[] }
+  now?: () => number
+  /** Error classes only. */
+  log?: (message: string) => void
+}
+
+const later = (a: Date | null, b: Date | null): Date | null => (a === null ? b : b === null || a >= b ? a : b)
+
+export function createStatusService(options: StatusServiceOptions): StatusService {
+  const now = options.now ?? Date.now
+  const log = options.log ?? ((message: string) => console.error(message))
+
+  /** A failing lookup degrades its field rather than failing the whole status. */
+  async function safely<T>(what: string, task: (() => Promise<T>) | undefined, fallback: T): Promise<T> {
+    if (task === undefined) return fallback
+    try {
+      return await task()
+    } catch (error) {
+      log(`status: ${what} unavailable: ${error instanceof Error ? error.name : 'unknown'}`)
+      return fallback
+    }
+  }
+
+  const lastSync = (derived: DerivedState, source: string): Date | null =>
+    later(derived.lastSyncAt, options.activity.lastSynced(source))
+
+  return {
+    activity: () => options.activity.list(),
+
+    async status() {
+      const [rows, events, devices, gemini] = await Promise.all([
+        options.sources.listSources(),
+        options.activity.list(),
+        safely('devices', options.devices, 0),
+        safely('gemini', options.gemini, false),
+      ])
+      const syncing = options.syncing?.() ?? { running: false, repos: [] }
+      const names = options.repos?.names ?? []
+      const derived = deriveSourceStates(events, names)
+
+      const documents = Object.fromEntries(SEARCHABLE_KINDS.map((kind) => [kind, 0])) as Record<SearchableKind, number>
+      for (const row of rows) documents[row.kind] += row.documents
+      const vaultRow = rows.find((row) => row.kind === 'obsidian')
+      const keepRow = rows.find((row) => row.kind === 'keep')
+      const repoRows = new Map(rows.filter((row) => row.kind === 'repo').map((row) => [row.name, row]))
+
+      const vault: SourceStatus =
+        options.vault === null
+          ? {
+              id: VAULT_SOURCE,
+              kind: 'obsidian',
+              state: 'off',
+              reason: null,
+              lastSyncAt: null,
+              schedule: { kind: 'off', everyMinutes: null },
+              documents: vaultRow?.documents ?? 0,
+              chunks: vaultRow?.chunks ?? 0,
+              syncing: false,
+            }
+          : {
+              id: VAULT_SOURCE,
+              kind: 'obsidian',
+              state: derived.vault.state,
+              reason: derived.vault.reason,
+              lastSyncAt: lastSync(derived.vault, VAULT_SOURCE),
+              schedule: { kind: options.vault.watching ? 'watch' : 'manual', everyMinutes: null },
+              documents: vaultRow?.documents ?? 0,
+              chunks: vaultRow?.chunks ?? 0,
+              syncing: syncing.running,
+            }
+
+      const repos: RepoStatus[] = names.map((name) => {
+        const row = repoRows.get(name)
+        const state = derived.repo.get(name)
+        const off = row !== undefined && !row.enabled
+        return {
+          name,
+          state: off ? 'off' : (state?.state ?? 'healthy'),
+          reason: off ? null : (state?.reason ?? null),
+          lastSyncAt: later(state?.lastSyncAt ?? null, options.activity.lastSynced(name)),
+          documents: row?.documents ?? 0,
+          chunks: row?.chunks ?? 0,
+          syncing: syncing.running || syncing.repos.includes(name),
+        }
+      })
+
+      const failing = repos.filter((repo) => repo.state === 'error').length
+      const repoTotals = [...repoRows.values()].reduce(
+        (sum, row) => ({ documents: sum.documents + row.documents, chunks: sum.chunks + row.chunks }),
+        { documents: 0, chunks: 0 },
+      )
+      const github: SourceStatus = {
+        id: REPOS_SOURCE,
+        kind: 'repo',
+        ...(options.repos === null
+          ? { state: 'off', reason: null, lastSyncAt: null, schedule: { kind: 'off', everyMinutes: null } }
+          : {
+              state: options.repos.configError !== null || failing > 0 ? 'error' : 'healthy',
+              reason:
+                options.repos.configError ??
+                (failing === 0 ? null : failing === 1 ? '1 repo failed' : `${failing} repos failed`),
+              lastSyncAt: lastSync(derived.repos, REPOS_SOURCE),
+              schedule: { kind: 'interval', everyMinutes: Math.round(options.repos.intervalMs / 60_000) },
+            }),
+        ...repoTotals,
+        syncing: options.repos !== null && (syncing.running || syncing.repos.length > 0),
+      }
+
+      // Keep has no sync to fail on its own: it changes only when a Takeout zip is uploaded (R12).
+      const keepOff = keepRow !== undefined && !keepRow.enabled
+      const keep: SourceStatus = {
+        id: KEEP_SOURCE,
+        kind: 'keep',
+        state: keepOff ? 'off' : 'manual',
+        reason: null,
+        lastSyncAt: lastSync(derived.keep, KEEP_SOURCE),
+        schedule: { kind: keepOff ? 'off' : 'manual', everyMinutes: null },
+        documents: keepRow?.documents ?? 0,
+        chunks: keepRow?.chunks ?? 0,
+        syncing: false,
+      }
+
+      return {
+        reachable: true,
+        checkedAt: new Date(now()),
+        gemini: { available: gemini },
+        devices: { active: devices },
+        documents,
+        sources: [vault, github, keep],
+        repos,
+        syncing: syncing.running,
+        activity: events,
+      }
+    },
+  }
+}
