@@ -67,12 +67,14 @@ export async function startRepos(
   // discovery show up there without a restart. Only ever grows.
   const names = specs.map((spec) => spec.name)
 
-  // Repo discovery (T54): off unless PYTHIA_REPOS_DISCOVER=1, and it needs the token.
+  // Repo discovery (T54): on by default, off with PYTHIA_REPOS_DISCOVER=0; it needs the token.
   let discover: RepoDiscover | undefined
   const token = repos.githubToken
-  if (repos.discover && token === null) {
-    console.log('PYTHIA_REPOS_DISCOVER=1 needs GITHUB_TOKEN; repo discovery is off')
-  } else if (repos.discover && token !== null) {
+  if (!repos.discover) {
+    console.log('repo discovery: off (PYTHIA_REPOS_DISCOVER=0)')
+  } else if (token === null) {
+    console.log('repo discovery: off, it needs GITHUB_TOKEN')
+  } else {
     console.log(`repo discovery: on, ${file.exclude.length} excluded`)
     discover = createRepoDiscovery({
       list: () => listOwnedRepos({ token }),

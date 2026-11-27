@@ -128,7 +128,7 @@ describe('loadConfig', () => {
       mirrorsDir: 'data/repos',
       fetchIntervalMs: 30 * 60_000,
       githubToken: null,
-      discover: false,
+      discover: true,
     })
     const token = 'github_' + 'pat_' + 'x'.repeat(30)
     expect(
@@ -137,10 +137,11 @@ describe('loadConfig', () => {
         PYTHIA_REPOS_CONFIG: '/r.json',
         PYTHIA_REPOS_DIR: '/mirrors',
         PYTHIA_REPOS_FETCH_MINUTES: '60',
-        PYTHIA_REPOS_DISCOVER: '1',
+        PYTHIA_REPOS_DISCOVER: '0',
         GITHUB_TOKEN: token,
       }).repos,
-    ).toEqual({ configFile: '/r.json', mirrorsDir: '/mirrors', fetchIntervalMs: 60 * 60_000, githubToken: token, discover: true })
+    ).toEqual({ configFile: '/r.json', mirrorsDir: '/mirrors', fetchIntervalMs: 60 * 60_000, githubToken: token, discover: false })
+    expect(loadConfig({ ...base, PYTHIA_REPOS_CONFIG: '/r.json', PYTHIA_REPOS_DISCOVER: '1' }).repos?.discover).toBe(true)
     expect(() => loadConfig({ ...base, PYTHIA_REPOS_DISCOVER: 'yes' })).toThrow(ConfigError)
   })
 

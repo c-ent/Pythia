@@ -2,7 +2,8 @@ import { z } from 'zod'
 import { isAllowedRemote, MAX_REPOS, REPO_NAME_PATTERN, type RepoSpec } from './repoConfig.js'
 
 /**
- * Repo discovery (R9, T54). With `PYTHIA_REPOS_DISCOVER=1`, each repo round
+ * Repo discovery (R9, T54). On by default when GITHUB_TOKEN is set
+ * (`PYTHIA_REPOS_DISCOVER=0` turns it off), each repo round
  * first lists the token owner's GitHub repos (forks and private ones included)
  * and adds any that are not configured yet, so a new repo is cloned and
  * indexed without editing the config or restarting.
