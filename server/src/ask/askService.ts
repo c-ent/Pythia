@@ -68,8 +68,11 @@ export interface AskService {
 export interface AskServiceOptions {
   search: SearchService
   chunks: ChunkTextLoader
-  /** Null when `GEMINI_API_KEY` is not set. */
-  gemini: ChatModel | null
+  /**
+   * Null when no Gemini key is set. A function is called on every question,
+   * so a key saved or removed in Settings (R16) applies at once.
+   */
+  gemini: ChatModel | null | (() => Promise<ChatModel | null>)
   /** Null when no local chat model is configured. */
   local: ChatModel | null
   log?: (message: string) => void
@@ -117,8 +120,10 @@ const cite = (passages: readonly Passage[]): AskCitation[] =>
   }))
 
 export function createAskService(options: AskServiceOptions): AskService {
-  const { search, chunks, gemini, local } = options
+  const { search, chunks, local } = options
   const log = options.log ?? ((message: string) => console.warn(message))
+  const resolveGemini = async (): Promise<ChatModel | null> =>
+    typeof options.gemini === 'function' ? options.gemini() : options.gemini
 
   return {
     async ask(request) {
@@ -148,6 +153,12 @@ export function createAskService(options: AskServiceOptions): AskService {
 
       // 1. Gemini, with allowed passages only.
       const cloud = passages.filter((passage) => passage.cloudAllowed)
+      let gemini: ChatModel | null = null
+      try {
+        gemini = await resolveGemini()
+      } catch (error) {
+        log(`gemini key lookup failed (${describeError(error)}); skipping Gemini`)
+      }
       if (gemini === null) {
         fallbacks.push('gemini_unconfigured')
       } else if (cloud.length === 0) {

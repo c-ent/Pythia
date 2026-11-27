@@ -15,10 +15,26 @@ describe('loadConfig', () => {
       embed: { batchSize: 32, timeoutMs: 120_000 },
       vault: null,
       repos: null,
-      auth: { passwordHash: null, sessionSecret: null, mcpToken: null },
+      auth: { passwordHash: null, mcpToken: null },
       ask: { geminiApiKey: null, geminiModel: 'gemini-3.5-flash-lite', ollamaChatModel: 'qwen3:4b' },
+      secretsKey: null,
       webDir: null,
     })
+  })
+
+  it('reads PYTHIA_SECRETS_KEY as 32 bytes and rejects a malformed one without echoing it', () => {
+    const bytes = Buffer.alloc(32, 7)
+    expect(loadConfig({ ...base, PYTHIA_SECRETS_KEY: bytes.toString('base64') }).secretsKey?.equals(bytes)).toBe(true)
+    expect(loadConfig({ ...base, PYTHIA_SECRETS_KEY: '' }).secretsKey).toBeNull()
+    const bad = 'not-' + 'a-key'
+    let message = ''
+    try {
+      loadConfig({ ...base, PYTHIA_SECRETS_KEY: bad })
+    } catch (error) {
+      message = String(error)
+    }
+    expect(message).toMatch(/PYTHIA_SECRETS_KEY/)
+    expect(message).not.toContain(bad)
   })
 
   it('reads the indexing embed batch size and timeout for slow hosts', () => {
@@ -70,21 +86,19 @@ describe('loadConfig', () => {
     const token = 't'.repeat(40)
     expect(
       loadConfig({ ...base, PYTHIA_PASSWORD_HASH: hash, PYTHIA_SESSION_SECRET: secret, PYTHIA_MCP_TOKEN: token }).auth,
-    ).toEqual({ passwordHash: hash, sessionSecret: secret, mcpToken: token })
-    expect(loadConfig({ ...base, PYTHIA_PASSWORD_HASH: '', PYTHIA_SESSION_SECRET: ' ', PYTHIA_MCP_TOKEN: '' }).auth).toEqual({
+    ).toEqual({ passwordHash: hash, mcpToken: token })
+    expect(loadConfig({ ...base, PYTHIA_PASSWORD_HASH: '', PYTHIA_MCP_TOKEN: '' }).auth).toEqual({
       passwordHash: null,
-      sessionSecret: null,
       mcpToken: null,
     })
     const short = 'short-' + 'token'
     let message = ''
     try {
-      loadConfig({ ...base, PYTHIA_MCP_TOKEN: short, PYTHIA_SESSION_SECRET: short })
+      loadConfig({ ...base, PYTHIA_MCP_TOKEN: short })
     } catch (error) {
       message = String(error)
     }
     expect(message).toMatch(/PYTHIA_MCP_TOKEN/)
-    expect(message).toMatch(/PYTHIA_SESSION_SECRET/)
     expect(message).not.toContain(short)
   })
 

@@ -1,9 +1,12 @@
-// Prints the auth lines for .env: an argon2id hash of a new password, a
-// session secret and an MCP bearer token. The password is read without echo
+// Prints the lines for .env: an argon2id hash of a new password, an MCP
+// bearer token, and PYTHIA_SECRETS_KEY (T39), which encrypts secrets saved in
+// the database. Web sessions live in the database (T36), so there is no
+// session secret. The password is read without echo
 // from a terminal, or from stdin when piped; it is never printed.
 //   pnpm --filter server auth-env
 import process, { stderr, stdin, stdout } from 'node:process'
 import { hashPassword } from './password.js'
+import { generateSecretsKey } from './secretBox.js'
 import { randomSecret } from './tokens.js'
 
 const MIN_LENGTH = 12
@@ -63,4 +66,8 @@ if ([...password].length < MIN_LENGTH) fail(`Use at least ${MIN_LENGTH} characte
 
 const hash = await hashPassword(password)
 stderr.write('Add these lines to .env. Keep the single quotes: the hash contains $.\n')
-stdout.write(`PYTHIA_PASSWORD_HASH='${hash}'\nPYTHIA_SESSION_SECRET=${randomSecret()}\nPYTHIA_MCP_TOKEN=${randomSecret()}\n`)
+stderr.write('PYTHIA_SECRETS_KEY encrypts the Gemini key saved in Settings: keep it with your backups,\n')
+stderr.write('or a restored database cannot open the saved key. Skip that line if .env already has one.\n')
+stdout.write(
+  `PYTHIA_PASSWORD_HASH='${hash}'\nPYTHIA_MCP_TOKEN=${randomSecret()}\nPYTHIA_SECRETS_KEY=${generateSecretsKey()}\n`,
+)

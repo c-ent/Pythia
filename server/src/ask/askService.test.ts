@@ -177,6 +177,47 @@ describe('ask service', () => {
     expect(gemini.prompts).toHaveLength(0)
   })
 
+  it('looks the Gemini model up on every question, so a key saved or removed in Settings applies at once', async () => {
+    const { search } = fakeSearch([publicHit])
+    const gemini = fakeModel('gemini')
+    let current: ChatModel | null = null
+    let lookups = 0
+    const ask = createAskService({
+      search,
+      chunks: loader(defaultTexts),
+      gemini: async () => {
+        lookups++
+        return current
+      },
+      local: null,
+      log: quiet,
+    })
+    expect(await ask.ask({ question: 'q' })).toMatchObject({ engine: 'retrieval', fallbacks: ['gemini_unconfigured', 'ollama_unconfigured'] })
+    current = gemini.model
+    expect(await ask.ask({ question: 'q' })).toMatchObject({ engine: 'gemini' })
+    current = null
+    expect(await ask.ask({ question: 'q' })).toMatchObject({ engine: 'retrieval' })
+    expect(lookups).toBe(3)
+    expect(gemini.prompts).toHaveLength(1)
+  })
+
+  it('skips Gemini when the key lookup fails, logging no key', async () => {
+    const { search } = fakeSearch([publicHit])
+    const local = fakeModel('ollama')
+    const logs: string[] = []
+    const ask = createAskService({
+      search,
+      chunks: loader(defaultTexts),
+      gemini: async () => {
+        throw new Error('database down')
+      },
+      local: local.model,
+      log: (message) => logs.push(message),
+    })
+    expect(await ask.ask({ question: 'q' })).toMatchObject({ engine: 'ollama', fallbacks: ['gemini_unconfigured'] })
+    expect(logs).toEqual(['gemini key lookup failed (Error); skipping Gemini'])
+  })
+
   it('falls back cleanly when GEMINI_API_KEY is unset', async () => {
     const { search } = fakeSearch([publicHit])
     const local = fakeModel('ollama')
