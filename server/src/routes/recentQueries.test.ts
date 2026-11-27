@@ -12,21 +12,10 @@ import {
   parseRecentQueryFilters,
   type RecentQueryStore,
 } from '../recent/recentQueryService.js'
-import { createVisitorLimiter } from '../security/rateLimit.js'
-import { createSessionSigner } from '../security/session.js'
+import { testAuth } from './testAuth.js'
 import type { SearchRequest, SearchService } from '../search/searchService.js'
-import { SESSION_COOKIE, type AuthDeps } from './auth.js'
 
-const sessions = createSessionSigner({ secret: 's'.repeat(32), passwordHash: 'test-hash' })
-const auth: AuthDeps = {
-  login: {
-    password: { cost: { memory: 1024, passes: 2, parallelism: 1 }, salt: Buffer.alloc(16), key: Buffer.alloc(32) },
-    sessions,
-    limiter: createVisitorLimiter({ max: 10, windowMs: 60_000 }),
-  },
-  mcpToken: null,
-}
-const cookie = `${SESSION_COOKIE}=${sessions.issue().token}`
+const { auth, cookie } = await testAuth()
 
 const search = {
   async search(request: SearchRequest) {

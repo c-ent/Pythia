@@ -6,21 +6,10 @@ import type { AskService } from '../ask/askService.js'
 import { KeepDisabledError, type ImportService } from '../ingest/importService.js'
 import { KeepTakeoutError, parseKeepTakeout } from '../ingest/keepTakeout.js'
 import { keepJson, takeoutZip } from '../ingest/testKeepTakeout.js'
-import { createVisitorLimiter } from '../security/rateLimit.js'
-import { createSessionSigner } from '../security/session.js'
+import { testAuth } from './testAuth.js'
 import type { SearchService } from '../search/searchService.js'
-import { SESSION_COOKIE, type AuthDeps } from './auth.js'
 
-const sessions = createSessionSigner({ secret: 'r'.repeat(32), passwordHash: 'test-hash' })
-const auth: AuthDeps = {
-  login: {
-    password: { cost: { memory: 1024, passes: 2, parallelism: 1 }, salt: Buffer.alloc(16), key: Buffer.alloc(32) },
-    sessions,
-    limiter: createVisitorLimiter({ max: 10, windowMs: 60_000 }),
-  },
-  mcpToken: null,
-}
-const cookie = `${SESSION_COOKIE}=${sessions.issue().token}`
+const { auth, cookie } = await testAuth()
 
 interface ErrorBody {
   error: { code: string; message: string }

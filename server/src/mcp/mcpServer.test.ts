@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { createApp } from '../app.js'
 import type { AskService } from '../ask/askService.js'
 import type { AuthDeps } from '../routes/auth.js'
+import { createMcpTokenService, createMemoryMcpTokenStore } from './mcpToken.js'
 import {
   AmbiguousDocumentError,
   type DocumentInfo,
@@ -108,7 +109,7 @@ const ask: AskService = {
   },
 }
 
-const auth: AuthDeps = { login: null, mcpToken }
+const auth: AuthDeps = { login: null, mcp: createMcpTokenService({ envToken: mcpToken, store: createMemoryMcpTokenStore() }) }
 
 const repoInfo: RepoInfo = { name: 'kitchen-app', files: 12, chunks: 40, updatedAt: new Date('2026-11-21T08:00:00Z') }
 const repos: RepoService = {

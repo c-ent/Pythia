@@ -3,12 +3,10 @@ import { createServer, type Server } from 'node:http'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createApp } from '../app.js'
 import type { AskRequest, AskService } from '../ask/askService.js'
-import { createVisitorLimiter } from '../security/rateLimit.js'
-import { createSessionSigner } from '../security/session.js'
+import { testAuth } from './testAuth.js'
 import { createMemorySyncStore } from '../sync/memorySyncStore.js'
 import { createSyncService } from '../sync/syncService.js'
 import type { RepoService } from '../search/repoService.js'
-import { SESSION_COOKIE, type AuthDeps } from './auth.js'
 import {
   AmbiguousDocumentError,
   type DocumentView,
@@ -33,16 +31,7 @@ const view: DocumentView = {
 
 // Auth has its own tests (auth.test.ts); here every request carries a valid
 // session cookie.
-const sessions = createSessionSigner({ secret: 'x'.repeat(40), passwordHash: 'test-hash' })
-const auth: AuthDeps = {
-  login: {
-    password: { cost: { memory: 1024, passes: 2, parallelism: 1 }, salt: Buffer.alloc(16), key: Buffer.alloc(32) },
-    sessions,
-    limiter: createVisitorLimiter({ max: 10, windowMs: 60_000 }),
-  },
-  mcpToken: null,
-}
-const cookie = `${SESSION_COOKIE}=${sessions.issue().token}`
+const { auth, cookie } = await testAuth()
 const fetch = (url: string, init: RequestInit = {}): Promise<Response> =>
   globalThis.fetch(url, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), cookie } })
 

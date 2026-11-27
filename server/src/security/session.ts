@@ -1,60 +1,59 @@
-import { createHmac, randomBytes } from 'node:crypto'
-import { secretsEqual } from './tokens.js'
+import { createHash } from 'node:crypto'
+import { randomSecret } from './tokens.js'
 
 export const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
+/** `last_seen_at` is written at most this often per session. */
+export const SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000
+/** Expired or signed-out sessions are deleted this long after they end. */
+export const SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+export const MAX_DEVICE_NAME = 80
+export const MAX_USER_AGENT = 500
+export const UNKNOWN_DEVICE = 'Unknown device'
 
-export interface SessionSigner {
-  issue(now?: number): { token: string; maxAgeMs: number }
-  verify(token: string, now?: number): boolean
-  /** Ends one session before it expires. Kept in memory, so a restart forgets it. */
-  revoke(token: string, now?: number): void
+// 32 random bytes, base64url.
+const TOKEN = /^[A-Za-z0-9_-]{43}$/
+
+/** A new session cookie value: 32 random bytes. Only its hash is stored. */
+export function newSessionToken(): string {
+  return randomSecret(32)
 }
 
-export interface SessionOptions {
-  secret: string
-  /** The configured password hash; changing the password ends every session. */
-  passwordHash: string
-  maxAgeMs?: number
+/** False for anything that cannot be a token, so junk never reaches the database. */
+export function isSessionToken(value: string): boolean {
+  return TOKEN.test(value)
 }
 
-// `<expires ms>.<16-byte nonce>.<HMAC-SHA256>`, base64url parts.
-const TOKEN = /^(\d{1,16})\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})$/
+/** SHA-256, hex. The sessions table keeps this of the token and of the password hash, never the values. */
+export function sha256Hex(value: string): string {
+  return createHash('sha256').update(value).digest('hex')
+}
 
-/**
- * Stateless signed session tokens for the single user, so sessions survive a
- * restart without a sessions table. Rotating `PYTHIA_SESSION_SECRET` or the
- * password ends all of them.
- */
-export function createSessionSigner(options: SessionOptions): SessionSigner {
-  const maxAgeMs = options.maxAgeMs ?? SESSION_MAX_AGE_MS
-  const key = createHmac('sha256', options.secret).update('pythia-session-v1\0').update(options.passwordHash).digest()
-  const sign = (payload: string): string => createHmac('sha256', key).update(payload).digest('base64url')
-  const revoked = new Map<string, number>()
+// First match wins: iPhone user agents also say "Mac OS X", Android ones "Linux".
+const PLATFORMS: [RegExp, string][] = [
+  [/iPhone|iPod/, 'iPhone'],
+  [/iPad/, 'iPad'],
+  [/Android/, 'Android'],
+  [/CrOS/, 'ChromeOS'],
+  [/Macintosh|Mac OS X/, 'Mac'],
+  [/Windows/, 'Windows'],
+  [/Linux/, 'Linux'],
+]
 
-  const parse = (token: string, now: number): { nonce: string; expires: number } | null => {
-    const match = TOKEN.exec(token)
-    if (match === null) return null
-    const [, expiresText = '', nonce = '', signature = ''] = match
-    const expires = Number(expiresText)
-    if (!(expires > now && expires <= now + maxAgeMs)) return null
-    if (!secretsEqual(signature, sign(`${expiresText}.${nonce}`))) return null
-    if (revoked.has(nonce)) return null
-    return { nonce, expires }
-  }
+// Edge, Opera and Samsung Internet also say "Chrome", and Chrome also says "Safari".
+const BROWSERS: [RegExp, string][] = [
+  [/EdgiOS|EdgA\/|Edg\//, 'Edge'],
+  [/OPR\/|OPiOS/, 'Opera'],
+  [/SamsungBrowser/, 'Samsung Internet'],
+  [/Firefox\/|FxiOS/, 'Firefox'],
+  [/Chrome\/|CriOS/, 'Chrome'],
+  [/Safari\//, 'Safari'],
+]
 
-  return {
-    issue(now = Date.now()) {
-      const payload = `${now + maxAgeMs}.${randomBytes(16).toString('base64url')}`
-      return { token: `${payload}.${sign(payload)}`, maxAgeMs }
-    },
-    verify(token, now = Date.now()) {
-      return parse(token, now) !== null
-    },
-    revoke(token, now = Date.now()) {
-      const session = parse(token, now)
-      if (session === null) return
-      for (const [nonce, expires] of revoked) if (expires <= now) revoked.delete(nonce)
-      revoked.set(session.nonce, session.expires)
-    },
-  }
+/** A readable default name for a signed-in device, e.g. "iPhone · Safari". */
+export function deviceNameFromUserAgent(userAgent: string | undefined): string {
+  const ua = userAgent ?? ''
+  const platform = PLATFORMS.find(([pattern]) => pattern.test(ua))?.[1]
+  const browser = BROWSERS.find(([pattern]) => pattern.test(ua))?.[1]
+  if (platform !== undefined && browser !== undefined) return `${platform} · ${browser}`
+  return platform ?? browser ?? UNKNOWN_DEVICE
 }

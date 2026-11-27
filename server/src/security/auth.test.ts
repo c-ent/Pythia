@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createSessionSigner } from './session.js'
+import { deviceNameFromUserAgent, isSessionToken, newSessionToken, sha256Hex, UNKNOWN_DEVICE } from './session.js'
 import { randomSecret, secretsEqual } from './tokens.js'
-
-const secret = 's'.repeat(40)
-const passwordHash = '$argon2id$' + 'v=19$m=1024,t=2,p=1$c2FsdA$a2V5'
-const now = Date.UTC(2026, 10, 25)
-const day = 24 * 60 * 60 * 1000
 
 describe('secretsEqual', () => {
   it('matches only identical strings, of any length', () => {
@@ -22,45 +17,60 @@ describe('secretsEqual', () => {
   })
 })
 
-describe('session signer', () => {
-  const signer = createSessionSigner({ secret, passwordHash, maxAgeMs: 30 * day })
-
-  it('verifies a token it issued until it expires', () => {
-    const { token, maxAgeMs } = signer.issue(now)
-    expect(maxAgeMs).toBe(30 * day)
-    expect(signer.verify(token, now)).toBe(true)
-    expect(signer.verify(token, now + 29 * day)).toBe(true)
-    expect(signer.verify(token, now + 30 * day)).toBe(false)
+describe('session tokens', () => {
+  it('are 32 random bytes that pass the shape check', () => {
+    const token = newSessionToken()
+    expect(isSessionToken(token)).toBe(true)
+    expect(newSessionToken()).not.toBe(token)
   })
 
-  it('rejects tampered and malformed tokens', () => {
-    const { token } = signer.issue(now)
-    const [expires = '', nonce = '', signature = ''] = token.split('.')
-    const flip = (text: string): string => (text.startsWith('A') ? 'B' : 'A') + text.slice(1)
-    expect(signer.verify(`${expires}.${nonce}.${flip(signature)}`, now)).toBe(false)
-    expect(signer.verify(`${expires}.${flip(nonce)}.${signature}`, now)).toBe(false)
-    expect(signer.verify(`${Number(expires) + 1}.${nonce}.${signature}`, now)).toBe(false)
-    for (const bad of ['', 'x', `${token}.x`, token.replaceAll('.', ':')]) expect(signer.verify(bad, now)).toBe(false)
+  it('reject anything else before it reaches the database', () => {
+    for (const bad of ['', 'x', 'A'.repeat(42), 'A'.repeat(44), `${'A'.repeat(42)}.`, `1.${'A'.repeat(22)}.${'A'.repeat(43)}`]) {
+      expect(isSessionToken(bad)).toBe(false)
+    }
   })
 
-  it('rejects tokens from another secret or password', () => {
-    const { token } = signer.issue(now)
-    expect(createSessionSigner({ secret: 't'.repeat(40), passwordHash }).verify(token, now)).toBe(false)
-    expect(createSessionSigner({ secret, passwordHash: passwordHash + 'x' }).verify(token, now)).toBe(false)
-    expect(createSessionSigner({ secret, passwordHash }).verify(token, now)).toBe(true)
+  it('hash to hex SHA-256', () => {
+    expect(sha256Hex('abc')).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+  })
+})
+
+describe('deviceNameFromUserAgent', () => {
+  const cases: [string, string][] = [
+    [
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 19_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.1 Mobile/15E148 Safari/604.1',
+      'iPhone · Safari',
+    ],
+    [
+      'Mozilla/5.0 (iPad; CPU OS 19_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.1 Mobile/15E148 Safari/604.1',
+      'iPad · Safari',
+    ],
+    [
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
+      'Mac · Chrome',
+    ],
+    [
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0',
+      'Windows · Edge',
+    ],
+    ['Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:145.0) Gecko/20100101 Firefox/145.0', 'Windows · Firefox'],
+    [
+      'Mozilla/5.0 (Linux; Android 16; Pixel 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36',
+      'Android · Chrome',
+    ],
+    [
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 19_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/142.0 Mobile/15E148 Safari/604.1',
+      'iPhone · Chrome',
+    ],
+    ['curl/8.11.0', UNKNOWN_DEVICE],
+    ['', UNKNOWN_DEVICE],
+  ]
+
+  it.each(cases)('names %s', (userAgent, name) => {
+    expect(deviceNameFromUserAgent(userAgent)).toBe(name)
   })
 
-  it('rejects an expiry further out than the maximum age', () => {
-    const longer = createSessionSigner({ secret, passwordHash, maxAgeMs: 60 * day })
-    expect(signer.verify(longer.issue(now).token, now)).toBe(false)
-  })
-
-  it('ends a revoked session only', () => {
-    const a = signer.issue(now).token
-    const b = signer.issue(now).token
-    signer.revoke(a, now)
-    expect(signer.verify(a, now)).toBe(false)
-    expect(signer.verify(b, now)).toBe(true)
-    signer.revoke('garbage', now)
+  it('names a missing user agent', () => {
+    expect(deviceNameFromUserAgent(undefined)).toBe(UNKNOWN_DEVICE)
   })
 })
