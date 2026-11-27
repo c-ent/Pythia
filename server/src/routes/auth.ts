@@ -4,6 +4,7 @@ import { parsePasswordHash, verifyPassword, type PasswordHash } from '../securit
 import { createVisitorLimiter, visitorKey, type VisitorLimiter } from '../security/rateLimit.js'
 import { createSessionManager, type Session, type SessionManager, type SessionStore } from '../security/sessionStore.js'
 import { createMcpTokenService, type McpTokenService, type McpTokenStore } from '../mcp/mcpToken.js'
+import { requestOrigin } from '../security/tailnet.js'
 import { HttpError } from './api.js'
 
 // `__Host-` makes browsers require Secure and Path=/ and refuse a Domain, so
@@ -136,6 +137,23 @@ export function requireSession(deps: AuthDeps): RequestHandler {
     }
     res.locals[CURRENT_SESSION] = session
     next()
+  }
+}
+
+/**
+ * 403 `tailnet_only` unless the request came over the tailnet or from the host
+ * itself (R7, T48); see `requestOrigin`. Mounted in front of `requireBearer`, so
+ * Funnel traffic is refused before the token is looked at and a leaked token is
+ * useless outside the owner's tailnet.
+ */
+export function requireTailnet(): RequestHandler {
+  return (req, _res, next) => {
+    const origin = requestOrigin(req.headers, req.socket.remoteAddress)
+    if (origin === 'tailnet' || origin === 'host') {
+      next()
+      return
+    }
+    next(new HttpError(403, 'tailnet_only', '/mcp is only available over Tailscale'))
   }
 }
 

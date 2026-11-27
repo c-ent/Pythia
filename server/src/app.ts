@@ -3,7 +3,7 @@ import type { AskService } from './ask/askService.js'
 import type { ImportService } from './ingest/importService.js'
 import { createMcpRouter } from './mcp/mcpServer.js'
 import { createApiRouter, jsonErrorHandler } from './routes/api.js'
-import { createAuthRouter, requireBearer, requireSession, type AuthDeps } from './routes/auth.js'
+import { createAuthRouter, requireBearer, requireSession, requireTailnet, type AuthDeps } from './routes/auth.js'
 import { createDevicesRouter } from './routes/devices.js'
 import { createMcpTokenRouter } from './routes/mcpToken.js'
 import type { ProfileService } from './profile/profileService.js'
@@ -65,8 +65,9 @@ export function createApp(deps: AppDeps): Express {
   if (deps.recent !== undefined) app.use('/api', createRecentQueriesRouter(deps.recent))
   if (deps.status !== undefined) app.use('/api', createStatusRouter(deps.status.service, deps.status.sync))
   app.use('/api', createApiRouter(deps.search, deps.ask, deps.sync, deps.repos, deps.imports, deps.recent))
-  // The MCP server (R7) has its own bearer token, separate from login (rotated under Settings, T37).
-  app.use('/mcp', requireBearer(deps.auth.mcp), createMcpRouter(deps.search, console.error, deps.repos))
+  // The MCP server (R7) is tailnet only (T48): Funnel traffic gets 403 before the
+  // token check. It has its own bearer token, separate from login (rotated under Settings, T37).
+  app.use('/mcp', requireTailnet(), requireBearer(deps.auth.mcp), createMcpRouter(deps.search, console.error, deps.repos))
   // The app shell is public: it has to load before the login screen can show.
   // It never answers /api, /mcp or /healthz paths (see routes/static.ts).
   if (deps.webDir !== undefined) app.use(createStaticRouter(deps.webDir))

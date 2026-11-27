@@ -153,6 +153,32 @@ describe('auth', () => {
     // Past the token check the MCP router answers; it is stateless, so GET is 405.
     expect((await fetch(`${base}/mcp`, { headers: { authorization: `Bearer ${mcpToken}` } })).status).toBe(405)
   })
+
+  it('refuses /mcp with 403 tailnet_only to Funnel and unplaceable traffic, before the token check', async () => {
+    const bearer = { authorization: `Bearer ${mcpToken}` }
+    const refused: Record<string, string>[] = [
+      { 'tailscale-funnel-request': '?1', 'x-forwarded-for': '203.0.113.9' },
+      // A forged tailnet address does not outweigh the Funnel header.
+      { 'tailscale-funnel-request': '?1', 'x-forwarded-for': '100.64.0.1' },
+      { 'tailscale-funnel-request': '' },
+      // Funnel traffic if Tailscale ever stopped setting the Funnel header.
+      { 'x-forwarded-for': '203.0.113.9', 'x-forwarded-proto': 'https' },
+      { 'x-forwarded-for': '100.64.0.1, 203.0.113.9' },
+    ]
+    for (const headers of refused) {
+      const withToken = await fetch(`${base}/mcp`, { method: 'POST', headers: { ...bearer, ...headers } })
+      expect(withToken.status).toBe(403)
+      expect(await withToken.json()).toEqual({ error: { code: 'tailnet_only', message: '/mcp is only available over Tailscale' } })
+      // Without a token it is 403 too, not 401: the token is never checked.
+      expect((await fetch(`${base}/mcp`, { method: 'POST', headers })).status).toBe(403)
+    }
+  })
+
+  it('lets tailnet traffic on to the token check', async () => {
+    const tailnet = { 'x-forwarded-for': '100.101.102.103', 'x-forwarded-proto': 'https' }
+    expect((await fetch(`${base}/mcp`, { method: 'POST', headers: tailnet })).status).toBe(401)
+    expect((await fetch(`${base}/mcp`, { headers: { ...tailnet, authorization: `Bearer ${mcpToken}` } })).status).toBe(405)
+  })
 })
 
 describe('login rate limit', () => {
