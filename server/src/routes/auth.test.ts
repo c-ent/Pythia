@@ -153,31 +153,51 @@ describe('auth', () => {
     // Past the token check the MCP router answers; it is stateless, so GET is 405.
     expect((await fetch(`${base}/mcp`, { headers: { authorization: `Bearer ${mcpToken}` } })).status).toBe(405)
   })
+})
 
-  it('refuses /mcp with 403 tailnet_only to Funnel and unplaceable traffic, before the token check', async () => {
-    const bearer = { authorization: `Bearer ${mcpToken}` }
-    const refused: Record<string, string>[] = [
-      { 'tailscale-funnel-request': '?1', 'x-forwarded-for': '203.0.113.9' },
-      // A forged tailnet address does not outweigh the Funnel header.
-      { 'tailscale-funnel-request': '?1', 'x-forwarded-for': '100.64.0.1' },
-      { 'tailscale-funnel-request': '' },
-      // Funnel traffic if Tailscale ever stopped setting the Funnel header.
-      { 'x-forwarded-for': '203.0.113.9', 'x-forwarded-proto': 'https' },
-      { 'x-forwarded-for': '100.64.0.1, 203.0.113.9' },
-    ]
-    for (const headers of refused) {
-      const withToken = await fetch(`${base}/mcp`, { method: 'POST', headers: { ...bearer, ...headers } })
-      expect(withToken.status).toBe(403)
-      expect(await withToken.json()).toEqual({ error: { code: 'tailnet_only', message: '/mcp is only available over Tailscale' } })
-      // Without a token it is 403 too, not 401: the token is never checked.
-      expect((await fetch(`${base}/mcp`, { method: 'POST', headers })).status).toBe(403)
-    }
+// `/mcp` is tailnet only (R7, T48): the 403 comes before the token check.
+describe('tailnet-only /mcp', () => {
+  let base: string
+  const bearer = { authorization: `Bearer ${mcpToken}` }
+  const tailnetOnlyBody = { error: { code: 'tailnet_only', message: '/mcp is only available over Tailscale' } }
+
+  beforeAll(async () => {
+    base = await start(await loginDeps(10))
   })
 
-  it('lets tailnet traffic on to the token check', async () => {
+  it('refuses a Funnel request with 403, with or without a valid token', async () => {
+    const funnel = { 'tailscale-funnel-request': '?1', 'x-forwarded-for': '203.0.113.9' }
+    const withToken = await fetch(`${base}/mcp`, { method: 'POST', headers: { ...funnel, ...bearer } })
+    expect(withToken.status).toBe(403)
+    expect(await withToken.json()).toEqual(tailnetOnlyBody)
+    expect(withToken.headers.get('www-authenticate')).toBeNull()
+    expect((await fetch(`${base}/mcp`, { method: 'POST', headers: funnel })).status).toBe(403)
+  })
+
+  it('refuses public or unreadable forwarded addresses even without the Funnel header', async () => {
+    for (const forwardedFor of ['203.0.113.9', '100.64.0.1, 203.0.113.9', 'junk', '192.168.1.4']) {
+      const res = await fetch(`${base}/mcp`, { headers: { 'x-forwarded-for': forwardedFor, ...bearer } })
+      expect(res.status, forwardedFor).toBe(403)
+    }
+    expect((await fetch(`${base}/mcp`, { headers: { 'x-forwarded-proto': 'https', ...bearer } })).status).toBe(403)
+  })
+
+  it('lets tailnet and host requests through to the token check', async () => {
     const tailnet = { 'x-forwarded-for': '100.101.102.103', 'x-forwarded-proto': 'https' }
-    expect((await fetch(`${base}/mcp`, { method: 'POST', headers: tailnet })).status).toBe(401)
-    expect((await fetch(`${base}/mcp`, { headers: { ...tailnet, authorization: `Bearer ${mcpToken}` } })).status).toBe(405)
+    expect((await fetch(`${base}/mcp`, { headers: { ...tailnet, ...bearer } })).status).toBe(405)
+    expect((await fetch(`${base}/mcp`, { headers: tailnet })).status).toBe(401)
+    expect((await fetch(`${base}/mcp`, { headers: bearer })).status).toBe(405)
+  })
+
+  it('leaves the web app and /api open to Funnel visitors', async () => {
+    const funnel = { 'tailscale-funnel-request': '?1', 'x-forwarded-for': '203.0.113.9' }
+    expect((await fetch(`${base}/healthz`, { headers: funnel })).status).toBe(200)
+    const res = await fetch(`${base}/api/login`, {
+      method: 'POST',
+      headers: { ...funnel, 'content-type': 'application/json' },
+      body: JSON.stringify({ password: pw }),
+    })
+    expect(res.status).toBe(204)
   })
 })
 

@@ -167,6 +167,43 @@ function errorText(result: unknown): string {
 }
 
 describe('MCP server at /mcp', () => {
+  it('refuses a Funnel request with a valid token before any tool runs (R7)', async () => {
+    const client = new Client({ name: 'pythia-test', version: '0.0.0' })
+    const transport = new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+      requestInit: {
+        headers: { authorization: `Bearer ${mcpToken}`, 'tailscale-funnel-request': '?1', 'x-forwarded-for': '203.0.113.9' },
+      },
+    })
+    await expect(client.connect(transport)).rejects.toThrow(/403|tailnet/i)
+    await client.close()
+
+    // A raw tool call gets the same 403 and never reaches the search service.
+    const res = await fetch(`${base}/mcp`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${mcpToken}`,
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+        'x-forwarded-for': '203.0.113.9',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'search', arguments: { query: 'rent' } } }),
+    })
+    expect(res.status).toBe(403)
+    expect(calls.search).toEqual([])
+  })
+
+  it('serves tools to a tailnet request', async () => {
+    const client = new Client({ name: 'pythia-test', version: '0.0.0' })
+    const transport = new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${mcpToken}`, 'x-forwarded-for': '100.101.102.103', 'x-forwarded-proto': 'https' } },
+    })
+    await client.connect(transport)
+    clients.push(client)
+    const result = await client.callTool({ name: 'search', arguments: { query: 'pgvector' } })
+    expect((result as CallToolResult).isError).toBeFalsy()
+    expect(calls.search).toHaveLength(1)
+  })
+
   it('lists the read-only tools with input schemas', async () => {
     const client = await connect()
     const { tools } = await client.listTools()
