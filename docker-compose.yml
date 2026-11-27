@@ -25,6 +25,10 @@ services:
 
   ollama:
     image: ollama/ollama:latest
+    environment:
+      # Keep loaded models in memory. The default unloads them after 5 idle
+      # minutes, and reloading from disk can outlast the 10 s search timeout.
+      OLLAMA_KEEP_ALIVE: "-1"
     ports:
       - "127.0.0.1:${PYTHIA_OLLAMA_PORT:-11434}:11434"
     volumes:
