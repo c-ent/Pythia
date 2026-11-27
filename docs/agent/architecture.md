@@ -37,7 +37,7 @@ Read this when changing data flow, storage, auth, or module boundaries. Only wha
 - **Gemini API (free tier, server-side key only):** Optional primary LLM for Ask mode. Free-tier inputs may be used by Google to improve products, so `allow_llm = false` documents are strictly excluded. On 429 or outage, back off then fall back to Ollama / retrieval-only.
 - **Dropbox (via `rclone`):** One-way read source for Remotely Save vault. If unreachable, keep serving existing index and retry on next schedule.
 - **GitHub (read-only token/deploy key):** Periodic `git fetch` for configured personal repos.
-- **Tailscale Funnel (`tailscale funnel`):** Public HTTPS address (`<machine>.<tailnet>.ts.net`) and certificate for PWA service worker support. Tailscale runs only on the host and forwards to `127.0.0.1:3000`; devices need no Tailscale app. The Pythia login is the only gate, so login limiting is per visitor.
+- **Tailscale Funnel (`tailscale funnel`):** Public HTTPS address (`<machine>.<tailnet>.ts.net`) and certificate for PWA service worker support. Tailscale runs only on the host and forwards to `127.0.0.1:3000`; devices need no Tailscale app. The Pythia login is the only gate, so login limiting is per visitor. Exception: `/mcp` is tailnet only (R7, T48): requests that came through Funnel get 403 before the bearer check, so only computers on the owner's tailnet (with the Tailscale app) and the host itself reach the MCP tools. `requireTailnet` (`server/src/routes/auth.ts`) runs in front of `requireBearer`; the classification is `requestOrigin` in `server/src/security/tailnet.ts` (Funnel header, then `X-Forwarded-For` must be one Tailscale address, else loopback with no proxy headers = host; anything else is refused).
 
 ## Decisions
 

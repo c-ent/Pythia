@@ -4,7 +4,7 @@
 #
 # What it adds:
 # - app: host networking, so the server's 127.0.0.1:3000 is the host's
-#   127.0.0.1:3000 and `tailscale serve` on the host can reach it (T19). It
+#   127.0.0.1:3000 and `tailscale funnel` on the host can reach it (T19). It
 #   then talks to postgres and ollama through their 127.0.0.1 published ports.
 #   Nothing listens on a public interface.
 # - app: the vault pulled by rclone, mounted read-only at /vault, and a named

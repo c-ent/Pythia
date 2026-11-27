@@ -27,7 +27,7 @@ pnpm workspace (`server`, `web`). Run from the repo root.
 - In hybrid search (`RRF k = 60`), source and repo filters MUST be applied inside both the `lexical` and `semantic` CTEs—never only in the outer `SELECT`—or filtered queries drop relevant matches.
 - Every ingested chunk MUST pass through the secrets scanner before embedding or DB insert; log only the redacted/dropped count, never the matched value.
 - Documents with `allow_llm = false` remain searchable in hybrid search, but their text MUST NEVER be sent to the Gemini API.
-- Bind the Express server to `127.0.0.1` only; external access goes exclusively through Tailscale Funnel on the host (public URL, so the login limit must count each visitor separately).
+- Bind the Express server to `127.0.0.1` only; external access goes exclusively through Tailscale Funnel on the host (public URL, so the login limit must count each visitor separately). `/mcp` is the exception: tailnet only, never served to Funnel traffic (spec R7).
 - Keep work material out: `kind = 'work'` is disabled by default and must never be auto-enabled.
 - After adding a SQL file in `server/migrations/`, run the migration script before running DB tests.
 

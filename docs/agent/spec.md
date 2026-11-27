@@ -134,10 +134,14 @@ Pythia (named after the Oracle at Delphi) is a private, read-only Personal Knowl
 - Behaviour:
   - Mounted on the same Express server at `/mcp` using the official MCP TypeScript SDK over Streamable HTTP.
   - Authenticated via a dedicated bearer token (separate from web login).
+  - Tailnet only (owner decision 2026-11-27): `/mcp` is never served to the public internet. A request that reached the server through Tailscale Funnel is refused with 403 (`tailnet_only`, "/mcp is only available over Tailscale") before the token is checked, so a leaked token is useless outside the owner's tailnet. Requests over the tailnet (a computer running the Tailscale app, signed in to the owner's account) and from the host itself go on to the token check. The web app and `/api` stay public through Funnel (R10).
+  - How Funnel traffic is recognised (confirmed from Tailscale's source in T48, `ipn/ipnlocal/serve.go`): Tailscale's Serve/Funnel HTTP proxy deletes any `Tailscale-Funnel-Request` header the client sent, in every spelling (case-insensitive, `_` read as `-`), sets it to `?1` on Funnel traffic, and sets (does not append) `X-Forwarded-For` to the connecting address: the public visitor's for Funnel, the peer's Tailscale address for tailnet traffic. `/mcp` refuses a request when any spelling of the Funnel header is present, and also unless `X-Forwarded-For` is exactly one Tailscale address (`100.64.0.0/10` without `100.115.92.0/23`, or `fd7a:115c:a1e0::/48`). So it fails closed: if Tailscale stopped setting the Funnel header, the visitor's public address would still be refused. A request with no proxy headers from a loopback socket is the host itself and goes on to the token check. Funnel must stay an HTTP proxy (`tailscale funnel 3000`); a raw TCP forward sets no headers.
+  - Address over the tailnet: the same `https://<machine>.<tailnet>.ts.net/mcp` as the web app. On a computer with Tailscale on and MagicDNS enabled, that name resolves to the host's Tailscale address, so the connection arrives over the tailnet, not through Funnel. Without Tailscale (or without MagicDNS) the name resolves to Funnel's public relays and `/mcp` answers 403.
   - Tools: `search(query, sources?, repo?, limit?)`, `get_document(source, path)`, `list_repos()`, `get_repo_overview(repo)`, `recent_changes(days, source?)`.
-- Edge cases: Missing or invalid bearer token returns 401; unknown repo or document returns a clean MCP tool error.
+- Edge cases: Missing or invalid bearer token returns 401; Funnel request with a valid token returns 403; a visitor sending a forged or stripped Tailscale header cannot reach the tools from the public address; unknown repo or document returns a clean MCP tool error.
 - Acceptance criteria:
-  - Given Claude Code configured with `--transport http` and the bearer token, when asked a question about an indexed note, then it calls `search` / `get_document` and returns the right answer.
+  - Given Claude Code configured with `--transport http` and the bearer token, on a computer on the owner's tailnet, when asked a question about an indexed note, then it calls `search` / `get_document` and returns the right answer.
+  - Given a request that arrived through Funnel with a valid token, when sent to `/mcp`, then it returns 403 and no tool runs.
 
 #### R8. Ask Mode (LLM Answers with Privacy & Fallbacks)
 
@@ -185,6 +189,7 @@ Pythia (named after the Oracle at Delphi) is a private, read-only Personal Knowl
   - Scheduled one-way `rclone` pull fetches Dropbox `Apps/remotely-save` into the server's read-only vault directory every few minutes.
   - Exposed exclusively via Tailscale Funnel (`tailscale funnel`, public `https://<machine>.<tailnet>.ts.net`), with host firewall blocking other inbound ports. Tailscale runs only on the host; devices open the address in a browser and log in, with no Tailscale app (owner decision 2026-11-26, replacing tailnet-only `tailscale serve`).
   - Because the login page is public, the login rate limit counts each visitor separately, so failed guesses from others cannot lock the owner out.
+  - Exception: `/mcp` is tailnet only (R7, owner decision 2026-11-27). A computer that runs an MCP client (Claude Code) needs the Tailscale app signed in to the owner's account. Phones and tablets need nothing: they use the web app only.
 - Edge cases: `rclone` transient Dropbox network error (retry next interval without deleting local vault); Oracle idle-reclamation avoidance (keep memory usage > 20%).
 - Acceptance criteria:
   - Given the workstation is powered off, when opening the Funnel HTTPS URL on iPhone over mobile data without the Tailscale app, then search works and a note edited/synced from the phone appears after the next `rclone` pull.
@@ -236,7 +241,9 @@ Pythia (named after the Oracle at Delphi) is a private, read-only Personal Knowl
   - Sessions move to a server-side `sessions` table (id, token hash, device name, user agent, created, last seen, revoked). Each login creates one device, named from the browser (e.g. "iPhone · Safari") and renamable. The cookie stays HTTP-only, `Secure`, `__Host-` prefixed.
   - Connect devices lists devices with last seen; each can be renamed or signed out, and "Sign out everywhere" (also in Profile) ends every session. Revocation survives restarts.
   - The top bar shows "Personal index · N devices" (active sessions).
-  - The MCP token can be rotated from Connect devices: the new token is shown once, only its hash is stored (in the database), and the old token stops working at once. Until the first rotation, `PYTHIA_MCP_TOKEN` from `.env` is used. The page shows the token's last 4 characters, the server URL, a Claude config snippet and the tools exposed, and says the address is public through Tailscale Funnel and protected by the token.
+  - The MCP token can be rotated from Connect devices: the new token is shown once, only its hash is stored (in the database), and the old token stops working at once. Until the first rotation, `PYTHIA_MCP_TOKEN` from `.env` is used. The page shows the token's last 4 characters, the server URL, a Claude config snippet and the tools exposed.
+  - Connect devices explains that the web app is public through Tailscale Funnel but `/mcp` only works over Tailscale (R7), and gives the setup steps for a computer: 1) install the Tailscale app and sign in to the same Tailscale account as the host; 2) check the host shows up in Tailscale (`tailscale status`, or the app's device list); 3) run the `claude mcp add` command shown on the page with the current token; 4) if Claude Code reports 403, the request did not go over Tailscale: turn Tailscale on and try again; if it reports 401, the token is wrong or was rotated. Phones and tablets need none of this. The address shown is the one that works over the tailnet (confirmed in the T48 task).
+  - The page offers only the `claude mcp add` command (stored in the user's Claude config), not a `.mcp.json` file, so the token is not saved in a project folder that could be committed.
 - Edge cases: Rotating while an MCP client is connected (its next call gets 401), signing out the current device (back to Login), sessions issued before this change (they end once; the owner logs in again), user agent missing (name "Unknown device").
 - Acceptance criteria:
   - Given two signed-in devices, when one is signed out from the other, then its next `/api` call returns 401, also after a server restart.
@@ -289,7 +296,7 @@ Pythia (named after the Oracle at Delphi) is a private, read-only Personal Knowl
 ## Out of scope for this version
 
 - Chat history importers (Claude, ChatGPT, Gemini Takeout)—deferred to Later after Keep import is proven.
-- Public `/mcp` endpoint (Tailscale Funnel / Cloudflare Tunnel + OAuth) for Claude web/mobile custom connectors—deferred to Later.
+- Public `/mcp` endpoint (Tailscale Funnel / Cloudflare Tunnel + OAuth) for Claude web/mobile, ChatGPT and other cloud-hosted connectors—deferred to Later. Until then `/mcp` is tailnet only (R7).
 - In-browser offline LLM for desktop browsers—deferred to Later.
 - Cross-encoder reranker—deferred to Later unless `hit@5` evaluation shows a gap.
 - Work/employer sources (`kind = 'work'`)—excluded until employer approval.
