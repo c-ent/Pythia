@@ -40,6 +40,8 @@ export interface ChunkHit {
   vectorRank: number | null
   /** `ts_headline` output with HEADLINE_START / HEADLINE_STOP around matches. */
   headline: string
+  mtime?: Date | null
+  updatedAt?: Date
 }
 
 export interface DocumentSummary {
@@ -95,6 +97,144 @@ export interface ChunkText {
 /** Full chunk text for Ask prompts (T13). Missing, `work` and disabled chunks are left out. */
 export interface ChunkTextLoader {
   chunkTexts(ids: readonly number[]): Promise<Map<number, ChunkText>>
+}
+
+export interface RepoCatalogEntry {
+  chunkId: number
+  documentId: number
+  name: string
+  title: string
+  headingPath: string
+  allowLlm: boolean
+  firstCommitAt: Date | null
+  lastCommitAt: Date | null
+  updatedAt: Date
+  languages: string | null
+}
+
+export interface RecentCatalogEntry {
+  chunkId: number | null
+  documentId: number
+  source: { kind: SearchableKind; name: string }
+  path: string
+  title: string
+  headingPath: string
+  allowLlm: boolean
+  mtime: Date | null
+  updatedAt: Date
+}
+
+/** Index-wide repo & recency metadata for Ask context (R8). */
+export interface AskContextLoader {
+  repoCatalog(filters: SearchFilters): Promise<RepoCatalogEntry[]>
+  recentDocuments(filters: SearchFilters, limit: number): Promise<RecentCatalogEntry[]>
+}
+
+const parseIsoField = (content: string, prefix: string): Date | null => {
+  const match = new RegExp(`^${prefix}:\\s*(.+)$`, 'm').exec(content)
+  if (match?.[1] === undefined) return null
+  const ms = Date.parse(match[1].trim())
+  return Number.isNaN(ms) ? null : new Date(ms)
+}
+
+const parseLineField = (content: string, prefix: string): string | null => {
+  const match = new RegExp(`^${prefix}:\\s*(.+)$`, 'm').exec(content)
+  const value = match?.[1]?.trim()
+  return value === undefined || value === '' ? null : value
+}
+
+export function createPgAskContextLoader(pool: Pool): AskContextLoader {
+  return {
+    async repoCatalog(filters) {
+      if (filters.sources !== undefined && !filters.sources.includes('repo')) return []
+      const { rows } = await pool.query<{
+        chunk_id: string
+        document_id: string
+        source_name: string
+        title: string
+        heading_path: string
+        allow_llm: boolean
+        mtime: Date | null
+        updated_at: Date
+        content: string
+      }>(
+        `SELECT c.id AS chunk_id, d.id AS document_id, s.name AS source_name,
+                d.title, c.heading_path, d.allow_llm, d.mtime, d.updated_at, c.content
+         FROM documents d
+         JOIN sources s ON s.id = d.source_id
+         JOIN chunks c ON c.document_id = d.id AND c.ordinal = 0
+         WHERE s.enabled AND s.kind = 'repo' AND d.path = $1
+           AND ($2::text IS NULL OR s.name = $2::text)
+         ORDER BY coalesce(d.mtime, d.updated_at) DESC, s.name`,
+        [SUMMARY_PATH, filters.repo ?? null],
+      )
+      return rows
+        .map((row) => ({
+          chunkId: Number(row.chunk_id),
+          documentId: Number(row.document_id),
+          name: row.source_name,
+          title: row.title,
+          headingPath: row.heading_path,
+          allowLlm: row.allow_llm,
+          firstCommitAt: parseIsoField(row.content, 'First commit'),
+          lastCommitAt: parseIsoField(row.content, 'Latest commit') ?? row.mtime,
+          updatedAt: row.updated_at,
+          languages: parseLineField(row.content, 'Languages'),
+        }))
+        .sort((a, b) => {
+          const ac = a.lastCommitAt ?? a.firstCommitAt
+          const bc = b.lastCommitAt ?? b.firstCommitAt
+          if (ac !== null && bc !== null) {
+            const diff = bc.getTime() - ac.getTime()
+            if (diff !== 0) return diff
+          } else if (ac !== null || bc !== null) {
+            return bc !== null ? 1 : -1
+          }
+          return b.updatedAt.getTime() - a.updatedAt.getTime() || a.name.localeCompare(b.name)
+        })
+    },
+
+    async recentDocuments(filters, limit) {
+      const { rows } = await pool.query<{
+        chunk_id: string | null
+        document_id: string
+        kind: SearchableKind
+        source_name: string
+        path: string
+        title: string
+        heading_path: string | null
+        allow_llm: boolean
+        mtime: Date | null
+        updated_at: Date
+      }>(
+        `SELECT c.id AS chunk_id, d.id AS document_id, s.kind, s.name AS source_name,
+                d.path, d.title, c.heading_path, d.allow_llm, d.mtime, d.updated_at
+         FROM documents d
+         JOIN sources s ON s.id = d.source_id
+         LEFT JOIN LATERAL (
+           SELECT id, heading_path FROM chunks WHERE document_id = d.id ORDER BY ordinal LIMIT 1
+         ) c ON true
+         WHERE ${VISIBLE_SOURCE}
+           AND ($1::text[] IS NULL OR s.kind = ANY ($1::text[]))
+           AND ($2::text IS NULL OR (s.kind = 'repo' AND s.name = $2::text))
+           AND NOT (s.kind = 'repo' AND d.path = $3)
+         ORDER BY coalesce(d.mtime, d.updated_at) DESC, d.id DESC
+         LIMIT $4`,
+        [filters.sources === undefined ? null : [...filters.sources], filters.repo ?? null, SUMMARY_PATH, limit],
+      )
+      return rows.map((row) => ({
+        chunkId: row.chunk_id === null ? null : Number(row.chunk_id),
+        documentId: Number(row.document_id),
+        source: { kind: row.kind, name: row.source_name },
+        path: row.path,
+        title: row.title,
+        headingPath: row.heading_path ?? row.title,
+        allowLlm: row.allow_llm,
+        mtime: row.mtime,
+        updatedAt: row.updated_at,
+      }))
+    },
+  }
 }
 
 export function createPgChunkTextLoader(pool: Pool): ChunkTextLoader {
@@ -182,7 +322,7 @@ fused AS (
   LIMIT $6
 )
 SELECT f.id AS chunk_id, f.score, f.fts_rank, f.vector_rank,
-       c.document_id, s.kind, s.name AS source_name, d.path, d.title, d.allow_llm,
+       c.document_id, s.kind, s.name AS source_name, d.path, d.title, d.allow_llm, d.mtime, d.updated_at,
        c.heading_path, c.start_line, c.end_line,
        ts_headline('english', translate(c.content, chr(1) || chr(2), ''), q.tsq, $7) AS headline
 FROM fused f
@@ -203,6 +343,8 @@ interface HitRow {
   path: string
   title: string
   allow_llm: boolean
+  mtime: Date | null
+  updated_at: Date
   heading_path: string
   start_line: number | null
   end_line: number | null
@@ -278,6 +420,8 @@ export function createPgSearchStore(pool: Pool): SearchStore {
             ftsRank: row.fts_rank === null ? null : Number(row.fts_rank),
             vectorRank: row.vector_rank === null ? null : Number(row.vector_rank),
             headline: row.headline,
+            mtime: row.mtime,
+            updatedAt: row.updated_at,
           }))
         } catch (error) {
           await client.query('ROLLBACK')

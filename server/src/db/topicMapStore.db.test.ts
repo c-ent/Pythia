@@ -64,6 +64,20 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('topic map retrieval (R20, 
     await write(index, repo.id, 'README.md', 'Garden application setup and soil notes.', vector(2))
     await write(index, repo.id, 'src/garden.ts', 'Garden implementation source code.', vector(3))
     await write(index, vault.id, 'UnrelatedNovel.md', 'Anime space spirits battle in another world.', cosineVector(0.25))
+    await write(index, vault.id, 'BorderlineNovel.md', 'Shido and Origami watched the skyline in Tenguu City.', cosineVector(0.57))
+    await index.replaceDocument(
+      vault.id,
+      { path: 'StrayChunkBook.md', title: 'StrayChunkBook', language: null, contentHash: 'stray', allowLlm: true, mtime: null },
+      [
+        chunk('A brief stray passage touching the theme.', cosineVector(0.64)),
+        chunk('Chapter one battle scene with spirits.', cosineVector(0.15)),
+        chunk('Chapter two battle scene with angels.', cosineVector(0.15)),
+        chunk('Chapter three battle scene with realizers.', cosineVector(0.15)),
+        chunk('Chapter four battle scene in the city.', cosineVector(0.15)),
+      ],
+      MODEL,
+    )
+    await write(index, vault.id, 'ConceptualMatch.md', 'Compost and mulch nourish every raised bed.', cosineVector(0.64))
     await index.replaceDocument(
       vault.id,
       { path: 'MultiChunkSemantic.md', title: 'MultiChunkSemantic', language: null, contentHash: 'multi', allowLlm: true, mtime: null },
@@ -95,7 +109,7 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('topic map retrieval (R20, 
 
   it('returns only eligible map documents, excludes work and boilerplate by map-vector membership, and applies filters', async () => {
     const all = await search()
-    expect(all.map((doc) => doc.path).sort()).toEqual(['Garden.md', 'Keep/Garden.md', 'MultiChunkSemantic.md', 'README.md'])
+    expect(all.map((doc) => doc.path).sort()).toEqual(['ConceptualMatch.md', 'Garden.md', 'Keep/Garden.md', 'MultiChunkSemantic.md', 'README.md'])
     expect(all[0]?.path).toBe('Garden.md')
     expect(all.every((doc) => doc.embedding.length === 768 && doc.headingPaths.length > 0 && doc.text.length > 0)).toBe(true)
 
@@ -108,7 +122,7 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('topic map retrieval (R20, 
     expect(repo[0]?.sourceKind).toBe('repo')
   })
 
-  it('drops weak semantic matches and gates off-topic FTS hits when ftsMaxDistance is set', async () => {
+  it('drops weak semantic matches, single stray chunks in unrelated books, and gates off-topic FTS hits when ftsMaxDistance is set', async () => {
     const scoped = await store.search({
       query: 'garden soil',
       embedding: vector(0),
@@ -116,9 +130,9 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('topic map retrieval (R20, 
       filters: { sources: ['obsidian'] },
       candidates: 50,
       limit: 40,
-      ftsMaxDistance: 0.5,
+      ftsMaxDistance: 0.46,
     })
-    expect(scoped.map((doc) => doc.path).sort()).toEqual(['Garden.md', 'MultiChunkSemantic.md'])
+    expect(scoped.map((doc) => doc.path).sort()).toEqual(['ConceptualMatch.md', 'Garden.md', 'MultiChunkSemantic.md'])
     expect(vaultId).toBeGreaterThan(0)
   })
 })

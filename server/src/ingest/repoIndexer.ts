@@ -7,7 +7,7 @@ import { dropSecretChunks, logSecretsDrop, type SecretsDropLogger } from '../sec
 import { chunkCode } from './codeChunker.js'
 import { chunkMarkdown } from './markdownChunker.js'
 import { looksBinary, selectRepoFiles, type IncludedRepoFile, type SkipReason } from './repoFilter.js'
-import { listTree, readBlob, readGitignores, type MirrorOptions, type MirrorTreeFile } from './repoMirror.js'
+import { listTree, readBlob, readGitignores, commitDates, type MirrorOptions, type MirrorTreeFile } from './repoMirror.js'
 import { buildRepoSummary } from './repoSummary.js'
 
 // A tracked file at exactly `SUMMARY_PATH` is left out of the index, so it
@@ -103,7 +103,14 @@ export async function indexRepoCommit(options: RepoIndexerOptions, commit: strin
     summary: 'unchanged',
   }
 
-  async function write(docPath: string, title: string, language: string | null, hash: string, chunks: PendingChunk[]) {
+  async function write(
+    docPath: string,
+    title: string,
+    language: string | null,
+    hash: string,
+    chunks: PendingChunk[],
+    mtime: Date | null = null,
+  ) {
     const clean = dropSecretChunks(
       docPath,
       chunks.map((chunk) => ({ chunk, content: chunk.embedText })),
@@ -113,7 +120,7 @@ export async function indexRepoCommit(options: RepoIndexerOptions, commit: strin
     const embeddings = clean.length > 0 ? await embedder.embedDocuments(clean.map((chunk) => chunk.embedText)) : []
     await store.replaceDocument(
       sourceId,
-      { path: docPath, title, language, contentHash: hash, allowLlm, mtime: null },
+      { path: docPath, title, language, contentHash: hash, allowLlm, mtime },
       clean.map((chunk, i) => ({
         ordinal: i,
         headingPath: chunk.headingPath,
@@ -173,9 +180,12 @@ export async function indexRepoCommit(options: RepoIndexerOptions, commit: strin
         return text === undefined ? [] : [[file.path, text] as const]
       }),
   )
+  const dates = await commitDates(dir, commit, mirror)
   const summary = buildRepoSummary({
     repo,
     branch: options.branch,
+    firstCommitAt: dates.firstCommitAt,
+    lastCommitAt: dates.lastCommitAt,
     files: keptFiles.map((file) => ({ path: file.path, language: file.language })),
     readme: readme === undefined ? null : (summaryTexts.get(readme.path) ?? null),
     manifests,
@@ -184,7 +194,7 @@ export async function indexRepoCommit(options: RepoIndexerOptions, commit: strin
   const summaryState = states.get(SUMMARY_PATH)
   if (summaryState === undefined || summaryState.contentHash !== summaryHash || summaryState.stale) {
     try {
-      await write(SUMMARY_PATH, `${repo} overview`, null, summaryHash, [summary])
+      await write(SUMMARY_PATH, `${repo} overview`, null, summaryHash, [summary], dates.lastCommitAt)
       result.summary = 'indexed'
     } catch (error) {
       result.summary = 'failed'

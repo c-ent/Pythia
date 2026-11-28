@@ -1,9 +1,16 @@
 import type { GraphEdgeKind, GraphNode, GraphResponse, LocalGraphNode } from '../api/graph'
+import { SOURCE_LABELS } from '../search/format'
 import { nodeTone, shortLabel, type NodeTone } from './graphModel'
 import type { VisibleTopicBranch } from './topicMapModel'
 
 export type AtlasNodeKind = 'center' | 'branch' | 'subbranch' | 'document' | 'tag' | 'repo' | 'ghost'
 export type AtlasTone = NodeTone | 'center' | 'branch'
+
+export interface AtlasSourceDoc {
+  title: string
+  source: string
+  path: string
+}
 
 export interface AtlasNode {
   id: string
@@ -18,6 +25,7 @@ export interface AtlasNode {
   links: number
   documentId: number | null
   branchQuery?: string
+  sourceDocs?: AtlasSourceDoc[]
   sourceLabel: string | null
   path: string | null
   allowLlm: boolean | null
@@ -262,6 +270,18 @@ function relaxNodes3d(
   }
 }
 
+function collectBranchDocs(branch: VisibleTopicBranch): AtlasSourceDoc[] {
+  const nested = branch.branches?.flatMap(collectBranchDocs) ?? []
+  return [
+    ...branch.documents.map((doc) => ({
+      title: doc.title,
+      source: SOURCE_LABELS[doc.source.kind],
+      path: doc.path,
+    })),
+    ...nested,
+  ]
+}
+
 function countBranchDocuments(branch: VisibleTopicBranch): number {
   const childTotal = branch.branches?.reduce((sum, child) => sum + countBranchDocuments(child), 0) ?? 0
   return branch.documents.length + childTotal
@@ -315,6 +335,7 @@ export function buildTopicAtlasGraph(topic: string, branches: readonly VisibleTo
   collectTitles(branches)
 
   const totalDocs = branches.reduce((sum, branch) => sum + countBranchDocuments(branch), 0)
+  const allSourceDocs = branches.flatMap(collectBranchDocs)
   nodes.push({
     id: 'topic:center',
     kind: 'center',
@@ -327,6 +348,7 @@ export function buildTopicAtlasGraph(topic: string, branches: readonly VisibleTo
     radius: 13,
     links: totalDocs,
     documentId: null,
+    sourceDocs: allSourceDocs.slice(0, 4),
     sourceLabel: 'Topic root',
     path: null,
     allowLlm: null,
@@ -340,6 +362,7 @@ export function buildTopicAtlasGraph(topic: string, branches: readonly VisibleTo
     const branchId = `branch:${branchIdx}:${branch.label}`
     const branchPos: Vec3 = { x: dir.x * branchDist, y: dir.y * branchDist, z: dir.z * branchDist }
     const branchDocsCount = countBranchDocuments(branch)
+    const branchSourceDocs = collectBranchDocs(branch)
 
     nodes.push({
       id: branchId,
@@ -354,6 +377,7 @@ export function buildTopicAtlasGraph(topic: string, branches: readonly VisibleTo
       links: branchDocsCount,
       documentId: null,
       branchQuery: branch.locked ? undefined : branch.label,
+      sourceDocs: branchSourceDocs.slice(0, 4),
       sourceLabel: branch.locked ? 'Private topic group' : 'Topic branch',
       path: null,
       allowLlm: !branch.locked,
@@ -406,6 +430,11 @@ export function buildTopicAtlasGraph(topic: string, branches: readonly VisibleTo
           links: sub.documents.length,
           documentId: null,
           branchQuery: sub.locked ? undefined : sub.label,
+          sourceDocs: sub.documents.slice(0, 4).map((doc) => ({
+            title: doc.title,
+            source: SOURCE_LABELS[doc.source.kind],
+            path: doc.path,
+          })),
           sourceLabel: sub.locked ? 'Private topic group' : 'Sub-branch',
           path: null,
           allowLlm: !sub.locked,
@@ -423,7 +452,7 @@ export function buildTopicAtlasGraph(topic: string, branches: readonly VisibleTo
   return {
     nodes,
     edges,
-    worldRadius: computeWorldRadius(nodes, 185),
+    worldRadius: computeWorldRadius(nodes, 195) + 24,
   }
 }
 
@@ -640,7 +669,7 @@ export function projectPoint(
   worldRadius: number,
 ): { sx: number; sy: number; rz: number; scale: number; depthNorm: number } {
   const { rx, ry, rz } = rotatePoint(x, y, z, camera.yaw, camera.pitch)
-  const baseScale = Math.min(width, height) / (worldRadius * 2.45)
+  const baseScale = Math.min(width, height) / (worldRadius * 2.75)
   const fov = 720
   const perspective = fov / Math.max(150, fov - rz * 0.65)
   const scale = perspective * camera.zoom * baseScale

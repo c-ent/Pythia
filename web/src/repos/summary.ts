@@ -84,6 +84,8 @@ export interface TreeEntry {
 
 export interface RepoSummaryParts {
   branch: string | null
+  firstCommitAt: string | null
+  lastCommitAt: string | null
   /** Code languages by file count, most first; `tsx` counts as TypeScript. */
   languages: LanguageShare[]
   /** The README's first paragraph of prose, shortened. */
@@ -152,10 +154,23 @@ function parseTree(lines: string[]): { tree: TreeEntry[]; moreEntries: number } 
 }
 
 export function parseRepoSummary(text: string): RepoSummaryParts {
-  const parts: RepoSummaryParts = { branch: null, languages: [], description: null, tree: [], moreEntries: 0 }
+  const parts: RepoSummaryParts = {
+    branch: null,
+    firstCommitAt: null,
+    lastCommitAt: null,
+    languages: [],
+    description: null,
+    tree: [],
+    moreEntries: 0,
+  }
   for (const section of text.replace(/\r\n/g, '\n').split(SECTION)) {
     if (section.startsWith('Repository: ')) {
-      parts.branch = /\(branch ([^)]+)\)\s*$/.exec(section.split('\n')[0] ?? '')?.[1] ?? null
+      const lines = section.split('\n')
+      parts.branch = /\(branch ([^)]+)\)\s*$/.exec(lines[0] ?? '')?.[1] ?? null
+      for (const line of lines.slice(1)) {
+        if (line.startsWith('First commit: ')) parts.firstCommitAt = line.slice('First commit: '.length).trim() || null
+        else if (line.startsWith('Latest commit: ')) parts.lastCommitAt = line.slice('Latest commit: '.length).trim() || null
+      }
     } else if (section.startsWith('Languages: ')) {
       parts.languages = parseLanguages(section.slice('Languages: '.length))
     } else if (section.startsWith('README:\n')) {

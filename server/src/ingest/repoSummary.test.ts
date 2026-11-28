@@ -55,6 +55,19 @@ describe('buildRepoSummary', () => {
     expect(a.content.startsWith('Repository: r (branch main)')).toBe(true)
   })
 
+  it('includes first and latest commit dates when provided', () => {
+    const summary = buildRepoSummary({
+      repo: 'kitchen-app',
+      branch: 'main',
+      firstCommitAt: new Date('2026-09-01T10:00:00.000Z'),
+      lastCommitAt: new Date('2026-11-28T12:30:00.000Z'),
+      files,
+    })
+    expect(summary.content.split('\n\n')[0]).toBe(
+      ['Repository: kitchen-app (branch main)', 'First commit: 2026-09-01T10:00:00.000Z', 'Latest commit: 2026-11-28T12:30:00.000Z'].join('\n'),
+    )
+  })
+
   it('works with no README and no manifests, and caps its size', () => {
     const many = Array.from({ length: 5000 }, (_, i) => ({ path: `pkg${i}/file.ts`, language: 'typescript' }))
     const summary = buildRepoSummary({ repo: 'big', branch: null, files: many })

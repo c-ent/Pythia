@@ -259,6 +259,17 @@ describe('SearchScreen', () => {
       // With a generated answer the passages are not repeated as snippets.
       expect(within(answer).queryByText('passage 1')).toBeNull()
       expect(await screen.findByText('All matches · 5 results')).toBeTruthy()
+      // Raw search cards start collapsed in Ask mode until the user expands them.
+      expect(screen.queryByRole('heading', { name: 'Match 1' })).toBeNull()
+      const toggle = screen.getByRole('button', { name: 'Show' })
+      expect(toggle.getAttribute('aria-expanded')).toBe('false')
+
+      fireEvent.click(toggle)
+      expect(screen.getByRole('button', { name: 'Hide' }).getAttribute('aria-expanded')).toBe('true')
+      expect(screen.getByRole('heading', { name: 'Match 1' })).toBeTruthy()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Hide' }))
+      expect(screen.queryByRole('heading', { name: 'Match 1' })).toBeNull()
     })
 
     it('sends the source filter with the question', async () => {
@@ -324,13 +335,14 @@ describe('SearchScreen', () => {
       expect(within(answer).getAllByRole('link').map((link) => link.getAttribute('href'))).toHaveLength(3)
     })
 
-    it('shows an answer error but keeps the matches', async () => {
+    it('shows an answer error and opens the matches automatically', async () => {
       stubAsk(() => json(500, { error: { code: 'internal', message: 'Internal server error' } }))
       render(<SearchScreen />)
       ask('goals')
       const answer = await screen.findByRole('region', { name: 'Answer' })
       expect((await within(answer).findByRole('alert')).textContent).toMatch(/answer failed/)
       expect(await screen.findByText('All matches · 5 results')).toBeTruthy()
+      expect(screen.getByRole('heading', { name: 'Match 1' })).toBeTruthy()
     })
 
     it('drops the answer when switching back to Search', async () => {

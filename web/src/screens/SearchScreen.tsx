@@ -1,5 +1,7 @@
 import {
   ArrowUp,
+  ChevronDown,
+  ChevronUp,
   Info,
   LoaderCircle,
   Lock,
@@ -65,6 +67,8 @@ export function SearchScreen() {
   const [outcome, setOutcome] = useState<Outcome>({ status: 'idle' })
   // The answer to the last query asked in Ask mode; null in Search mode.
   const [answer, setAnswer] = useState<AnswerState | null>(null)
+  // In Ask mode, the raw 20-result match list starts collapsed so the answer stays focused.
+  const [showMatches, setShowMatches] = useState(false)
   // The result shown in the preview pane; null means the first one.
   const [selectedId, setSelectedId] = useState<ChunkId | null>(null)
   const wide = useMediaQuery(PREVIEW_PANE_QUERY)
@@ -95,6 +99,7 @@ export function SearchScreen() {
     setQuery('')
     setOutcome({ status: 'idle' })
     setAnswer(null)
+    setShowMatches(false)
     setMode(readProfile().openingMode)
     inputRef.current?.focus()
   })
@@ -119,6 +124,7 @@ export function SearchScreen() {
     pendingAsk.current?.abort()
     pendingAsk.current = null
     setAnswer(null)
+    setShowMatches(false)
     setSelectedId(null)
     if (!online) {
       pending.current = null
@@ -175,6 +181,7 @@ export function SearchScreen() {
       pendingAsk.current?.abort()
       pendingAsk.current = null
       setAnswer(null)
+      setShowMatches(false)
     }
   }
 
@@ -199,10 +206,10 @@ export function SearchScreen() {
   const results = outcome.status === 'done' ? outcome.response.results : []
   // Counts are shown only unfiltered: with a filter the others would read 0.
   const counts = outcome.status === 'done' && sources.length === 0 ? countBySource(results) : undefined
-  // Wide screens preview the selected result (the first until one is clicked).
-  const selected: SearchResult | undefined = wide
-    ? (results.find((result) => result.chunkId === selectedId) ?? results[0])
-    : undefined
+  const matchesOpen = answer === null || answer.status === 'error' || showMatches
+  // Wide screens preview the selected result (the first until one is clicked), once matches are visible.
+  const selected: SearchResult | undefined =
+    wide && matchesOpen ? (results.find((result) => result.chunkId === selectedId) ?? results[0]) : undefined
 
   const QueryIcon = mode === 'ask' ? Sparkles : Search
 
@@ -312,6 +319,8 @@ export function SearchScreen() {
         <Results
           outcome={outcome}
           withAnswer={answer !== null}
+          matchesOpen={matchesOpen}
+          onToggleMatches={() => setShowMatches((open) => !open)}
           preview={profile.notePreviews}
           selectedId={selected?.chunkId ?? null}
           onSelect={wide ? setSelectedId : undefined}
@@ -333,16 +342,21 @@ export function SearchScreen() {
 function Results({
   outcome,
   withAnswer,
+  matchesOpen,
+  onToggleMatches,
   preview,
   selectedId,
   onSelect,
 }: {
   outcome: Outcome
   withAnswer: boolean
+  matchesOpen: boolean
+  onToggleMatches: () => void
   preview: boolean
   selectedId: ChunkId | null
   onSelect: ((chunkId: ChunkId) => void) | undefined
 }) {
+  const matchesListId = useId()
   switch (outcome.status) {
     case 'idle':
       return (
@@ -395,21 +409,50 @@ function Results({
             </section>
           ) : (
             <>
-              <h2 aria-live="polite" className="text-sm font-medium text-muted">
-                {withAnswer ? `All matches · ${resultCount(results.length)}` : resultCount(results.length)}
-              </h2>
-              <ol className="space-y-3">
-                {results.map((result) => (
-                  <li key={result.chunkId}>
-                    <ResultCard
-                      result={result}
-                      preview={preview}
-                      selected={result.chunkId === selectedId}
-                      {...(onSelect === undefined ? {} : { onSelect: () => onSelect(result.chunkId) })}
-                    />
-                  </li>
-                ))}
-              </ol>
+              {withAnswer ? (
+                <div className="flex items-center justify-between gap-3 rounded-card border border-line bg-surface px-4 py-2">
+                  <h2 aria-live="polite" className="text-sm font-medium text-muted">
+                    {`All matches · ${resultCount(results.length)}`}
+                  </h2>
+                  <button
+                    type="button"
+                    aria-expanded={matchesOpen}
+                    aria-controls={matchesListId}
+                    onClick={onToggleMatches}
+                    className="inline-flex min-h-11 items-center gap-1.5 rounded-control px-3 text-sm font-medium text-ink transition-colors hover:bg-raised"
+                  >
+                    {matchesOpen ? (
+                      <>
+                        <ChevronUp aria-hidden="true" className="size-4 text-muted" />
+                        Hide
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown aria-hidden="true" className="size-4 text-muted" />
+                        Show
+                      </>
+                    )}
+                  </button>
+                </div>
+              ) : (
+                <h2 aria-live="polite" className="text-sm font-medium text-muted">
+                  {resultCount(results.length)}
+                </h2>
+              )}
+              {matchesOpen ? (
+                <ol id={matchesListId} className="space-y-3">
+                  {results.map((result) => (
+                    <li key={result.chunkId}>
+                      <ResultCard
+                        result={result}
+                        preview={preview}
+                        selected={result.chunkId === selectedId}
+                        {...(onSelect === undefined ? {} : { onSelect: () => onSelect(result.chunkId) })}
+                      />
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
             </>
           )}
         </div>

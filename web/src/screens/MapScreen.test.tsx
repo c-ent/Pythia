@@ -119,6 +119,9 @@ describe('MapScreen', () => {
     expect(screen.getByRole('button', { name: 'Zoom in' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Zoom out' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Reset view' })).toBeTruthy()
+    expect(screen.getByText('Where these branches come from')).toBeTruthy()
+    fireEvent.click(screen.getByText('Where these branches come from'))
+    expect(screen.getByRole('link', { name: /Job Search Strategy/ }).getAttribute('href')).toBe('/doc/1')
 
     fireEvent.click(screen.getByRole('button', { name: 'Show list' }))
     expect(screen.getByRole('list', { name: 'Topic map outline' })).toBeTruthy()

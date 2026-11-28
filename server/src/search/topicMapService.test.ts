@@ -93,18 +93,18 @@ describe('topic map service', () => {
     }
   })
 
-  it('weights titles and headings over body filler and avoids same-stem duplicates', async () => {
+  it('uses the document title for 1-doc branches and weights titles over body filler for multi-doc branches', async () => {
     const docs: TopicMapCandidate[] = [
       {
         documentId: 1,
         sourceKind: 'obsidian',
         sourceName: 'vault',
         path: 'Ikigai.md',
-        title: 'Ikigai Purpose',
+        title: 'Ikigai',
         allowLlm: true,
         embedding: [1, 0, 0],
-        headingPaths: ['Meaning > Calling'],
-        text: 'able able able across across just just 10th 20px achieve achieving achievement',
+        headingPaths: ['Meaning > Attitude'],
+        text: 'able able able across across just just 10th 20px attitude diet',
       },
       {
         documentId: 2,
@@ -115,15 +115,39 @@ describe('topic map service', () => {
         allowLlm: true,
         embedding: [0, 1, 0],
         headingPaths: ['Mastery'],
-        text: 'able across just open',
+        text: 'able across just open achieve achieving achievement',
+      },
+      {
+        documentId: 3,
+        sourceKind: 'obsidian',
+        sourceName: 'vault',
+        path: 'Mastery.md',
+        title: 'Craft Mastery',
+        allowLlm: true,
+        embedding: [0.02, 0.999, 0],
+        headingPaths: ['Skill'],
+        text: 'able across just open achieve achieving practice',
+      },
+      {
+        documentId: 4,
+        sourceKind: 'obsidian',
+        sourceName: 'vault',
+        path: 'Design.md',
+        title: 'Visual Design',
+        allowLlm: true,
+        embedding: [0, 0, 1],
+        headingPaths: ['Typography'],
+        text: 'grid layout spacing',
       },
     ]
     const { store } = fixtureStore(docs)
     const response = await createTopicMapService({ store, embedder }).map({ topic: 'ikigai' })
     const labels = response.branches.map((branch) => branch.label)
+    expect(labels).toContain('Ikigai')
     expect(labels.join(' ')).not.toMatch(/\b(able|across|just|10th|20px)\b/)
-    expect(labels[0]).toContain('purpose')
-    expect(labels[0]).not.toMatch(/achieve.*achiev/)
+    const multiBranch = response.branches.find((branch) => branch.documents.length === 2)
+    expect(multiBranch?.label).toContain('craft')
+    expect(multiBranch?.label).not.toMatch(/achieve.*achiev/)
   })
 
   it('anchors embeddings and FTS distance when drilling down with parent context', async () => {

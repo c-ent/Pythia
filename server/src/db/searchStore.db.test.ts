@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { loadConfig } from '../config.js'
 import { runMigrations } from './migrate.js'
 import { createPgIndexStore, ensureSource } from './indexStore.js'
-import { createPgChunkTextLoader, createPgSearchStore } from './searchStore.js'
+import { createPgAskContextLoader, createPgChunkTextLoader, createPgSearchStore } from './searchStore.js'
 import { createAskService } from '../ask/askService.js'
 import type { ChatModel } from '../ask/llm.js'
 import { EMBED_DIMENSIONS, OllamaError, type Embedder } from '../embed/ollama.js'
@@ -316,5 +316,68 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('hybrid search against Post
     expect(prompts.length).toBe(1)
     expect(prompts.join('\n')).not.toContain('Rent and expenses')
     expect(prompts.join('\n')).not.toContain('Private/Money.md')
+  })
+
+  it('loads repo catalog and recent documents for Ask context while withholding private entries from Gemini', async () => {
+    const appRepo = await ensureSource(pool, 'repo', 'nova-app', '/repos/nova-app')
+    await createPgIndexStore(pool).replaceDocument(
+      appRepo.id,
+      {
+        path: ':SUMMARY',
+        title: 'nova-app overview',
+        language: null,
+        contentHash: 'nova-summary-v1',
+        allowLlm: true,
+        mtime: new Date('2026-11-28T08:00:00Z'),
+      },
+      [
+        {
+          ordinal: 0,
+          headingPath: 'SUMMARY > nova-app',
+          startLine: 1,
+          endLine: 1,
+          content: [
+            'Repository: nova-app (branch main)',
+            'First commit: 2026-11-15T00:00:00.000Z',
+            'Latest commit: 2026-11-28T08:00:00.000Z',
+            '',
+            'Languages: typescript (8)',
+            '',
+            'Dependencies:\npackage.json dependencies: next, react',
+          ].join('\n'),
+          embedding: topicVector('typescript'),
+        },
+      ],
+      embedder.model,
+    )
+
+    const context = createPgAskContextLoader(pool)
+    const repos = await context.repoCatalog({})
+    const nova = repos.find((r) => r.name === 'nova-app')
+    expect(nova?.firstCommitAt?.toISOString()).toBe('2026-11-15T00:00:00.000Z')
+    expect(nova?.lastCommitAt?.toISOString()).toBe('2026-11-28T08:00:00.000Z')
+    expect(nova?.languages).toBe('typescript (8)')
+
+    const prompts: string[] = []
+    const ask = createAskService({
+      search,
+      chunks: createPgChunkTextLoader(pool),
+      context,
+      gemini: {
+        engine: 'gemini',
+        model: 'gemini-test',
+        async generate(prompt) {
+          prompts.push(JSON.stringify(prompt))
+          return 'nova-app uses Next and React [1].'
+        },
+      },
+      local: null,
+      log: () => {},
+    })
+    const res = await ask.ask({ question: 'whats my latest project tech stack?' })
+    expect(res.engine).toBe('gemini')
+    expect(res.citations[0]?.source.name).toBe('nova-app')
+    expect(prompts[0]).toContain('next, react')
+    expect(prompts[0]).not.toContain('Rent and expenses')
   })
 })

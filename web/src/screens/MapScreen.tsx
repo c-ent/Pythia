@@ -173,6 +173,15 @@ export function MapScreen() {
                 <li key={tone} className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`size-2.5 rounded-full ${TONE_SWATCH[tone]}`} />{TONE_LABELS[tone]}</li>
               ))}
             </ul>
+            <details className="mt-3 rounded-control border border-line bg-canvas px-3.5 py-1.5">
+              <summary className="flex min-h-11 cursor-pointer items-center justify-between text-sm font-medium text-ink">
+                <span>Where these branches come from</span>
+                <span className="text-xs font-normal text-muted">{documents.length} {documents.length === 1 ? 'source' : 'sources'}</span>
+              </summary>
+              <div className="border-t border-line pt-2 pb-2">
+                <BranchSources branches={branches} />
+              </div>
+            </details>
           </>}
         </section>
       ) : null}
@@ -191,6 +200,41 @@ function BranchList({ branch, depth, onBranch }: { branch: VisibleTopicBranch; d
     {branch.branches?.map((child) => <BranchList key={child.label} branch={child} depth={depth + 1} onBranch={onBranch} />)}
     {branch.documents.map((document) => <DocumentLink key={document.documentId} document={document} />)}
   </div>
+}
+
+function BranchSources({ branches }: { branches: VisibleTopicBranch[] }) {
+  const flatten = (branch: VisibleTopicBranch): VisibleTopicBranch['documents'] => [
+    ...branch.documents,
+    ...(branch.branches?.flatMap(flatten) ?? []),
+  ]
+  return (
+    <ul aria-label="Branch sources" className="space-y-3">
+      {branches.map((branch) => {
+        const docs = flatten(branch)
+        return (
+          <li key={branch.label}>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted">{branch.label}</p>
+            <ul className="mt-1 space-y-1">
+              {docs.map((doc) => {
+                const path = documentPath(doc.documentId)
+                return (
+                  <li key={doc.documentId}>
+                    <a href={path} onClick={(event) => followLink(event, path)} className="flex min-h-11 items-center justify-between gap-3 rounded-control px-2 text-sm text-ink hover:bg-raised">
+                      <span className="min-w-0 truncate">
+                        <span className="font-medium text-accent-ink">{doc.title}</span>
+                        <span className="ml-2 font-mono text-xs text-muted">{doc.path}</span>
+                      </span>
+                      <span className="shrink-0 text-xs text-muted">{SOURCE_LABELS[doc.source.kind]}</span>
+                    </a>
+                  </li>
+                )
+              })}
+            </ul>
+          </li>
+        )
+      })}
+    </ul>
+  )
 }
 
 function DocumentLink({ document }: { document: { documentId: number; title: string; path: string; source: { kind: SourceKind }; allowLlm: boolean } }) {

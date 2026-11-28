@@ -794,6 +794,19 @@ function NodePreview({
       <p className="font-medium wrap-break-word text-nav-ink">{node.label}</p>
       <p className="mt-0.5 text-xs text-nav-muted">{nodeKindSummary(node)}</p>
       {node.path === null ? null : <p className="mt-0.5 truncate font-mono text-xs text-nav-muted">{node.path}</p>}
+      {node.sourceDocs && node.sourceDocs.length > 0 ? (
+        <ul className="mt-1.5 space-y-0.5 border-t border-nav-line pt-1.5 text-xs">
+          {node.sourceDocs.map((doc, idx) => (
+            <li key={`${doc.path}:${idx}`} className="truncate text-nav-ink">
+              <span>{doc.title}</span>
+              <span className="text-nav-muted"> · {doc.source}</span>
+            </li>
+          ))}
+          {node.links > node.sourceDocs.length ? (
+            <li className="text-nav-muted">+{node.links - node.sourceDocs.length} more</li>
+          ) : null}
+        </ul>
+      ) : null}
       {node.allowLlm === false ? (
         <p className="mt-1 inline-flex items-center gap-1 text-xs text-nav-muted">
           <Lock className="size-3.5" />

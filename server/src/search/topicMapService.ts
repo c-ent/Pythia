@@ -1,6 +1,8 @@
 import {
   TOPIC_MAP_CONTEXT_MIN_SIMILARITY,
+  TOPIC_MAP_DOC_MIN_SIMILARITY,
   TOPIC_MAP_MIN_SIMILARITY,
+  TOPIC_MAP_STRONG_SIMILARITY,
   type TopicMapCandidate,
   type TopicMapStore,
 } from '../db/topicMapStore.js'
@@ -117,20 +119,33 @@ function documentTermWeights(document: TopicMapCandidate): Map<string, number> {
   return weights
 }
 
+const GENERIC_TITLES = new Set(['readme', 'readme.md', 'index', 'index.md', 'changelog', 'changelog.md'])
+
+function singleDocumentLabel(document: TopicMapCandidate): string | null {
+  const trimmed = document.title.trim()
+  if (trimmed === '' || GENERIC_TITLES.has(trimmed.toLocaleLowerCase())) return null
+  return trimmed
+}
+
 interface LabelContext {
   corpusDocFreq: ReadonlyMap<string, number>
   totalDocs: number
   queryTerms: ReadonlySet<string>
 }
 
-/** Stable keyword labels: title and headings outweigh body text, weighted by branch distinctiveness. */
+/** Stable keyword labels: 1-doc branches keep their title; multi-doc branches use distinctive terms. */
 function labelFor(documents: readonly TopicMapCandidate[], fallback: string, ctx: LabelContext): string {
+  if (documents.length === 1) {
+    const title = singleDocumentLabel(documents[0]!)
+    if (title !== null) return title
+  }
   const scores = new Map<string, number>()
   for (const document of documents) {
+    const titleSet = new Set(terms(document.title))
     for (const [word, weight] of documentTermWeights(document)) {
       const df = ctx.corpusDocFreq.get(word) ?? 1
       const idf = 1 + Math.log((ctx.totalDocs + 1) / df)
-      const queryScale = ctx.queryTerms.has(word) ? 0.35 : 1
+      const queryScale = ctx.queryTerms.has(word) && !titleSet.has(word) ? 0.6 : 1
       scores.set(word, (scores.get(word) ?? 0) + weight * idf * queryScale)
     }
   }
@@ -266,6 +281,8 @@ export function createTopicMapService(options: TopicMapServiceOptions): TopicMap
         candidates: TOPIC_MAP_CANDIDATES,
         limit: TOPIC_MAP_LIMIT,
         maxDistance: 1 - TOPIC_MAP_MIN_SIMILARITY,
+        strongMaxDistance: 1 - TOPIC_MAP_STRONG_SIMILARITY,
+        docMaxDistance: 1 - TOPIC_MAP_DOC_MIN_SIMILARITY,
         ...(cleanContext ? { ftsMaxDistance: 1 - TOPIC_MAP_CONTEXT_MIN_SIMILARITY } : {}),
       })
 

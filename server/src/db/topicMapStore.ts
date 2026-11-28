@@ -2,9 +2,13 @@ import type { Pool } from 'pg'
 import type { SearchFilters, SearchableKind } from './searchStore.js'
 
 /** Lowest query-to-chunk cosine similarity for semantic topic map candidates. */
-export const TOPIC_MAP_MIN_SIMILARITY = 0.54
+export const TOPIC_MAP_MIN_SIMILARITY = 0.62
+/** Chunk similarity above which a document passes even if its whole-document mean vector is broad. */
+export const TOPIC_MAP_STRONG_SIMILARITY = 0.68
+/** Minimum whole-document similarity required for borderline (`0.62..0.68`) semantic chunks. */
+export const TOPIC_MAP_DOC_MIN_SIMILARITY = 0.54
 /** Lowest cosine similarity for FTS hits when drilling down inside a parent context. */
-export const TOPIC_MAP_CONTEXT_MIN_SIMILARITY = 0.48
+export const TOPIC_MAP_CONTEXT_MIN_SIMILARITY = 0.54
 
 /** The map-safe documents retrieved for one topic, with stored vectors for grouping. */
 export interface TopicMapCandidate {
@@ -30,6 +34,10 @@ export interface TopicMapSearchParams {
   limit: number
   /** Maximum cosine distance (`1 - similarity`) for semantic candidates. */
   maxDistance?: number
+  /** Chunk cosine distance (`1 - similarity`) that bypasses the document-vector consistency check. */
+  strongMaxDistance?: number
+  /** Document-vector cosine distance (`1 - similarity`) required for borderline chunks. */
+  docMaxDistance?: number
   /** Optional cosine distance gate applied to FTS hits when scoping to a parent context. */
   ftsMaxDistance?: number
 }
@@ -50,7 +58,7 @@ fts AS (
     SELECT c.document_id, max(ts_rank_cd(c.fts, q.tsq)) AS best_score
     FROM chunks c
     JOIN documents d ON d.id = c.document_id
-    JOIN document_vectors dv ON dv.document_id = d.id
+    JOIN document_vectors dv ON dv.document_id = d.id AND dv.embed_model = $7
     JOIN sources s ON s.id = d.source_id
     CROSS JOIN q
     WHERE c.fts @@ q.tsq AND c.embedding IS NOT NULL AND c.embed_model = $7
@@ -68,10 +76,21 @@ semantic_chunks AS (
   SELECT c.document_id, c.embedding <=> $2::vector AS distance
   FROM chunks c
   JOIN documents d ON d.id = c.document_id
-  JOIN document_vectors dv ON dv.document_id = d.id
+  JOIN document_vectors dv ON dv.document_id = d.id AND dv.embed_model = $7
   JOIN sources s ON s.id = d.source_id
   WHERE c.embedding IS NOT NULL AND c.embed_model = $7
-    AND ($8::float8 IS NULL OR (c.embedding <=> $2::vector) <= $8::float8)
+    AND (
+      $8::float8 IS NULL
+      OR (
+        (c.embedding <=> $2::vector) <= $8::float8
+        AND (
+          $11::float8 IS NULL
+          OR $12::float8 IS NULL
+          OR (c.embedding <=> $2::vector) <= $11::float8
+          OR (dv.embedding <=> $2::vector) <= $12::float8
+        )
+      )
+    )
     AND s.enabled AND s.kind <> 'work'
     AND ($3::text[] IS NULL OR s.kind = ANY ($3::text[]))
     AND ($4::text IS NULL OR (s.kind = 'repo' AND s.name = $4::text))
@@ -133,6 +152,8 @@ export function createPgTopicMapStore(pool: Pool): TopicMapStore {
   return {
     async search(params) {
       const maxDistance = params.maxDistance ?? 1 - TOPIC_MAP_MIN_SIMILARITY
+      const strongMaxDistance = params.strongMaxDistance ?? 1 - TOPIC_MAP_STRONG_SIMILARITY
+      const docMaxDistance = params.docMaxDistance ?? 1 - TOPIC_MAP_DOC_MIN_SIMILARITY
       const chunkScanLimit = Math.max(params.candidates * 4, 200)
       const client = await pool.connect()
       try {
@@ -163,6 +184,8 @@ export function createPgTopicMapStore(pool: Pool): TopicMapStore {
             maxDistance,
             chunkScanLimit,
             params.ftsMaxDistance ?? null,
+            strongMaxDistance,
+            docMaxDistance,
           ])
           await client.query('COMMIT')
           return rows.map((row) => ({

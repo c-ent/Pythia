@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ChunkText, ChunkTextLoader } from '../db/searchStore.js'
+import type { AskContextLoader, ChunkText, ChunkTextLoader, RecentCatalogEntry, RepoCatalogEntry } from '../db/searchStore.js'
 import type { SearchResult, SearchService } from '../search/searchService.js'
 import { buildPrompt, createAskService, RETRIEVAL_PASSAGES, SYSTEM_PROMPT } from './askService.js'
 import { LlmError, type ChatModel, type ChatPrompt } from './llm.js'
@@ -295,14 +295,122 @@ describe('ask service', () => {
     expect(local.prompts).toHaveLength(0)
   })
 
-  it('passes filters and a clamped limit to search, and reports degraded search', async () => {
+  it('passes filters and a clamped candidate limit to search, and reports degraded search', async () => {
     const { search, calls } = fakeSearch([publicHit], true)
     const ask = createAskService({ search, chunks: loader(defaultTexts), gemini: null, local: null, log: quiet })
     const response = await ask.ask({ question: 'q', sources: ['repo'], repo: 'pythia', limit: 50 })
-    expect(calls[0]).toEqual({ query: 'q', sources: ['repo'], repo: 'pythia', limit: 10 })
+    expect(calls[0]).toEqual({ query: 'q', sources: ['repo'], repo: 'pythia', limit: 30 })
     expect(response.degraded).toBe(true)
     await ask.ask({ question: 'q' })
-    expect(calls[1]?.limit).toBe(6)
+    expect(calls[1]?.limit).toBe(18)
+  })
+
+  it('diversifies search hits across documents before taking repeated chunks from the same doc', async () => {
+    const dupA1 = result({ chunkId: 11, documentId: 100, path: 'Career.md', title: 'Career' })
+    const dupA2 = result({ chunkId: 12, documentId: 100, path: 'Career.md', title: 'Career' })
+    const docB = result({ chunkId: 13, documentId: 200, path: 'Stack.md', title: 'Stack' })
+    const { search } = fakeSearch([dupA1, dupA2, docB])
+    const gemini = fakeModel('gemini', 'See [1] and [2].')
+    const ask = createAskService({
+      search,
+      chunks: loader({
+        11: { content: 'Career part 1', allowLlm: true },
+        12: { content: 'Career part 2', allowLlm: true },
+        13: { content: 'Stack note', allowLlm: true },
+      }),
+      gemini: gemini.model,
+      local: null,
+      log: quiet,
+    })
+
+    const response = await ask.ask({ question: 'what stack?', limit: 2 })
+    expect(response.citations.map((c) => c.path)).toEqual(['Career.md', 'Stack.md'])
+  })
+
+  it('provides a privacy-filtered catalog and newest repo summaries for temporal/project questions', async () => {
+    const repoPublic: RepoCatalogEntry = {
+      chunkId: 50,
+      documentId: 500,
+      name: 'nova',
+      title: 'nova overview',
+      headingPath: 'SUMMARY > nova',
+      allowLlm: true,
+      firstCommitAt: new Date('2026-11-20T00:00:00Z'),
+      lastCommitAt: new Date('2026-11-28T09:00:00Z'),
+      updatedAt: new Date('2026-11-28T09:05:00Z'),
+      languages: 'typescript (12)',
+      summaryText: '',
+    } as RepoCatalogEntry & { summaryText?: string }
+    const repoPrivate: RepoCatalogEntry = {
+      chunkId: 51,
+      documentId: 501,
+      name: 'secret-repo',
+      title: 'secret-repo overview',
+      headingPath: 'SUMMARY > secret-repo',
+      allowLlm: false,
+      firstCommitAt: new Date('2026-11-27T00:00:00Z'),
+      lastCommitAt: new Date('2026-11-28T10:00:00Z'),
+      updatedAt: new Date('2026-11-28T10:05:00Z'),
+      languages: 'python (5)',
+    }
+    const recentPublic: RecentCatalogEntry = {
+      chunkId: 60,
+      documentId: 600,
+      source: { kind: 'obsidian', name: 'vault' },
+      path: 'Notes/Plan.md',
+      title: 'Plan',
+      headingPath: 'Plan',
+      allowLlm: true,
+      mtime: new Date('2026-11-27T00:00:00Z'),
+      updatedAt: new Date('2026-11-27T00:00:00Z'),
+    }
+    const recentPrivate: RecentCatalogEntry = {
+      chunkId: 61,
+      documentId: 601,
+      source: { kind: 'obsidian', name: 'vault' },
+      path: 'Private/SecretPlan.md',
+      title: 'SecretPlan',
+      headingPath: 'SecretPlan',
+      allowLlm: false,
+      mtime: new Date('2026-11-28T00:00:00Z'),
+      updatedAt: new Date('2026-11-28T00:00:00Z'),
+    }
+    const context: AskContextLoader = {
+      async repoCatalog() {
+        return [repoPrivate, repoPublic]
+      },
+      async recentDocuments() {
+        return [recentPrivate, recentPublic]
+      },
+    }
+    const { search } = fakeSearch([publicHit])
+    const gemini = fakeModel('gemini', 'Your latest project is nova [1].')
+    const ask = createAskService({
+      search,
+      chunks: loader({
+        1: { content: PUBLIC_TEXT, allowLlm: true },
+        50: { content: 'Repository: nova\nFirst commit: 2026-11-20T00:00:00.000Z\nLatest commit: 2026-11-28T09:00:00.000Z\n\nDependencies:\npackage.json dependencies: next, react', allowLlm: true },
+        51: { content: 'TOP SECRET REPO', allowLlm: false },
+        60: { content: 'Plan text', allowLlm: true },
+        61: { content: 'TOP SECRET NOTE', allowLlm: false },
+      }),
+      context,
+      gemini: gemini.model,
+      local: null,
+      now: () => new Date('2026-11-28T12:00:00Z'),
+      log: quiet,
+    })
+
+    const response = await ask.ask({ question: 'whats my latest project tech stack?' })
+    expect(response.engine).toBe('gemini')
+    expect(response.citations[0]?.source.name).toBe('nova')
+    const promptSent = JSON.stringify(gemini.prompts[0])
+    expect(promptSent).toContain('Today: 2026-11-28')
+    expect(promptSent).toContain('nova | first 2026-11-20 | latest 2026-11-28')
+    expect(promptSent).toContain('next, react')
+    expect(promptSent).not.toContain('secret-repo')
+    expect(promptSent).not.toContain('TOP SECRET')
+    expect(promptSent).not.toContain('SecretPlan')
   })
 })
 

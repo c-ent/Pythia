@@ -23,7 +23,7 @@ Read this when changing data flow, storage, auth, or module boundaries. Only wha
 ### Search & Ask
 1. Client (PWA over Tailscale Funnel HTTPS, or MCP client with bearer token) sends a query to Express on `127.0.0.1`.
 2. `server/src/search/` embeds the query with prefix `search_query: `, runs Postgres FTS + vector CTEs (applying `sources`/`repo` filters inside both CTEs), and merges rankings with RRF (`k = 60`).
-3. For Ask mode, `server/src/search/ask` strips chunks where `allow_llm = false` before calling Gemini (429 backoff), falling back to local Ollama and then to retrieval-only snippets.
+3. For Ask mode, `server/src/search/ask` (`server/src/ask/askService.ts`) diversifies hybrid-search hits across documents, adds a compact `<catalog>` of repos (`First commit`, `Latest commit`, languages) and recent documents via `AskContextLoader` (`createPgAskContextLoader`), enriches named-repo or temporal queries with `:SUMMARY`/recent chunks, and strips everything where `allow_llm = false` before calling Gemini (429 backoff), falling back to local Ollama and then to retrieval-only snippets.
 
 ## Storage model
 

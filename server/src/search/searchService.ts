@@ -61,6 +61,8 @@ export interface SearchResult {
   ftsRank: number | null
   vectorRank: number | null
   snippet: Snippet
+  mtime?: Date | null
+  updatedAt?: Date
 }
 
 export interface SearchResponse {
@@ -180,6 +182,8 @@ const toResult = (hit: ChunkHit): SearchResult => ({
   ftsRank: hit.ftsRank,
   vectorRank: hit.vectorRank,
   snippet: parseHeadline(hit.headline),
+  ...(hit.mtime === undefined ? {} : { mtime: hit.mtime }),
+  ...(hit.updatedAt === undefined ? {} : { updatedAt: hit.updatedAt }),
 })
 
 function describeError(error: unknown): string {

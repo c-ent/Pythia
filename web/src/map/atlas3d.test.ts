@@ -70,6 +70,7 @@ describe('buildTopicAtlasGraph', () => {
     expect(branchNodes.map((n) => n.label)).toEqual(['Topic 1', 'public topic'])
     expect(branchNodes[0]?.branchQuery).toBeUndefined()
     expect(branchNodes[1]?.branchQuery).toBe('public topic')
+    expect(branchNodes[1]?.sourceDocs).toEqual([{ title: 'Public', source: 'Notes', path: 'vault/Public' }])
   })
 })
 

@@ -136,6 +136,16 @@ export function RepoDetail(props: RepoDetailProps) {
       <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-line pt-4 text-sm">
         <Stat label="Files indexed">{repo.files.toLocaleString('en-US')}</Stat>
         <Stat label="Chunks">{repo.chunks.toLocaleString('en-US')}</Stat>
+        {parts?.firstCommitAt != null ? (
+          <Stat label="First commit">
+            <time dateTime={parts.firstCommitAt}>{formatDateTime(parts.firstCommitAt, timeZone)}</time>
+          </Stat>
+        ) : null}
+        {parts?.lastCommitAt != null ? (
+          <Stat label="Latest commit">
+            <time dateTime={parts.lastCommitAt}>{timeAgo(parts.lastCommitAt, now, timeZone)}</time>
+          </Stat>
+        ) : null}
         <Stat label="Last change">
           {repo.updatedAt === null ? 'Not indexed yet' : <time dateTime={repo.updatedAt}>{timeAgo(repo.updatedAt, now, timeZone)}</time>}
         </Stat>

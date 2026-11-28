@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { RepoSpec } from './repoConfig.js'
 import { selectRepoFiles } from './repoFilter.js'
-import { listTree, mirrorPath, readBlob, readGitignores, RepoSyncError, syncRepo } from './repoMirror.js'
+import { commitDates, listTree, mirrorPath, readBlob, readGitignores, RepoSyncError, syncRepo } from './repoMirror.js'
 
 const IDENTITY = ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false']
 
@@ -148,5 +148,30 @@ describe('listTree, readBlob and readGitignores', { timeout: 60_000 }, () => {
 
   it('refuses a malformed blob id', async () => {
     await expect(readBlob(work, '--output=x', { mirrorsDir: mirrors })).rejects.toBeInstanceOf(RepoSyncError)
+  })
+
+  it('reads first and latest commit timestamps from the mirror', async () => {
+    const timedSource = path.join(work, 'timed-source')
+    await mkdir(timedSource)
+    git(timedSource, 'init', '--quiet', '--initial-branch=main')
+    await put(timedSource, 'README.md', '# Timed\n')
+    git(timedSource, 'add', '--all')
+    execFileSync('git', [...IDENTITY, 'commit', '--quiet', '-m', 'init'], {
+      cwd: timedSource,
+      env: { ...process.env, GIT_AUTHOR_DATE: '2026-01-10T08:00:00Z', GIT_COMMITTER_DATE: '2026-01-10T08:00:00Z' },
+      windowsHide: true,
+    })
+    await put(timedSource, 'README.md', '# Timed v2\n')
+    git(timedSource, 'add', '--all')
+    execFileSync('git', [...IDENTITY, 'commit', '--quiet', '-m', 'update'], {
+      cwd: timedSource,
+      env: { ...process.env, GIT_AUTHOR_DATE: '2026-11-25T14:30:00Z', GIT_COMMITTER_DATE: '2026-11-25T14:30:00Z' },
+      windowsHide: true,
+    })
+
+    const synced = await syncRepo({ name: 'timed', url: timedSource, branch: null }, { mirrorsDir: mirrors })
+    const dates = await commitDates(mirrorPath(mirrors, 'timed'), synced.commit, { mirrorsDir: mirrors })
+    expect(dates.firstCommitAt?.toISOString()).toBe('2026-01-10T08:00:00.000Z')
+    expect(dates.lastCommitAt?.toISOString()).toBe('2026-11-25T14:30:00.000Z')
   })
 })

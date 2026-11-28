@@ -16,6 +16,10 @@ const DEPENDENCY_NAMES = 40
 export interface RepoSummaryInput {
   repo: string
   branch: string | null
+  /** Earliest commit timestamp in the repo's history. */
+  firstCommitAt?: Date | null
+  /** Latest commit timestamp on the indexed branch. */
+  lastCommitAt?: Date | null
   /** Paths of the files selected for indexing, repo-relative. */
   files: ReadonlyArray<{ path: string; language: string | null }>
   /** Root README text, if any. */
@@ -123,9 +127,18 @@ export function manifestLines(file: string, text: string): string[] {
   return [`${file}`]
 }
 
+const formatCommitIso = (date: Date | null | undefined): string | null =>
+  date instanceof Date && !Number.isNaN(date.getTime()) ? date.toISOString() : null
+
 /** The repo's `SUMMARY` chunk. Deterministic: inputs are sorted before use. */
 export function buildRepoSummary(input: RepoSummaryInput): SummaryChunk {
-  const sections: string[] = [`Repository: ${input.repo}${input.branch === null ? '' : ` (branch ${input.branch})`}`]
+  const header = [`Repository: ${input.repo}${input.branch === null ? '' : ` (branch ${input.branch})`}`]
+  const firstCommit = formatCommitIso(input.firstCommitAt)
+  if (firstCommit !== null) header.push(`First commit: ${firstCommit}`)
+  const lastCommit = formatCommitIso(input.lastCommitAt)
+  if (lastCommit !== null) header.push(`Latest commit: ${lastCommit}`)
+
+  const sections: string[] = [header.join('\n')]
   sections.push(`Indexed files: ${input.files.length}`)
   const languages = languageCounts(input.files)
   if (languages.length > 0) sections.push(`Languages: ${languages.join(', ')}`)

@@ -6,7 +6,7 @@ import { createPgGeminiKeyStore, createPgGeminiUsageStore } from './db/geminiSto
 import { createGeminiSettings } from './settings/geminiSettings.js'
 import { createOllamaChatModel } from './ask/ollamaChat.js'
 import { loadConfig } from './config.js'
-import { createPgChunkTextLoader, createPgSearchStore } from './db/searchStore.js'
+import { createPgAskContextLoader, createPgChunkTextLoader, createPgSearchStore } from './db/searchStore.js'
 import { createEmbedGate } from './embed/embedGate.js'
 import { createOllamaEmbedder } from './embed/ollama.js'
 import { startDrive, type RunningDrive } from './ingest/startDrive.js'
@@ -104,6 +104,7 @@ const gemini = createGeminiSettings({
 const ask = createAskService({
   search,
   chunks: createPgChunkTextLoader(pool),
+  context: createPgAskContextLoader(pool),
   gemini: () => gemini.model(),
   local:
     config.ask.ollamaChatModel === null

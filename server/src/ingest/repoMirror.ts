@@ -165,6 +165,43 @@ export async function readBlob(dir: string, blob: string, options: MirrorOptions
   }
 }
 
+export interface RepoCommitDates {
+  /** Earliest root commit timestamp reachable from `commit`, or null if unavailable. */
+  firstCommitAt: Date | null
+  /** Timestamp of `commit`, or null if unavailable. */
+  lastCommitAt: Date | null
+}
+
+const parseCommitDate = (raw: string): Date | null => {
+  const trimmed = raw.trim()
+  if (trimmed === '') return null
+  const ms = Date.parse(trimmed)
+  return Number.isNaN(ms) ? null : new Date(ms)
+}
+
+/** Reads the earliest root commit and latest commit timestamps for `commit` from the mirror. */
+export async function commitDates(dir: string, commit: string, options: MirrorOptions): Promise<RepoCommitDates> {
+  if (!/^[0-9a-f]{40,64}$/.test(commit)) throw new RepoSyncError('invalid commit id')
+  const lastRaw = await git(['show', '-s', '--format=%cI', commit], options, dir)
+  const lastCommitAt = parseCommitDate(lastRaw)
+
+  const rootsRaw = await git(['rev-list', '--max-parents=0', commit], options, dir)
+  const roots = rootsRaw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^[0-9a-f]{40,64}$/.test(line))
+    .slice(0, 20)
+  if (roots.length === 0) return { firstCommitAt: lastCommitAt, lastCommitAt }
+
+  const firstRaw = await git(['show', '-s', '--format=%cI', ...roots], options, dir)
+  const dates = firstRaw
+    .split(/\r?\n/)
+    .map(parseCommitDate)
+    .filter((date): date is Date => date !== null)
+    .sort((a, b) => a.getTime() - b.getTime())
+  return { firstCommitAt: dates[0] ?? lastCommitAt, lastCommitAt }
+}
+
 /** The `.gitignore` files tracked at `commit`, for `selectRepoFiles`. */
 export async function readGitignores(
   dir: string,
