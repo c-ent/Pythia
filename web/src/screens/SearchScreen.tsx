@@ -329,7 +329,7 @@ export function SearchScreen() {
     </>
   )
 
-  if (selected === undefined) return <div className="mx-auto max-w-3xl">{list}</div>
+  if (selected === undefined) return <div className="mx-auto max-w-4xl">{list}</div>
 
   return (
     <div className="grid grid-cols-[minmax(0,42rem)_minmax(0,1fr)] items-start gap-6">

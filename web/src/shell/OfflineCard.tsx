@@ -73,7 +73,7 @@ export function OfflineCard({ online, pinned }: { online: boolean; pinned: numbe
   return (
     <section
       aria-labelledby="offline-card-heading"
-      className="mt-6 rounded-card bg-glow-offline bg-radial-[at_100%_0%] from-success/25 to-transparent to-70% p-4 text-nav-ink"
+      className="rounded-card bg-glow-offline bg-radial-[at_100%_0%] from-success/25 to-transparent to-70% p-4 text-nav-ink"
     >
       <h2 id="offline-card-heading" className="flex items-center gap-2 text-sm font-semibold">
         {online ? (

@@ -5,6 +5,7 @@ import { getVaultGraph, type GraphNode, type GraphResponse } from '../api/graph'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useOnline } from '../hooks/useOnline'
 import { documentPath, followLink, repoPath } from '../router'
+import { mapMemory, type VaultGraphResult } from '../screens/map'
 import { SOURCE_LABELS } from '../search/format'
 import { isGraphResponse, nodeTone, TONE_LABELS, TONE_SWATCH, tonesIn } from './graphModel'
 
@@ -16,19 +17,27 @@ type State = { status: 'loading' } | { status: 'done'; graph: GraphResponse } | 
 export function VaultGraphPanel({ sources, repo }: { sources: SourceKind[]; repo: string }) {
   const online = useOnline()
   const narrow = useMediaQuery(NARROW_QUERY)
-  const [viewOverride, setViewOverride] = useState<{ narrow: boolean; listView: boolean } | null>(null)
+  const [viewOverride, setViewOverride] = useState<{ narrow: boolean; listView: boolean } | null>(() => mapMemory.vaultViewOverride)
   const listView = viewOverride !== null && viewOverride.narrow === narrow ? viewOverride.listView : narrow
-  const [attempt, setAttempt] = useState(0)
+  const [attempt, setAttempt] = useState(() => mapMemory.vaultAttempt)
   const requestKey = `${attempt}:${sources.join(',')}:${repo.trim()}`
-  const [result, setResult] = useState<{ key: string; status: 'done'; graph: GraphResponse } | { key: string; status: 'error'; message: string } | null>(null)
+  const [result, setResult] = useState<VaultGraphResult | null>(() => mapMemory.vaultResult)
+
+  useEffect(() => {
+    mapMemory.vaultAttempt = attempt
+    mapMemory.vaultResult = result
+    mapMemory.vaultViewOverride = viewOverride
+  }, [attempt, result, viewOverride])
+
   useEffect(() => {
     if (!online) return
+    if (result !== null && result.status === 'done' && result.key === requestKey) return
     const controller = new AbortController()
     getVaultGraph({ ...(sources.length ? { sources } : {}), ...(repo.trim() ? { repo: repo.trim() } : {}) }, controller.signal)
       .then((graph) => { if (!controller.signal.aborted) setResult({ key: requestKey, status: 'done', graph }) })
       .catch((error: unknown) => { if (!controller.signal.aborted) setResult({ key: requestKey, status: 'error', message: error instanceof Error ? error.message : 'The whole-vault graph could not be loaded.' }) })
     return () => controller.abort()
-  }, [online, repo, requestKey, sources])
+  }, [online, repo, requestKey, result, sources])
 
   const state: State = !online ? { status: 'offline' } : result !== null && result.key === requestKey ? result : { status: 'loading' }
   const graph = state.status === 'done' && isGraphResponse(state.graph) ? state.graph : null

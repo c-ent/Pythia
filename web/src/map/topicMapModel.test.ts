@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { TopicMapResponse } from '../api/topicMap'
-import { safeTopicBranches, topicMapDocuments, topicMapOutline } from './topicMapModel'
+import { partitionTopicMap, safeTopicBranches, topicMapDocuments, topicMapOutline } from './topicMapModel'
 
 const doc = (documentId: number, allowLlm: boolean) => ({
   documentId,
@@ -31,5 +31,46 @@ describe('topicMapModel', () => {
     expect(topicMapOutline(response)).toContain('- Topic 1\n    - Note 1')
     expect(topicMapOutline(response)).not.toContain('public words')
     expect(topicMapOutline(response)).not.toContain('locked words')
+  })
+
+  it('attaches maps with 3 or fewer docs directly under the topic root', () => {
+    const single: TopicMapResponse = {
+      topic: 'ikigai',
+      branches: [{ label: 'Ikigai', documents: [doc(1, true)] }],
+    }
+    const partitioned = partitionTopicMap(safeTopicBranches(single.branches))
+    expect(partitioned.branches).toEqual([])
+    expect(partitioned.directDocuments.map((d) => d.documentId)).toEqual([1])
+    expect(topicMapOutline(single)).toBe('ikigai\n  - Note 1 (obsidian: Note 1.md)')
+
+    const threeDocs: TopicMapResponse = {
+      topic: 'small',
+      branches: [
+        { label: 'Group A', documents: [doc(1, true), doc(2, true)] },
+        { label: 'Group B', documents: [doc(3, true)] },
+      ],
+    }
+    const partitionedThree = partitionTopicMap(safeTopicBranches(threeDocs.branches))
+    expect(partitionedThree.branches).toEqual([])
+    expect(partitionedThree.directDocuments.map((d) => d.documentId)).toEqual([1, 2, 3])
+  })
+
+  it('keeps multi-doc branches, lifts 1-doc branches to direct center docs, and lifts 1-doc subbranches', () => {
+    const branches = safeTopicBranches([
+      {
+        label: 'Main cluster',
+        documents: [],
+        branches: [
+          { label: 'Sub A', documents: [doc(1, true), doc(2, true)] },
+          { label: 'Sub B', documents: [doc(3, true)] },
+        ],
+      },
+      { label: 'Singleton', documents: [doc(4, true)] },
+    ])
+    const partitioned = partitionTopicMap(branches)
+    expect(partitioned.directDocuments.map((d) => d.documentId)).toEqual([4])
+    expect(partitioned.branches).toHaveLength(1)
+    expect(partitioned.branches[0]?.documents.map((d) => d.documentId)).toEqual([3])
+    expect(partitioned.branches[0]?.branches?.map((b) => b.label)).toEqual(['Sub A'])
   })
 })

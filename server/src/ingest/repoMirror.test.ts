@@ -104,13 +104,42 @@ describe('syncRepo', { timeout: 60_000 }, () => {
   it('fails for an unknown branch', async () => {
     await expect(syncRepo(spec({ branch: 'nope' }), { mirrorsDir: mirrors })).rejects.toBeInstanceOf(RepoSyncError)
   })
+
+  it('syncs an empty repo (no commits) with commit null, then picks up the first commit later', async () => {
+    const emptySource = path.join(work, 'empty-source')
+    await mkdir(emptySource)
+    git(emptySource, 'init', '--quiet', '--initial-branch=main')
+    const emptySpec = spec({ name: 'whisksmith', url: emptySource, branch: null })
+
+    const first = await syncRepo(emptySpec, { mirrorsDir: mirrors })
+    expect(first).toEqual({ name: 'whisksmith', cloned: true, commit: null })
+
+    const second = await syncRepo(emptySpec, { mirrorsDir: mirrors })
+    expect(second).toEqual({ name: 'whisksmith', cloned: false, commit: null })
+
+    await put(emptySource, 'README.md', '# WhiskSmith\n')
+    git(emptySource, 'add', '--all')
+    git(emptySource, 'commit', '--quiet', '-m', 'init')
+    const afterCommit = await syncRepo(emptySpec, { mirrorsDir: mirrors })
+    expect(afterCommit.cloned).toBe(false)
+    expect(afterCommit.commit).toBe(git(emptySource, 'rev-parse', 'HEAD').trim())
+  })
+
+  it('still fails for an empty repo when an explicit branch is configured', async () => {
+    const emptySource = path.join(work, 'empty-branch-source')
+    await mkdir(emptySource)
+    git(emptySource, 'init', '--quiet', '--initial-branch=main')
+    await expect(
+      syncRepo(spec({ name: 'whisksmith', url: emptySource, branch: 'main' }), { mirrorsDir: mirrors }),
+    ).rejects.toBeInstanceOf(RepoSyncError)
+  })
 })
 
 describe('listTree, readBlob and readGitignores', { timeout: 60_000 }, () => {
   it('feed selectRepoFiles with the tracked tree', async () => {
     const synced = await syncRepo(spec(), { mirrorsDir: mirrors })
     const dir = mirrorPath(mirrors, 'kitchen')
-    const tree = await listTree(dir, synced.commit, { mirrorsDir: mirrors })
+    const tree = await listTree(dir, synced.commit ?? '', { mirrorsDir: mirrors })
     expect(tree.map((file) => file.path).sort()).toEqual([
       '.env',
       'README.md',
@@ -170,7 +199,7 @@ describe('listTree, readBlob and readGitignores', { timeout: 60_000 }, () => {
     })
 
     const synced = await syncRepo({ name: 'timed', url: timedSource, branch: null }, { mirrorsDir: mirrors })
-    const dates = await commitDates(mirrorPath(mirrors, 'timed'), synced.commit, { mirrorsDir: mirrors })
+    const dates = await commitDates(mirrorPath(mirrors, 'timed'), synced.commit ?? '', { mirrorsDir: mirrors })
     expect(dates.firstCommitAt?.toISOString()).toBe('2026-01-10T08:00:00.000Z')
     expect(dates.lastCommitAt?.toISOString()).toBe('2026-11-25T14:30:00.000Z')
   })

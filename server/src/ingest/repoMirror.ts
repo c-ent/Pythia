@@ -30,8 +30,8 @@ export interface MirrorOptions {
 export interface SyncResult {
   name: string
   cloned: boolean
-  /** Commit the indexed branch points at after the fetch. */
-  commit: string
+  /** Commit the indexed branch points at after the fetch, or null when the remote has no commits yet. */
+  commit: string | null
 }
 
 const MAX_OUTPUT = 64 * 1024 * 1024
@@ -117,8 +117,25 @@ export async function syncRepo(spec: RepoSpec, options: MirrorOptions): Promise<
     await git(['fetch', '--quiet', '--prune', '--no-tags', '--', spec.url, refspec], options, dir)
     if (spec.branch === null) await followDefaultBranch(spec.url, dir, options)
   }
-  const commit = (await git(['rev-parse', '--verify', `${trackedRef(spec)}^{commit}`], options, dir)).trim()
+  let commit: string | null
+  try {
+    commit = (await git(['rev-parse', '--verify', `${trackedRef(spec)}^{commit}`], options, dir)).trim()
+  } catch (error) {
+    // A brand-new default-branch repo with no commits yet is valid and indexes with 0 files,
+    // whereas an explicit branch mismatch or partial ref error still fails.
+    if (spec.branch === null && error instanceof RepoSyncError && (await hasNoBranchCommits(dir, options))) {
+      commit = null
+    } else {
+      throw error
+    }
+  }
   return { name: spec.name, cloned, commit }
+}
+
+/** True when the bare mirror has no branch refs at all (a genuinely empty repository). */
+async function hasNoBranchCommits(dir: string, options: MirrorOptions): Promise<boolean> {
+  const refs = (await git(['for-each-ref', '--count=1', 'refs/heads'], options, dir)).trim()
+  return refs === ''
 }
 
 /** Points the mirror's HEAD at the remote's current default branch, if the remote reports one. */

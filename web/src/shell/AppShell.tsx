@@ -112,7 +112,7 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
   let screen
   // Search results get the full panel width for the preview pane (xl up);
   // SearchScreen narrows itself otherwise.
-  let width = 'max-w-3xl'
+  let width = 'max-w-4xl'
   switch (route) {
     case 'ask':
       // The answer and its side panels; AskScreen narrows itself before a question.
@@ -133,7 +133,6 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
       screen = <PinnedScreen />
       break
     case 'map':
-      width = 'max-w-none'
       screen = <MapScreen />
       break
     case 'sources':
@@ -152,7 +151,7 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
     default:
       // Search stays mounted (hidden) under an open document, so Back returns
       // to the same query, results and answer instead of an empty screen.
-      if (documentId === null) width = 'max-w-[90rem]'
+      width = documentId === null ? 'max-w-[90rem]' : 'max-w-5xl'
       screen = (
         <>
           <div hidden={documentId !== null}>
@@ -215,7 +214,7 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
             {online ? null : (
               <p
                 role="status"
-                className="mx-auto mb-6 flex max-w-3xl items-center gap-2 rounded-card border border-warning/40 bg-surface px-4 py-3 text-sm text-warning"
+                className="mx-auto mb-6 flex max-w-4xl items-center gap-2 rounded-card border border-warning/40 bg-surface px-4 py-3 text-sm text-warning"
               >
                 <WifiOff aria-hidden="true" className="size-4 shrink-0" />
                 You’re offline. Search and Ask need a connection.

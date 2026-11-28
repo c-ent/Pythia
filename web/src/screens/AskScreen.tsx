@@ -121,7 +121,7 @@ export function AskScreen() {
 
   if (turn === null) {
     return (
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-4xl">
         <ScreenHeader title="Ask" description="Questions answered from your notes and repos, with sources." />
         {box('Ask a question about your notes and code', 'Ask a question about your notes and code…')}
         <Suggestions online={online} onAsk={(question) => ask(question, sources)} />

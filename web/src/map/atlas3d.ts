@@ -1,7 +1,7 @@
 import type { GraphEdgeKind, GraphNode, GraphResponse, LocalGraphNode } from '../api/graph'
 import { SOURCE_LABELS } from '../search/format'
 import { nodeTone, shortLabel, type NodeTone } from './graphModel'
-import type { VisibleTopicBranch } from './topicMapModel'
+import { partitionTopicMap, type VisibleTopicBranch } from './topicMapModel'
 
 export type AtlasNodeKind = 'center' | 'branch' | 'subbranch' | 'document' | 'tag' | 'repo' | 'ghost'
 export type AtlasTone = NodeTone | 'center' | 'branch'
@@ -322,20 +322,31 @@ export function buildTopicAtlasGraph(topic: string, branches: readonly VisibleTo
   const edges: AtlasEdge[] = []
   const fixedIds = new Set<string>(['topic:center'])
 
+  const { directDocuments, branches: groupedBranches } = partitionTopicMap(branches)
+
   const titleCounts = new Map<string, number>()
+  const countTitle = (title: string): void => {
+    const key = title.toLocaleLowerCase()
+    titleCounts.set(key, (titleCounts.get(key) ?? 0) + 1)
+  }
   const collectTitles = (list: readonly VisibleTopicBranch[]): void => {
     for (const branch of list) {
-      for (const doc of branch.documents) {
-        const key = doc.title.toLocaleLowerCase()
-        titleCounts.set(key, (titleCounts.get(key) ?? 0) + 1)
-      }
+      for (const doc of branch.documents) countTitle(doc.title)
       if (branch.branches) collectTitles(branch.branches)
     }
   }
-  collectTitles(branches)
+  collectTitles(groupedBranches)
+  for (const doc of directDocuments) countTitle(doc.title)
 
-  const totalDocs = branches.reduce((sum, branch) => sum + countBranchDocuments(branch), 0)
-  const allSourceDocs = branches.flatMap(collectBranchDocs)
+  const totalDocs = directDocuments.length + groupedBranches.reduce((sum, branch) => sum + countBranchDocuments(branch), 0)
+  const allSourceDocs: AtlasSourceDoc[] = [
+    ...directDocuments.map((doc) => ({
+      title: doc.title,
+      source: SOURCE_LABELS[doc.source.kind],
+      path: doc.path,
+    })),
+    ...groupedBranches.flatMap(collectBranchDocs),
+  ]
   nodes.push({
     id: 'topic:center',
     kind: 'center',
@@ -354,11 +365,12 @@ export function buildTopicAtlasGraph(topic: string, branches: readonly VisibleTo
     allowLlm: null,
   })
 
-  const branchDirs = sphereDirections(branches.length)
-  const branchDist = branches.length <= 3 ? 105 : 122
+  const topDirs = sphereDirections(groupedBranches.length + directDocuments.length)
+  const branchDist = groupedBranches.length <= 3 ? 105 : 122
+  const directDist = totalDocs === 1 ? 82 : 94
 
-  branches.forEach((branch, branchIdx) => {
-    const dir = branchDirs[branchIdx]!
+  groupedBranches.forEach((branch, branchIdx) => {
+    const dir = topDirs[branchIdx]!
     const branchId = `branch:${branchIdx}:${branch.label}`
     const branchPos: Vec3 = { x: dir.x * branchDist, y: dir.y * branchDist, z: dir.z * branchDist }
     const branchDocsCount = countBranchDocuments(branch)
@@ -445,6 +457,27 @@ export function buildTopicAtlasGraph(topic: string, branches: readonly VisibleTo
     }
 
     addLeaves(branchId, branchPos, dir, branch.documents)
+  })
+
+  directDocuments.forEach((doc, idx) => {
+    const dir = topDirs[groupedBranches.length + idx]!
+    const nodeId = `doc:${doc.documentId}:direct:${idx}`
+    nodes.push({
+      id: nodeId,
+      kind: 'document',
+      tone: doc.source.kind,
+      label: disambiguateTitle(doc.title, doc.path, doc.source.name, titleCounts),
+      x: dir.x * directDist,
+      y: dir.y * directDist,
+      z: dir.z * directDist,
+      radius: 5.5,
+      links: 1,
+      documentId: doc.documentId,
+      sourceLabel: doc.source.name || doc.source.kind,
+      path: doc.path,
+      allowLlm: doc.allowLlm,
+    })
+    edges.push({ source: 'topic:center', target: nodeId, kind: 'leaf' })
   })
 
   relaxNodes3d(nodes, edges, fixedIds, 36, 36, 72)

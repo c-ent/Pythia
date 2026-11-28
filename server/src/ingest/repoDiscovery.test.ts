@@ -133,7 +133,7 @@ describe('startRepoScheduler with discovery', () => {
       mirrors.add(repo.name)
       return { name: repo.name, cloned, commit: `${repo.name}-sha` }
     })
-    const indexed: Array<[string, string]> = []
+    const indexed: Array<[string, string | null]> = []
     const discovered: string[] = []
     const rounds: RepoRoundResult[] = []
     const scheduler = startRepoScheduler({

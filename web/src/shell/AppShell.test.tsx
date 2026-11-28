@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppShell } from './AppShell'
 import { SIDEBAR_KEY } from './nav'
+import { resetMapMemory } from '../screens/map'
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
@@ -50,6 +51,7 @@ const labels = (scope: HTMLElement) => within(scope).getAllByRole('link').map((l
 describe('AppShell', () => {
   beforeEach(() => {
     localStorage.clear()
+    resetMapMemory()
     window.history.replaceState(null, '', '/')
   })
 
@@ -324,5 +326,61 @@ describe('AppShell', () => {
 
     fireEvent.click(warningButton)
     expect(await within(layout('topbar')).findByText('PostgreSQL')).toBeTruthy()
+  })
+
+  it('uses max-w-4xl on Map and preserves the topic map when opening a document and going back', async () => {
+    window.history.replaceState(null, '', '/map')
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/topic-map') {
+        return json(200, {
+          topic: 'ikigai',
+          branches: [
+            {
+              label: 'Books',
+              documents: [{ documentId: 7, title: 'Ikigai', path: '01 Atlas/Books/Ikigai.md', source: { kind: 'obsidian' }, allowLlm: true }],
+            },
+          ],
+        })
+      }
+      if (url === '/api/documents/7') {
+        return json(200, {
+          id: 7,
+          source: { kind: 'obsidian', name: 'vault' },
+          path: '01 Atlas/Books/Ikigai.md',
+          title: 'Ikigai',
+          language: 'markdown',
+          allowLlm: true,
+          mtime: null,
+          updatedAt: '2026-11-05T10:00:00.000Z',
+          content: 'Hello',
+          truncated: false,
+          totalChars: 5,
+        })
+      }
+      return json(404, {})
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    render(<AppShell onSignOut={() => {}} />)
+    const main = screen.getByRole('main')
+    expect(main.firstElementChild?.className).toContain('max-w-4xl')
+
+    fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'ikigai' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Build map' }))
+    await screen.findByRole('region', { name: /Map for ikigai/ })
+    fireEvent.click(screen.getByText('Where these branches come from'))
+    fireEvent.click(screen.getByRole('link', { name: /Ikigai/ }))
+
+    expect(window.location.pathname).toBe('/doc/7')
+    expect(await screen.findByRole('heading', { level: 1, name: 'Ikigai' })).toBeTruthy()
+    expect(main.firstElementChild?.className).toContain('max-w-5xl')
+
+    act(() => {
+      window.history.replaceState(null, '', '/map')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    expect(await screen.findByRole('region', { name: /Map for ikigai/ })).toBeTruthy()
+    expect(fetch.mock.calls.filter(([url]) => String(url) === '/api/topic-map')).toHaveLength(1)
   })
 })

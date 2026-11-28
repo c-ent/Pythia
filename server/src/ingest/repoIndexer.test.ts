@@ -253,4 +253,38 @@ describe('indexRepoCommit', () => {
     expect(docs.get('README.md')?.chunks.length).toBeGreaterThan(0)
     expect(embedder.texts.some((text) => text.startsWith('kitchen: ') && text.includes('shopping list'))).toBe(true)
   }, 60_000)
+
+  it('indexes an empty repo (commit null) with 0 files and a SUMMARY document', async () => {
+    const emptySource = path.join(work, 'empty-source')
+    await mkdir(emptySource)
+    git(emptySource, 'init', '--quiet', '--initial-branch=main')
+    const emptySpec: RepoSpec = { name: 'whisksmith', url: emptySource, branch: null }
+    const { store, docs } = memoryStore()
+    const embedder = fakeEmbedder()
+    const synced = await syncRepo(emptySpec, { mirrorsDir: mirrors })
+    expect(synced.commit).toBeNull()
+
+    const result = await indexRepoCommit(
+      {
+        repo: 'whisksmith',
+        branch: null,
+        dir: mirrorPath(mirrors, 'whisksmith'),
+        sourceId: 2,
+        store,
+        embedder,
+        mirror: { mirrorsDir: mirrors },
+      },
+      synced.commit,
+    )
+
+    expect(result.commit).toBeNull()
+    expect(result.indexed).toEqual([])
+    expect(result.failed).toEqual([])
+    expect(result.summary).toBe('indexed')
+    expect([...docs.keys()]).toEqual([SUMMARY_PATH])
+    const summary = docs.get(SUMMARY_PATH)
+    expect(summary?.chunks[0]?.content).toContain('Repository: whisksmith')
+    expect(summary?.chunks[0]?.content).toContain('Indexed files: 0')
+    expect(summary?.doc.mtime).toBeNull()
+  }, 60_000)
 })

@@ -62,15 +62,53 @@ describe('buildTopicAtlasGraph', () => {
 
   it('keeps locked branch labels hidden and omits branchQuery for locked branches', () => {
     const branches = safeTopicBranches([
-      { label: 'secret topic', documents: [makeDoc(1, 'Private', 'obsidian', 'vault', false)] },
-      { label: 'public topic', documents: [makeDoc(2, 'Public', 'obsidian', 'vault', true)] },
+      { label: 'secret topic', documents: [makeDoc(1, 'Private 1', 'obsidian', 'vault', false), makeDoc(2, 'Private 2', 'obsidian', 'vault', true)] },
+      { label: 'public topic', documents: [makeDoc(3, 'Public 1', 'obsidian', 'vault', true), makeDoc(4, 'Public 2', 'obsidian', 'vault', true)] },
     ])
     const atlas = buildTopicAtlasGraph('focus', branches)
     const branchNodes = atlas.nodes.filter((n) => n.kind === 'branch')
     expect(branchNodes.map((n) => n.label)).toEqual(['Topic 1', 'public topic'])
     expect(branchNodes[0]?.branchQuery).toBeUndefined()
     expect(branchNodes[1]?.branchQuery).toBe('public topic')
-    expect(branchNodes[1]?.sourceDocs).toEqual([{ title: 'Public', source: 'Notes', path: 'vault/Public' }])
+    expect(branchNodes[1]?.sourceDocs).toEqual([
+      { title: 'Public 1', source: 'Notes', path: 'vault/Public 1' },
+      { title: 'Public 2', source: 'Notes', path: 'vault/Public 2' },
+    ])
+  })
+
+  it('attaches maps with 3 or fewer docs directly to the topic center without branch nodes', () => {
+    const single = safeTopicBranches([{ label: 'Ikigai', documents: [makeDoc(1, 'Ikigai')] }])
+    const singleAtlas = buildTopicAtlasGraph('ikigai', single)
+    expect(singleAtlas.nodes.filter((n) => n.kind === 'branch')).toHaveLength(0)
+    const singleLeaves = singleAtlas.nodes.filter((n) => n.kind === 'document')
+    expect(singleLeaves).toHaveLength(1)
+    expect(singleAtlas.edges).toEqual([{ source: 'topic:center', target: singleLeaves[0]!.id, kind: 'leaf' }])
+
+    const three = safeTopicBranches([
+      { label: 'Theme', documents: [makeDoc(1, 'One'), makeDoc(2, 'Two'), makeDoc(3, 'Three')] },
+    ])
+    const threeAtlas = buildTopicAtlasGraph('topic', three)
+    expect(threeAtlas.nodes.filter((n) => n.kind === 'branch')).toHaveLength(0)
+    expect(threeAtlas.nodes.filter((n) => n.kind === 'document')).toHaveLength(3)
+    expect(threeAtlas.edges.every((edge) => edge.source === 'topic:center' && edge.kind === 'leaf')).toBe(true)
+  })
+
+  it('attaches 1-document branches directly to the center while keeping multi-doc branches', () => {
+    const branches = safeTopicBranches([
+      {
+        label: 'Deep cluster',
+        documents: [makeDoc(1, 'A'), makeDoc(2, 'B'), makeDoc(3, 'C'), makeDoc(4, 'D')],
+      },
+      {
+        label: 'Lone note',
+        documents: [makeDoc(5, 'Standalone')],
+      },
+    ])
+    const atlas = buildTopicAtlasGraph('systems', branches)
+    const branchNodes = atlas.nodes.filter((n) => n.kind === 'branch')
+    expect(branchNodes.map((n) => n.label)).toEqual(['Deep cluster'])
+    const standalone = atlas.nodes.find((n) => n.documentId === 5)!
+    expect(atlas.edges).toContainEqual({ source: 'topic:center', target: standalone.id, kind: 'leaf' })
   })
 })
 

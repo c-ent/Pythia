@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppShell } from './AppShell'
+import { SIDEBAR_RECENT_SHOWN } from './RecentQueries'
 
 // Recent searches and questions (T35, R14): the desktop sidebar list and the
 // phone Home card, both backed by `/api/recent-queries`.
@@ -110,18 +111,20 @@ describe('Recent queries', () => {
     )
   })
 
-  it('scrolls only the list, so the logo, nav and footer stay in place', async () => {
-    stubServer(Array.from({ length: 8 }, (_, i) => entry(i + 1, 'search', `query ${i + 1}`)))
+  it('caps the sidebar list at 2 entries without making it scrollable', async () => {
+    expect(SIDEBAR_RECENT_SHOWN).toBe(2)
+    const { calls } = stubServer(Array.from({ length: 5 }, (_, i) => entry(i + 1, 'search', `query ${i + 1}`)))
     render(<AppShell onSignOut={() => {}} />)
     const region = await sidebarList('Recent searches')
     await within(region).findByRole('button', { name: 'query 1' })
-    // jsdom applies no CSS, so check the classes that make the list its own scroll area.
     const list = within(region).getByTestId('recent-list')
-    expect(list.className).toMatch(/\boverflow-y-auto\b/)
-    expect(list.className).toMatch(/\bmin-h-0\b/)
-    expect(region.className).toMatch(/\bflex-1\b/)
-    expect(list.contains(within(sidebar()).getByRole('navigation', { name: 'Main' }))).toBe(false)
-    expect(list.contains(within(sidebar()).getByRole('link', { name: 'Gemini access' }))).toBe(false)
+    expect(list.className).not.toMatch(/\boverflow-y-auto\b/)
+    expect(region.className).not.toMatch(/\bflex-1\b/)
+    expect(within(list).getAllByRole('listitem')).toHaveLength(2)
+    expect(within(list).getByRole('button', { name: 'query 1' })).toBeTruthy()
+    expect(within(list).getByRole('button', { name: 'query 2' })).toBeTruthy()
+    expect(within(list).queryByRole('button', { name: 'query 3' })).toBeNull()
+    expect(calls).toContainEqual({ method: 'GET', url: '/api/recent-queries?kind=search&limit=2' })
   })
 
   it('says so when there are none yet', async () => {
@@ -144,19 +147,31 @@ describe('Recent queries', () => {
     expect(screen.getByRole('searchbox')).toHaveProperty('value', 'goals')
   })
 
-  it('moves a new search to the top of the list once it has run', async () => {
-    stubServer([entry(1, 'search', 'older')])
+  it('shows the latest 1 or 2 searches and pushes older ones out when searching again', async () => {
+    stubServer([entry(1, 'search', 'oldest')])
     render(<AppShell onSignOut={() => {}} />)
-    const list = await sidebarList('Recent searches')
-    await within(list).findByRole('button', { name: 'older' })
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'fresh' } })
+    const region = await sidebarList('Recent searches')
+    await within(region).findByRole('button', { name: 'oldest' })
+    expect(within(within(region).getByTestId('recent-list')).getAllByRole('listitem')).toHaveLength(1)
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'second' } })
     fireEvent.click(screen.getByRole('button', { name: 'Search' }))
     await waitFor(() =>
-      expect(within(list).getAllByRole('button', { name: /^(fresh|older)$/ }).map((b) => b.textContent)).toEqual([
-        'fresh',
-        'older',
+      expect(within(region).getAllByRole('button', { name: /^(second|oldest)$/ }).map((b) => b.textContent)).toEqual([
+        'second',
+        'oldest',
       ]),
     )
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'latest' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+    await waitFor(() =>
+      expect(within(region).getAllByRole('button', { name: /^(latest|second)$/ }).map((b) => b.textContent)).toEqual([
+        'latest',
+        'second',
+      ]),
+    )
+    expect(within(region).queryByRole('button', { name: 'oldest' })).toBeNull()
   })
 
   it('shows recent questions on the Ask page and asks one again', async () => {

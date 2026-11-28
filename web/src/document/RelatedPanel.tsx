@@ -127,7 +127,7 @@ export function RelatedPanel({ id }: { id: number }) {
   return (
     <section
       aria-labelledby={headingId}
-      className="mx-auto mt-6 w-full max-w-3xl rounded-card border border-line/60 bg-surface p-5 shadow-[0_1px_2px_rgb(15_15_16/0.05)] md:p-6"
+      className="mx-auto mt-6 w-full max-w-5xl rounded-card border border-line/60 bg-surface p-5 shadow-[0_1px_2px_rgb(15_15_16/0.05)] md:p-6"
     >
       <h2 id={headingId} className="mb-3 flex items-center gap-2 text-base font-semibold">
         <Waypoints aria-hidden="true" className="size-4 text-muted" />

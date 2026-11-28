@@ -5,7 +5,7 @@ import { rerunQuery } from './rerun'
 import { useRecentQueries } from './useRecentQueries'
 
 /** How many entries the sidebar shows; the server keeps 20 per kind. */
-export const SIDEBAR_RECENT_SHOWN = 8
+export const SIDEBAR_RECENT_SHOWN = 2
 
 const TITLES: Record<RecentQueryKind, string> = { search: 'Recent searches', ask: 'Recent questions' }
 const EMPTY: Record<RecentQueryKind, string> = {
@@ -22,22 +22,21 @@ export function RecentQueries({ kind, online }: { kind: RecentQueryKind; online:
   const headingId = useId()
   const { status, queries, actionError, remove, clear } = useRecentQueries(kind, SIDEBAR_RECENT_SHOWN, online)
   const title = TITLES[kind]
+  const shown = queries.slice(0, SIDEBAR_RECENT_SHOWN)
 
   let note: string | null = null
   if (status === 'offline') note = 'Needs a connection.'
   else if (status === 'loading') note = 'Loading…'
   else if (status === 'error') note = `Couldn’t load ${title.toLowerCase()}.`
-  else if (queries.length === 0) note = EMPTY[kind]
+  else if (shown.length === 0) note = EMPTY[kind]
 
   return (
-    // Fills the sidebar's free height and scrolls on its own, so the logo, nav
-    // and footer stay put on short windows (how chat-style sidebars do it).
-    <section aria-labelledby={headingId} className="mt-6 flex min-h-28 flex-1 flex-col">
+    <section aria-labelledby={headingId} className="mt-4">
       <div className="flex min-h-8 items-center justify-between gap-2 px-3">
         <h2 id={headingId} className="text-xs font-medium tracking-wide text-nav-muted uppercase">
           {title}
         </h2>
-        {status === 'ready' && queries.length > 0 ? (
+        {status === 'ready' && shown.length > 0 ? (
           <button
             type="button"
             onClick={clear}
@@ -54,8 +53,8 @@ export function RecentQueries({ kind, online }: { kind: RecentQueryKind; online:
         </p>
       )}
       {note === null ? (
-        <ul data-testid="recent-list" className="nav-scroll -mx-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-1 py-1">
-          {queries.map((entry) => (
+        <ul data-testid="recent-list" className="mt-0.5 space-y-0.5">
+          {shown.map((entry) => (
             <li key={entry.id} className="group relative">
               <button
                 type="button"

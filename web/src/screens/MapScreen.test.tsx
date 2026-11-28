@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MapScreen } from './MapScreen'
+import { resetMapMemory } from './map'
 
 vi.mock('../map/GraphCanvas', () => ({ GraphCanvas: ({ graph }: { graph: { nodes: unknown[] } }) => <div data-testid="vault-canvas">{graph.nodes.length} nodes</div> }))
 
@@ -32,7 +33,10 @@ function stubFetch() {
 }
 
 describe('MapScreen', () => {
-  beforeEach(() => setNarrow(false))
+  beforeEach(() => {
+    resetMapMemory()
+    setNarrow(false)
+  })
   afterEach(() => vi.restoreAllMocks())
 
   it('sends topic, selected source filters and repository filter to the REST API', async () => {
@@ -76,7 +80,22 @@ describe('MapScreen', () => {
       if (url.startsWith('/api/graph')) return json(200, vaultGraph)
       return json(200, {
         topic: body?.topic ?? 'focus',
-        branches: [{ label: 'Deep work', documents: [{ documentId: 1, title: 'Note', path: 'Note.md', source: { kind: 'obsidian' }, allowLlm: true }] }],
+        branches: [
+          {
+            label: 'Deep work',
+            documents: [
+              { documentId: 1, title: 'Note', path: 'Note.md', source: { kind: 'obsidian' }, allowLlm: true },
+              { documentId: 2, title: 'Note 2', path: 'Note2.md', source: { kind: 'obsidian' }, allowLlm: true },
+            ],
+          },
+          {
+            label: 'Habits',
+            documents: [
+              { documentId: 3, title: 'Note 3', path: 'Note3.md', source: { kind: 'obsidian' }, allowLlm: true },
+              { documentId: 4, title: 'Note 4', path: 'Note4.md', source: { kind: 'obsidian' }, allowLlm: true },
+            ],
+          },
+        ],
       })
     }))
     render(<MapScreen />)
@@ -115,6 +134,8 @@ describe('MapScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Build map' }))
 
     await screen.findByRole('img', { name: /3D topic map for job/ })
+    expect(screen.getAllByText('1 document')).toHaveLength(2)
+    expect(screen.queryByText(/\d+ branch/)).toBeNull()
     expect(screen.getByRole('button', { name: 'Full screen' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Zoom in' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Zoom out' })).toBeTruthy()
@@ -127,5 +148,55 @@ describe('MapScreen', () => {
     expect(screen.getByRole('list', { name: 'Topic map outline' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Show map' }))
     expect(screen.getByRole('img', { name: /3D topic map for job/ })).toBeTruthy()
+  })
+
+  it('restores the topic map, drill-down trail, and whole-vault view after remounting without refetching', async () => {
+    const calls = vi.fn(async (url: string, init: RequestInit = {}) => {
+      const body = init.body ? JSON.parse(String(init.body)) as { topic?: string } : null
+      if (url.startsWith('/api/graph')) return json(200, vaultGraph)
+      return json(200, {
+        topic: body?.topic ?? 'ikigai',
+        branches: [
+          {
+            label: 'Purpose',
+            documents: [
+              { documentId: 1, title: 'Ikigai', path: 'Books/Ikigai.md', source: { kind: 'obsidian' }, allowLlm: true },
+              { documentId: 2, title: 'Meaning', path: 'Books/Meaning.md', source: { kind: 'obsidian' }, allowLlm: true },
+            ],
+          },
+          {
+            label: 'Craft',
+            documents: [
+              { documentId: 3, title: 'Mastery', path: 'Books/Mastery.md', source: { kind: 'obsidian' }, allowLlm: true },
+              { documentId: 4, title: 'Flow', path: 'Books/Flow.md', source: { kind: 'obsidian' }, allowLlm: true },
+            ],
+          },
+        ],
+      })
+    })
+    vi.stubGlobal('fetch', calls)
+    setNarrow(true)
+    const first = render(<MapScreen />)
+    fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'ikigai' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Build map' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Purpose/ }))
+    await screen.findByRole('region', { name: /Map for Purpose/ })
+    expect(calls).toHaveBeenCalledTimes(2)
+
+    first.unmount()
+    const second = render(<MapScreen />)
+    expect(screen.getByRole('region', { name: /Map for Purpose/ })).toBeTruthy()
+    expect(screen.getByText('Inside ikigai')).toBeTruthy()
+    expect((screen.getByLabelText('Topic') as HTMLInputElement).value).toBe('Purpose')
+    expect(calls).toHaveBeenCalledTimes(2)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Whole vault' }))
+    await screen.findByRole('list', { name: 'Whole-vault graph items' })
+    expect(calls).toHaveBeenCalledTimes(3)
+
+    second.unmount()
+    render(<MapScreen />)
+    expect(screen.getByRole('list', { name: 'Whole-vault graph items' })).toBeTruthy()
+    expect(calls).toHaveBeenCalledTimes(3)
   })
 })

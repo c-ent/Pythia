@@ -39,7 +39,7 @@ export interface RepoIndexFailure {
 }
 
 export interface RepoIndexResult {
-  commit: string
+  commit: string | null
   /** Files (re-)embedded and written. */
   indexed: string[]
   /** Files whose blob id matched the stored one. */
@@ -85,13 +85,14 @@ async function chunkFile(repo: string, file: RepoFile, text: string): Promise<Pe
  * are deleted; a file that fails keeps its previous chunks. Every chunk goes
  * through the secrets scanner before it is embedded or stored.
  */
-export async function indexRepoCommit(options: RepoIndexerOptions, commit: string): Promise<RepoIndexResult> {
+export async function indexRepoCommit(options: RepoIndexerOptions, commit: string | null): Promise<RepoIndexResult> {
   const { repo, dir, sourceId, store, embedder, mirror } = options
   const allowLlm = options.allowLlm ?? true
   const logSecrets = options.logSecrets ?? logSecretsDrop
 
-  const tree = (await listTree(dir, commit, mirror)).filter((file) => file.path !== SUMMARY_PATH)
-  const selection = selectRepoFiles(tree, await readGitignores(dir, tree, mirror))
+  const tree = commit === null ? [] : (await listTree(dir, commit, mirror)).filter((file) => file.path !== SUMMARY_PATH)
+  const gitignores = commit === null ? [] : await readGitignores(dir, tree, mirror)
+  const selection = selectRepoFiles(tree, gitignores)
   const states = await store.getDocumentStates(sourceId, embedder.model)
   const result: RepoIndexResult = {
     commit,
@@ -180,7 +181,7 @@ export async function indexRepoCommit(options: RepoIndexerOptions, commit: strin
         return text === undefined ? [] : [[file.path, text] as const]
       }),
   )
-  const dates = await commitDates(dir, commit, mirror)
+  const dates = commit === null ? { firstCommitAt: null, lastCommitAt: null } : await commitDates(dir, commit, mirror)
   const summary = buildRepoSummary({
     repo,
     branch: options.branch,

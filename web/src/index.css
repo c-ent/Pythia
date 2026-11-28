@@ -174,13 +174,6 @@
   .scroll-row::-webkit-scrollbar {
     display: none;
   }
-
-  /* A scroll area inside the dark sidebar: thin scrollbar in the nav colours, no scroll chaining. */
-  .nav-scroll {
-    overscroll-behavior-y: contain;
-    scrollbar-width: thin;
-    scrollbar-color: var(--color-nav-line) transparent;
-  }
   .scroll-row[data-more-start] {
     --fade-start: 1.5rem;
   }

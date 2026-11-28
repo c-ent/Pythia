@@ -19,6 +19,9 @@ export function TopicAtlas({
 }) {
   const graph = useMemo(() => buildTopicAtlasGraph(topic, branches), [topic, branches])
   const docCount = useMemo(() => topicMapDocuments(branches).length, [branches])
+  const branchCount = useMemo(() => graph.nodes.filter((node) => node.kind === 'branch').length, [graph.nodes])
+  const docLabel = `${docCount} ${docCount === 1 ? 'document' : 'documents'}`
+  const branchLabel = branchCount > 0 ? `${branchCount} ${branchCount === 1 ? 'branch' : 'branches'}` : null
 
   return (
     <AtlasCanvas
@@ -26,8 +29,8 @@ export function TopicAtlas({
       edges={graph.edges}
       worldRadius={graph.worldRadius}
       title={`TOPIC MAP · ${topic}`}
-      subtitle={`${docCount} ${docCount === 1 ? 'document' : 'documents'} · ${branches.length} ${branches.length === 1 ? 'branch' : 'branches'}`}
-      ariaLabel={`3D topic map for ${topic} with ${branches.length} branches and ${docCount} documents. The list view has the same outline.`}
+      subtitle={branchLabel === null ? docLabel : `${docLabel} · ${branchLabel}`}
+      ariaLabel={`3D topic map for ${topic} with ${branchLabel === null ? docLabel : `${branchLabel} and ${docLabel}`}. The list view has the same outline.`}
       onSelectBranch={onBranch}
       heightClassName="h-[62dvh] min-h-104 md:h-[68dvh]"
     />

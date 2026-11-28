@@ -92,7 +92,7 @@ export function Sidebar({
       <button
         type="button"
         onClick={startNewSearch}
-        className="mt-4 flex min-h-11 items-center gap-3 rounded-control border border-nav-line bg-nav-raised px-3 text-sm font-medium text-nav-ink transition-colors hover:border-nav-muted"
+        className="mt-2 flex min-h-11 items-center gap-3 rounded-control border border-nav-line bg-nav-raised px-3 text-sm font-medium text-nav-ink transition-colors hover:border-nav-muted"
       >
         <SquarePen aria-hidden="true" className="size-5" />
         <span className="flex-1 text-left">New search</span>
@@ -101,8 +101,8 @@ export function Sidebar({
         </kbd>
       </button>
 
-      <nav aria-label="Main" className="mt-4">
-        <ul className="space-y-1">
+      <nav aria-label="Main" className="mt-2">
+        <ul className="space-y-0.5">
           {NAV.map(({ route, label, icon: Icon }) => (
             <li key={route}>
               <AppLink path={pathFor(route)} current={current(route)} className={SIDEBAR_LINK}>
@@ -117,12 +117,13 @@ export function Sidebar({
         </ul>
       </nav>
 
-      {/* Takes the free height and scrolls itself; the rest of the sidebar stays fixed. */}
       <RecentQueries key={recentKind} kind={recentKind} online={online} />
+
+      <div className="min-h-3 flex-1" />
 
       <OfflineCard online={online} pinned={pinned} />
 
-      <ul className="mt-6 space-y-1 border-t border-nav-line py-3">
+      <ul className="mt-3 space-y-0.5 border-t border-nav-line pt-2 pb-1">
         <li>
           <AppLink path={settingsPath('gemini')} className={SIDEBAR_LINK}>
             <KeyRound aria-hidden="true" className="size-5 shrink-0" />
