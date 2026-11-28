@@ -3,6 +3,7 @@ import { SEARCHABLE_KINDS } from '../db/searchStore.js'
 import type { StatusStore } from '../db/statusStore.js'
 import {
   deriveSourceStates,
+  DRIVE_SOURCE,
   KEEP_SOURCE,
   REPOS_SOURCE,
   VAULT_SOURCE,
@@ -19,7 +20,7 @@ import {
  */
 
 export type SourceState = 'healthy' | 'error' | 'manual' | 'off'
-export type SourceId = typeof VAULT_SOURCE | typeof REPOS_SOURCE | typeof KEEP_SOURCE
+export type SourceId = typeof VAULT_SOURCE | typeof REPOS_SOURCE | typeof KEEP_SOURCE | typeof DRIVE_SOURCE
 
 /**
  * - `watch`: the vault watcher indexes changes as they arrive (plus a scan at start and on Sync now).
@@ -34,7 +35,7 @@ export interface Schedule {
 
 export interface SourceStatus {
   id: SourceId
-  kind: 'obsidian' | 'repo' | 'keep'
+  kind: 'obsidian' | 'repo' | 'keep' | 'gdrive'
   state: SourceState
   /** Short reason for `error` (an error class or a count), else null. */
   reason: string | null
@@ -98,6 +99,10 @@ export interface StatusServiceOptions {
    * fetched right now. Absent means repos are off.
    */
   repoRound?: () => { running: boolean; repo: string | null }
+  /** Null or absent when Drive is off (no PYTHIA_DRIVE_REMOTE, or its source switched off). */
+  drive?: { intervalMs: number } | null
+  /** The Drive scheduler's state: a round (startup, every 30 minutes or Sync now) is running. */
+  driveRound?: () => { running: boolean }
   now?: () => number
   /** Error classes only. */
   log?: (message: string) => void
@@ -142,6 +147,7 @@ export function createStatusService(options: StatusServiceOptions): StatusServic
       for (const row of rows) documents[row.kind] += row.documents
       const vaultRow = rows.find((row) => row.kind === 'obsidian')
       const keepRow = rows.find((row) => row.kind === 'keep')
+      const driveRow = rows.find((row) => row.kind === 'gdrive')
       const repoRows = new Map(rows.filter((row) => row.kind === 'repo').map((row) => [row.name, row]))
 
       const vault: SourceStatus =
@@ -220,15 +226,43 @@ export function createStatusService(options: StatusServiceOptions): StatusServic
         syncing: false,
       }
 
+      // Drive (R19, T61): pulled and indexed every `everyMinutes`, at startup and on Sync now.
+      const driveOptions = options.drive ?? null
+      const driveRunning = driveOptions !== null && (options.driveRound?.().running ?? false)
+      const drive: SourceStatus =
+        driveOptions === null
+          ? {
+              id: DRIVE_SOURCE,
+              kind: 'gdrive',
+              state: 'off',
+              reason: null,
+              lastSyncAt: null,
+              schedule: { kind: 'off', everyMinutes: null },
+              documents: driveRow?.documents ?? 0,
+              chunks: driveRow?.chunks ?? 0,
+              syncing: false,
+            }
+          : {
+              id: DRIVE_SOURCE,
+              kind: 'gdrive',
+              state: derived.drive.state,
+              reason: derived.drive.reason,
+              lastSyncAt: lastSync(derived.drive, DRIVE_SOURCE),
+              schedule: { kind: 'interval', everyMinutes: Math.round(driveOptions.intervalMs / 60_000) },
+              documents: driveRow?.documents ?? 0,
+              chunks: driveRow?.chunks ?? 0,
+              syncing: syncing.running || driveRunning,
+            }
+
       return {
         reachable: true,
         checkedAt: new Date(now()),
         gemini: { available: gemini },
         devices: { active: devices },
         documents,
-        sources: [vault, github, keep],
+        sources: [vault, github, keep, drive],
         repos,
-        syncing: syncing.running || round.running,
+        syncing: syncing.running || round.running || driveRunning,
         activity: events,
       }
     },

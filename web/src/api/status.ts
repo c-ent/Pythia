@@ -6,8 +6,8 @@ import { ApiError, apiFetch } from './client'
 // Mirrors `GET /api/status`, `GET /api/activity` and `POST /api/sync-now`
 // (server/src/routes/status.ts, R18). Dates arrive as ISO strings.
 
-export type StatusSourceId = 'obsidian' | 'github' | 'keep'
-export type StatusSourceKind = 'obsidian' | 'repo' | 'keep'
+export type StatusSourceId = 'obsidian' | 'github' | 'keep' | 'gdrive'
+export type StatusSourceKind = 'obsidian' | 'repo' | 'keep' | 'gdrive'
 export type SourceState = 'healthy' | 'error' | 'manual' | 'off'
 export type RepoState = 'healthy' | 'error' | 'off'
 
@@ -55,6 +55,7 @@ export const ACTIVITY_KINDS = [
   'secrets_blocked',
   'keep_imported',
   'sync_error',
+  'drive_pulled',
 ] as const
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number]
 
@@ -73,6 +74,7 @@ export interface DocumentCounts {
   keep: number
   repo: number
   chat: number
+  gdrive: number
 }
 
 export interface ServerStatus {
@@ -83,7 +85,7 @@ export interface ServerStatus {
   documents: DocumentCounts
   /** A Sync now (or Re-sync) run is in progress. Startup, watcher and scheduled runs do not set it. */
   syncing: boolean
-  /** Always obsidian, github, keep, in that order. */
+  /** obsidian, github, keep, then gdrive (Google Drive) on servers that have it. */
   sources: SourceHealth[]
   /** Configured repos in config order. */
   repos: RepoHealth[]
@@ -124,8 +126,8 @@ async function readJson(res: Response): Promise<Record<string, unknown>> {
   throw badResponse()
 }
 
-const SOURCE_IDS: readonly StatusSourceId[] = ['obsidian', 'github', 'keep']
-const SOURCE_KINDS: readonly StatusSourceKind[] = ['obsidian', 'repo', 'keep']
+const SOURCE_IDS: readonly StatusSourceId[] = ['obsidian', 'github', 'keep', 'gdrive']
+const SOURCE_KINDS: readonly StatusSourceKind[] = ['obsidian', 'repo', 'keep', 'gdrive']
 const SOURCE_STATES: readonly SourceState[] = ['healthy', 'error', 'manual', 'off']
 const REPO_STATES: readonly RepoState[] = ['healthy', 'error', 'off']
 const SCHEDULE_KINDS: readonly ScheduleKind[] = ['watch', 'interval', 'manual', 'off']
@@ -203,6 +205,7 @@ export function parseServerStatus(body: Record<string, unknown>): ServerStatus {
       keep: count(documents.keep),
       repo: count(documents.repo),
       chat: count(documents.chat),
+      gdrive: count(documents.gdrive),
     },
     syncing: body.syncing,
     sources: body.sources.map(parseSource).filter(present),

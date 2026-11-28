@@ -20,12 +20,14 @@ const INVALID_PATH: Record<LlmExclusionKind, string> = {
   tag: 'path must be a tag: letters, digits, "_", "-" or "/", with or without #',
   repo: 'path must be a repo name: 1–100 letters, digits, ".", "_" or "-", starting with a letter or digit',
   keep: 'path is not used for keep',
+  gdrive: 'path must be / for the whole Drive or a Drive folder path without ..',
 }
 
 const exclusionSchema = z
   .object({
     kind: z.enum(LLM_EXCLUSION_KINDS),
-    // A `keep` rule needs no path: it covers all of Google Keep.
+    // A `keep` rule needs no path: it covers all of Google Keep. A `gdrive`
+    // rule without a path (or `/`) covers the whole Drive.
     path: z
       .string()
       .max(MAX_PATH_LENGTH)

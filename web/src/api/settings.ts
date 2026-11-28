@@ -7,8 +7,10 @@ import { apiFetch } from './client'
  * - `tag`: Obsidian notes with the tag or one nested under it, stored lower case without `#`.
  * - `repo`: every document of the repo with that name.
  * - `keep`: every Google Keep note; its `path` is always `keep`.
+ * - `gdrive`: Google Drive documents; `path` is `/` for the whole Drive, else a
+ *   folder in My Drive (its files and subfolders).
  */
-export type LlmExclusionKind = 'folder' | 'note' | 'tag' | 'repo' | 'keep'
+export type LlmExclusionKind = 'folder' | 'note' | 'tag' | 'repo' | 'keep' | 'gdrive'
 
 /** One rule on the "Kept away from Gemini" list. */
 export interface LlmExclusion {

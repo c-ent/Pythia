@@ -115,4 +115,12 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('runMigrations against Post
       /check constraint/,
     )
   })
+
+  it('accepts the gdrive source kind', async () => {
+    const source = await pool.query<{ id: string }>(
+      "INSERT INTO sources (kind, name, root_path) VALUES ('gdrive', 'gdrive', '/data/gdrive') RETURNING id",
+    )
+    expect(source.rowCount).toBe(1)
+    await pool.query('DELETE FROM sources WHERE id = $1', [source.rows[0]!.id])
+  })
 })

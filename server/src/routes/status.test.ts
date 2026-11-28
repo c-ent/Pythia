@@ -147,6 +147,7 @@ describe('GET /api/status', () => {
       ['obsidian', 'obsidian', 'healthy', { kind: 'watch', everyMinutes: null }],
       ['github', 'repo', 'healthy', { kind: 'interval', everyMinutes: 30 }],
       ['keep', 'keep', 'manual', { kind: 'manual', everyMinutes: null }],
+      ['gdrive', 'gdrive', 'off', { kind: 'off', everyMinutes: null }],
     ])
     expect(source(status, 'github')).toMatchObject({ documents: 7, chunks: 21, lastSyncAt: null })
     expect(status.repos.map((entry) => [entry.name, entry.state, entry.documents])).toEqual([
@@ -176,7 +177,7 @@ describe('GET /api/status', () => {
     expect(result.repos).toEqual([])
     const res = await post('/sync-now')
     expect(res.status).toBe(202)
-    expect(await res.json()).toEqual({ started: true, vault: 'off', repos: 'off' })
+    expect(await res.json()).toEqual({ started: true, vault: 'off', repos: 'off', drive: 'off' })
   })
 
   it('shows a repo config that did not load as an error with a short reason', async () => {
@@ -285,8 +286,8 @@ describe('POST /api/sync-now', () => {
     const bodies = [await first.json(), await second.json()]
     expect(bodies).toEqual(
       expect.arrayContaining([
-        { started: true, vault: 'started', repos: 'started' },
-        { started: false, vault: 'running', repos: 'running' },
+        { started: true, vault: 'started', repos: 'started', drive: 'off' },
+        { started: false, vault: 'running', repos: 'running', drive: 'off' },
       ]),
     )
     expect(runs).toEqual({ vault: 1, repos: 1 })
@@ -310,7 +311,7 @@ describe('POST /api/sync-now', () => {
       },
     })
     const res = await post('/sync-now')
-    expect(await res.json()).toEqual({ started: true, vault: 'off', repos: 'started' })
+    expect(await res.json()).toEqual({ started: true, vault: 'off', repos: 'started', drive: 'off' })
     await sync.idle()
     expect(runs.repos).toBe(1)
   })

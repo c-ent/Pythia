@@ -1,7 +1,7 @@
 import type { Pool } from 'pg'
 
 /** Every kind except `work`, which default ingestion never creates (R2). */
-export type IngestSourceKind = 'obsidian' | 'keep' | 'repo' | 'chat'
+export type IngestSourceKind = 'obsidian' | 'keep' | 'repo' | 'chat' | 'gdrive'
 
 export interface SourceRow {
   id: number

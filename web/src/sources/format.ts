@@ -29,6 +29,7 @@ const SOURCE_TITLES: Record<StatusSourceId, string> = {
   obsidian: 'Obsidian vault',
   github: 'GitHub repos',
   keep: 'Google Keep',
+  gdrive: 'Google Drive',
 }
 
 export const sourceTitle = (id: StatusSourceId): string => SOURCE_TITLES[id]
@@ -70,6 +71,11 @@ export function scheduleLabel(schedule: Schedule): string | null {
 export function sourceDetail(source: SourceHealth, repoCount: number, now: Date = new Date()): string {
   if (source.state === 'off') return 'Not configured on the server.'
   const schedule = scheduleLabel(source.schedule)
+  if (source.id === 'gdrive') {
+    return [plural(source.documents, 'file'), plural(source.chunks, 'chunk'), schedule === null ? null : `pulled ${schedule}`]
+      .filter((part) => part !== null)
+      .join(' · ')
+  }
   const parts: (string | null)[] =
     source.id === 'obsidian'
       ? [plural(source.documents, 'note'), plural(source.chunks, 'chunk'), schedule]
@@ -132,6 +138,12 @@ export function activityText(event: ActivityEvent): { title: string; detail: str
       return {
         title: 'Google Keep imported',
         detail: join(n === null ? null : plural(n, 'note'), event.message),
+        tone: 'success',
+      }
+    case 'drive_pulled':
+      return {
+        title: 'Drive synced',
+        detail: join(n === null ? null : `${plural(n, 'file')} changed`, event.message),
         tone: 'success',
       }
     case 'secrets_blocked': {

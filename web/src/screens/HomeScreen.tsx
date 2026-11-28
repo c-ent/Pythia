@@ -118,6 +118,7 @@ const rowClass = 'block w-full rounded-control px-2.5 py-2 text-left transition-
 
 function kindLabel(doc: DocumentInfo): string {
   if (doc.source.kind === 'repo') return doc.source.name
+  if (doc.source.kind === 'gdrive') return 'Drive'
   return doc.source.kind === 'keep' ? 'Keep' : 'Note'
 }
 

@@ -3,7 +3,7 @@ import type { GeminiStatus, GeminiTestResult } from '../../api/gemini'
 import type { RepoInfo } from '../../api/repos'
 import type { CountedLlmExclusion, LlmExclusion, LlmExclusionKind } from '../../api/settings'
 import { formatDate, plural } from '../../repos/format'
-import { KEEP_RULE_PATH } from '../exclusionPaths'
+import { DRIVE_ROOT_RULE_PATH, KEEP_RULE_PATH } from '../exclusionPaths'
 
 /** Same bounds as the server's `geminiKeyInputSchema`; they only stop obvious mistakes before sending. */
 const MIN_KEY_LENGTH = 20
@@ -22,7 +22,7 @@ export interface RuleRow {
   documents: number | null
 }
 
-const KIND_ORDER: Record<LlmExclusionKind, number> = { folder: 0, note: 1, tag: 2, repo: 3, keep: 4 }
+const KIND_ORDER: Record<LlmExclusionKind, number> = { folder: 0, note: 1, tag: 2, repo: 3, keep: 4, gdrive: 5 }
 
 export const KIND_LABELS: Record<LlmExclusionKind, string> = {
   folder: 'Folder',
@@ -30,6 +30,7 @@ export const KIND_LABELS: Record<LlmExclusionKind, string> = {
   tag: 'Tag',
   repo: 'Repo',
   keep: 'Google Keep',
+  gdrive: 'Google Drive',
 }
 
 const ruleKey = (rule: LlmExclusion): string => `${rule.kind}:${rule.path.toLowerCase()}`
@@ -71,6 +72,8 @@ export function ruleLabel(rule: LlmExclusion): string {
       return `#${rule.path}`
     case 'keep':
       return 'Google Keep'
+    case 'gdrive':
+      return rule.path === DRIVE_ROOT_RULE_PATH ? 'All of Google Drive' : `Drive: ${rule.path}/`
     default:
       return rule.path
   }
@@ -79,12 +82,12 @@ export function ruleLabel(rule: LlmExclusion): string {
 /** "12 notes" or "3 files"; null when the count is not known. */
 export function countText(row: RuleRow): string | null {
   if (row.documents === null) return null
-  return plural(row.documents, row.kind === 'repo' ? 'file' : 'note')
+  return plural(row.documents, row.kind === 'repo' || row.kind === 'gdrive' ? 'file' : 'note')
 }
 
-/** Only folder, note and tag rules can be taken off the list; repos and Keep stay as allowed rows. */
+/** Folder, note, tag and Drive rules can be taken off the list; repos and Keep stay as allowed rows. */
 export const isRemovable = (row: RuleRow): boolean =>
-  row.kind === 'folder' || row.kind === 'note' || row.kind === 'tag'
+  row.kind === 'folder' || row.kind === 'note' || row.kind === 'tag' || row.kind === 'gdrive'
 
 /** Where the key in use comes from, in one line. */
 export function keyStatusText(status: GeminiStatus): string {

@@ -1,3 +1,4 @@
+import { normalizeDriveFolder } from './driveConfig.js'
 import { REPO_NAME_PATTERN } from './repoConfig.js'
 import { normalizeTag, tagCovers } from './noteTags.js'
 
@@ -12,20 +13,33 @@ import { normalizeTag, tagCovers } from './noteTags.js'
  * - `repo`: every document of the repo with that name ("Allow Ask to read
  *   this repo" switched off).
  * - `keep`: every Google Keep note; its `path` is always `keep`.
+ * - `gdrive`: Google Drive documents (R19, T62). `path` is `/` for the whole
+ *   Drive, else a Drive-relative folder whose files and subfolders it covers.
  */
-export type LlmExclusionKind = 'folder' | 'note' | 'tag' | 'repo' | 'keep'
+export type LlmExclusionKind = 'folder' | 'note' | 'tag' | 'repo' | 'keep' | 'gdrive'
 
-export const LLM_EXCLUSION_KINDS = ['folder', 'note', 'tag', 'repo', 'keep'] as const satisfies readonly LlmExclusionKind[]
+export const LLM_EXCLUSION_KINDS = [
+  'folder',
+  'note',
+  'tag',
+  'repo',
+  'keep',
+  'gdrive',
+] as const satisfies readonly LlmExclusionKind[]
 
 /** The only `path` of a `keep` rule. */
 export const KEEP_RULE_PATH = 'keep'
+
+/** The `path` of a `gdrive` rule that covers the whole Drive. No folder normalizes to it. */
+export const DRIVE_ROOT_RULE_PATH = '/'
 
 export interface LlmExclusion {
   kind: LlmExclusionKind
   /**
    * `folder` / `note`: vault-relative, `/`-separated, no leading `./` or `/`,
    * no trailing `/`. `tag`: lower case, without `#`. `repo`: the repo name.
-   * `keep`: `keep`.
+   * `keep`: `keep`. `gdrive`: `/`, or a Drive folder without leading or
+   * trailing `/`.
    */
   path: string
 }
@@ -77,7 +91,29 @@ export function normalizeRulePath(kind: LlmExclusionKind, input: string): string
       return normalizeRepoName(input)
     case 'keep':
       return KEEP_RULE_PATH
+    case 'gdrive':
+      return normalizeDriveRulePath(input)
   }
+}
+
+/** `/` (or nothing) is the whole Drive; anything else must be a plain Drive folder path. */
+export function normalizeDriveRulePath(input: string): string | null {
+  if (/^\s*\/*\s*$/.test(input)) return DRIVE_ROOT_RULE_PATH
+  return normalizeDriveFolder(input)
+}
+
+/**
+ * True when a `gdrive` rule covers the Drive document at this mirror-relative
+ * path: the whole Drive, or a folder it sits in at any depth. Ignores case, like
+ * vault folder rules, so a lock never misses a file over spelling.
+ */
+export function isDriveLocked(relPath: string, exclusions: readonly LlmExclusion[]): boolean {
+  const file = relPath.toLowerCase()
+  return exclusions.some(
+    (exclusion) =>
+      exclusion.kind === 'gdrive' &&
+      (exclusion.path === DRIVE_ROOT_RULE_PATH || file.startsWith(`${exclusion.path.toLowerCase()}/`)),
+  )
 }
 
 /**
@@ -116,7 +152,7 @@ export function isKeepLocked(exclusions: readonly LlmExclusion[]): boolean {
   return exclusions.some((exclusion) => exclusion.kind === 'keep')
 }
 
-const KIND_ORDER: Record<LlmExclusionKind, number> = { folder: 0, note: 1, tag: 2, repo: 3, keep: 4 }
+const KIND_ORDER: Record<LlmExclusionKind, number> = { folder: 0, note: 1, tag: 2, repo: 3, keep: 4, gdrive: 5 }
 
 function compareExclusions(a: LlmExclusion, b: LlmExclusion): number {
   if (a.kind !== b.kind) return KIND_ORDER[a.kind] - KIND_ORDER[b.kind]
@@ -126,7 +162,7 @@ function compareExclusions(a: LlmExclusion, b: LlmExclusion): number {
   return a.path < b.path ? -1 : a.path > b.path ? 1 : 0
 }
 
-/** Folders, notes, tags, repos, then Keep; within a kind by path ignoring case. */
+/** Folders, notes, tags, repos, Keep, then Drive; within a kind by path ignoring case. */
 export function sortExclusions(list: readonly LlmExclusion[]): LlmExclusion[] {
   return list.map((exclusion) => ({ kind: exclusion.kind, path: exclusion.path })).sort(compareExclusions)
 }

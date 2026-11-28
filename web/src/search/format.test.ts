@@ -14,6 +14,7 @@ describe('search formatting', () => {
     expect(sourceLabel({ kind: 'repo', name: 'kitchen-app' })).toBe('kitchen-app')
     expect(sourceLabel({ kind: 'obsidian', name: 'vault' })).toBe('Obsidian')
     expect(sourceLabel({ kind: 'keep', name: 'takeout' })).toBe('Keep')
+    expect(sourceLabel({ kind: 'gdrive', name: 'gdrive' })).toBe('Drive')
   })
 
   it('counts results', () => {

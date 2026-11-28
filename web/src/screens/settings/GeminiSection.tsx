@@ -1,5 +1,6 @@
 import {
   CircleCheck,
+  Cloud,
   Hash,
   FileText,
   Folder,
@@ -65,6 +66,7 @@ const KIND_ICONS: Record<LlmExclusionKind, LucideIcon> = {
   tag: Hash,
   repo: FolderGit2,
   keep: StickyNote,
+  gdrive: Cloud,
 }
 
 /** Settings › Gemini access (R16): the API key, today's usage, and what Ask may send to Gemini. */
@@ -510,6 +512,7 @@ const ADD_KINDS: { kind: Exclude<LlmExclusionKind, 'keep'>; label: string; field
   { kind: 'note', label: 'Single note', field: 'Path in the vault', placeholder: 'Journal/2026-11-26.md' },
   { kind: 'tag', label: 'Tag', field: 'Tag', placeholder: 'private' },
   { kind: 'repo', label: 'Repo', field: 'Repo name', placeholder: 'my-repo' },
+  { kind: 'gdrive', label: 'Drive folder', field: 'Folder in My Drive', placeholder: 'Clients/Acme' },
 ]
 
 function AddForm({

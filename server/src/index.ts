@@ -9,6 +9,7 @@ import { loadConfig } from './config.js'
 import { createPgChunkTextLoader, createPgSearchStore } from './db/searchStore.js'
 import { createEmbedGate } from './embed/embedGate.js'
 import { createOllamaEmbedder } from './embed/ollama.js'
+import { startDrive, type RunningDrive } from './ingest/startDrive.js'
 import { startRepos, type RunningRepos } from './ingest/startRepos.js'
 import { startVault, type RunningVault } from './ingest/startVault.js'
 import { createAuthDeps } from './routes/auth.js'
@@ -124,6 +125,15 @@ if (config.repos === null) {
   repos = await startRepos(pool, config.repos, indexEmbedder(), llmExclusions, activity)
 }
 
+// Google Drive (R19, T61): rclone pull of My Drive, then the indexer, at
+// startup, every 30 minutes and on Sync now.
+let drive: RunningDrive | undefined
+if (config.drive === null) {
+  console.log('PYTHIA_DRIVE_REMOTE is not set; Drive is off')
+} else {
+  drive = await startDrive(pool, config.drive, indexEmbedder(), activity, { exclusions: llmExclusions })
+}
+
 // Keep import (R12) and the Import page's status and re-index button.
 const imports = createImportService({
   status: createPgStatusStore(pool),
@@ -135,7 +145,12 @@ const imports = createImportService({
   activity,
 })
 // Status, Sync now and per-repo re-sync (R18, T42).
-const syncNow = createSyncNow({ vault: vault?.rescan, repos: repos?.runNow, repo: repos?.runOne })
+const syncNow = createSyncNow({
+  vault: vault?.rescan,
+  repos: repos?.runNow,
+  repo: repos?.runOne,
+  drive: drive?.runNow,
+})
 const status = createStatusService({
   sources: createPgStatusStore(pool),
   activity,
@@ -147,6 +162,8 @@ const status = createStatusService({
   syncing: () => syncNow.state(),
   // The startup round and the 30-minute rounds show as syncing too, not only Sync now (T52).
   ...(repos?.state === undefined ? {} : { repoRound: repos.state }),
+  drive: drive?.runNow === undefined ? null : { intervalMs: drive.intervalMs },
+  ...(drive?.state === undefined ? {} : { driveRound: drive.state }),
 })
 console.log(config.webDir === null ? 'PYTHIA_WEB_DIR is not set; serving the API only' : `web: ${config.webDir}`)
 const server = createServer(
@@ -179,6 +196,7 @@ const shutdown = (): void => {
     await syncNow.idle()
     await vault?.close()
     await repos?.close()
+    await drive?.close()
     await pool.end()
     process.exit(0)
   })()

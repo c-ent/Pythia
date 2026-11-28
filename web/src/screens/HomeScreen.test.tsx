@@ -98,11 +98,11 @@ describe('Home', () => {
     expect(screen.getByRole('searchbox').getAttribute('placeholder')).toMatch(/Ask a question/)
   })
 
-  it('shows the source chips All, Notes, Repos and Keep', () => {
+  it('shows the source chips All, Notes, Repos, Keep and Drive', () => {
     stubServer()
     render(<SearchScreen />)
     const chips = within(screen.getByRole('group', { name: 'Sources' })).getAllByRole('button')
-    expect(chips.map((chip) => chip.textContent)).toEqual(['All', 'Notes', 'Repos', 'Keep'])
+    expect(chips.map((chip) => chip.textContent)).toEqual(['All', 'Notes', 'Repos', 'Keep', 'Drive'])
     expect(chips[0]?.getAttribute('aria-pressed')).toBe('true')
     fireEvent.click(chips[1]!)
     expect(chips[1]?.getAttribute('aria-pressed')).toBe('true')

@@ -1,7 +1,7 @@
 import type { Pool } from 'pg'
 
 /** Kinds a search or document lookup can return. `work` never appears (R2). */
-export const SEARCHABLE_KINDS = ['obsidian', 'keep', 'repo', 'chat'] as const
+export const SEARCHABLE_KINDS = ['obsidian', 'keep', 'repo', 'chat', 'gdrive'] as const
 export type SearchableKind = (typeof SEARCHABLE_KINDS)[number]
 
 export interface SearchFilters {

@@ -3,7 +3,7 @@ import { recentQueriesChanged } from './recent'
 
 // Mirrors the server's search types (server/src/search/searchService.ts).
 
-export const SOURCE_KINDS = ['obsidian', 'repo', 'keep'] as const
+export const SOURCE_KINDS = ['obsidian', 'repo', 'keep', 'gdrive'] as const
 export type SourceKind = (typeof SOURCE_KINDS)[number]
 
 export interface Snippet {

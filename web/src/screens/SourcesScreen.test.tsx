@@ -168,6 +168,33 @@ describe('SourcesScreen', () => {
     expect(syncAll().disabled).toBe(false)
   })
 
+  it('shows a Google Drive card and its pull in the activity when the server has Drive', async () => {
+    const drive: SourceHealth = {
+      id: 'gdrive',
+      kind: 'gdrive',
+      state: 'healthy',
+      reason: null,
+      lastSyncAt: '2026-11-27T07:30:00.000Z',
+      schedule: { kind: 'interval', everyMinutes: 30 },
+      documents: 12,
+      chunks: 40,
+      syncing: false,
+    }
+    stubApi({
+      'GET /api/status': statusOf({
+        documents: { obsidian: 48, keep: 3, repo: 120, chat: 0, gdrive: 12 },
+        sources: [obsidian(), github(), keep(), drive],
+        activity: [event(3, { kind: 'drive_pulled', source: 'gdrive', count: 3 })],
+      }),
+    })
+    render(<SourcesScreen />)
+    const driveCard = await findCard('Google Drive')
+    expect(driveCard.getByText('12 files · 40 chunks · pulled every 30 min')).toBeTruthy()
+    const activity = within(screen.getByRole('list', { name: 'Activity' }))
+    expect(activity.getByText('Drive synced')).toBeTruthy()
+    expect(activity.getByText(/3 files changed/)).toBeTruthy()
+  })
+
   it('marks unconfigured sources off and has nothing to sync without a vault or repos', async () => {
     stubApi({
       'GET /api/status': statusOf({

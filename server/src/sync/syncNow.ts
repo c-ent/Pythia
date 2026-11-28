@@ -14,6 +14,8 @@ export interface SyncNowStart {
   started: boolean
   vault: SyncPart
   repos: SyncPart
+  /** The Drive pull and index (R19, T61). `running` also when a scheduled Drive round already covers it. */
+  drive: SyncPart
 }
 
 export type RepoSyncStart = 'started' | 'running' | 'not_found' | 'off'
@@ -36,7 +38,12 @@ export interface SyncNowOptions {
   repos?: () => Promise<unknown>
   /** Fetches one repo; null for a name not in the config. Absent when repos are off. */
   repo?: (name: string) => Promise<unknown> | null
-  /** Error classes only: messages can quote paths or git output. */
+  /**
+   * Drive round (pull, then index); absent when Drive is off. It joins a
+   * round already in progress rather than starting a second one.
+   */
+  drive?: () => Promise<unknown>
+  /** Error classes only: messages can quote paths, git or rclone output. */
   log?: (message: string) => void
 }
 
@@ -59,12 +66,13 @@ export function createSyncNow(options: SyncNowOptions): SyncNowService {
     syncNow() {
       const part = (task: (() => Promise<unknown>) | undefined): SyncPart =>
         task === undefined ? 'off' : current === null ? 'started' : 'running'
-      const parts = { vault: part(options.vault), repos: part(options.repos) }
+      const parts = { vault: part(options.vault), repos: part(options.repos), drive: part(options.drive) }
       if (current !== null) return { started: false, ...parts }
       const tasks: Array<Promise<void>> = []
-      // The vault and the repos are independent; run them side by side.
+      // The vault, the repos and Drive are independent; run them side by side.
       if (options.vault !== undefined) tasks.push(guarded('vault', options.vault))
       if (options.repos !== undefined) tasks.push(guarded('repos', options.repos))
+      if (options.drive !== undefined) tasks.push(guarded('drive', options.drive))
       const run = Promise.all(tasks).then(() => {
         current = null
       })

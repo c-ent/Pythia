@@ -115,5 +115,43 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('Gemini list rules against 
   it('rejects an unknown kind and a keep rule with another path', async () => {
     await expect(pool.query(`INSERT INTO llm_exclusions (kind, path) VALUES ('secret', 'x')`)).rejects.toThrow(/check/)
     await expect(pool.query(`INSERT INTO llm_exclusions (kind, path) VALUES ('keep', 'notes')`)).rejects.toThrow(/check/)
+    await expect(pool.query(`INSERT INTO llm_exclusions (kind, path) VALUES ('gdrive', '/Work')`)).rejects.toThrow(/check/)
+  })
+
+  it('locks a Drive folder and its subfolders, gives it back, and leaves Markdown to the Drive round (T62)', async () => {
+    const store = createPgIndexStore(pool)
+    const drive = await ensureSource(pool, 'gdrive', 'gdrive', '/data/gdrive')
+    const write = (path: string, allowLlm = true) =>
+      store.replaceDocument(
+        drive.id,
+        { path, title: path, language: null, contentHash: `h-${path}`, allowLlm, mtime: null },
+        [],
+        'nomic-embed-text',
+      )
+    await write('Work/Plan.docx')
+    await write('Work/Deep/Notes.md')
+    await write('Workshop/Tables.pdf')
+    await write('Home/List.xlsx')
+    const exclusions = createPgLlmExclusionStore(pool)
+    const folder: LlmExclusion[] = [{ kind: 'gdrive', path: 'work' }]
+    await exclusions.replace(folder)
+    expect(await allowLlm()).toMatchObject({
+      'gdrive:Work/Plan.docx': false,
+      'gdrive:Work/Deep/Notes.md': false,
+      'gdrive:Workshop/Tables.pdf': true,
+      'gdrive:Home/List.xlsx': true,
+      'pythia:README.md': true,
+    })
+    expect(await exclusions.countDocuments([...folder, { kind: 'gdrive', path: '/' }])).toEqual([2, 4])
+    await exclusions.replace([])
+    expect(await allowLlm()).toMatchObject({
+      'gdrive:Work/Plan.docx': true,
+      // Markdown may say `llm: false`; the next Drive round reads it and decides.
+      'gdrive:Work/Deep/Notes.md': false,
+    })
+    await exclusions.replace([{ kind: 'gdrive', path: '/' }])
+    const drives = Object.entries(await allowLlm()).filter(([key]) => key.startsWith('gdrive:'))
+    expect(drives.every(([, allowed]) => !allowed)).toBe(true)
+    expect(await exclusions.list()).toEqual([{ kind: 'gdrive', path: '/' }])
   })
 })

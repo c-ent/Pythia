@@ -15,6 +15,7 @@ describe('loadConfig', () => {
       embed: { batchSize: 32, timeoutMs: 120_000 },
       vault: null,
       repos: null,
+      drive: null,
       auth: { passwordHash: null, mcpToken: null },
       ask: { geminiApiKey: null, geminiModel: 'gemini-3.5-flash-lite', ollamaChatModel: 'qwen3:4b' },
       secretsKey: null,

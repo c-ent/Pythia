@@ -1,5 +1,6 @@
 import {
   ChevronLeft,
+  Cloud,
   FolderGit2,
   LoaderCircle,
   MessagesSquare,
@@ -49,15 +50,16 @@ const SOURCE_ICONS: Record<SourceHealth['id'], LucideIcon> = {
   obsidian: NotebookText,
   github: FolderGit2,
   keep: StickyNote,
+  gdrive: Cloud,
 }
 
 const BUTTON =
   'inline-flex min-h-11 shrink-0 items-center gap-2 rounded-control border border-line bg-surface px-4 text-sm font-medium text-ink transition-colors hover:bg-raised disabled:opacity-50 disabled:hover:bg-surface'
 
 /**
- * Sources and sync (R18, ui.md): the Obsidian vault, GitHub repos and Google
- * Keep with health and last sync, Sync all, the Keep Takeout import, chat
- * history marked "Coming later", and recent activity.
+ * Sources and sync (R18, ui.md): the Obsidian vault, GitHub repos, Google
+ * Keep and Google Drive with health and last sync, Sync all, the Keep Takeout
+ * import, chat history marked "Coming later", and recent activity.
  */
 export function SourcesScreen() {
   const online = useOnline()

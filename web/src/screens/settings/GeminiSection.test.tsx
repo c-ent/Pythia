@@ -37,7 +37,7 @@ function status(extra: Partial<GeminiStatus> = {}): GeminiStatus {
   }
 }
 
-const KIND_ORDER = { folder: 0, note: 1, tag: 2, repo: 3, keep: 4 } as const
+const KIND_ORDER = { folder: 0, note: 1, tag: 2, repo: 3, keep: 4, gdrive: 5 } as const
 
 /** A server that keeps the key status and the rule list in memory, like the real one. */
 function stubServer({
@@ -338,6 +338,26 @@ describe('GeminiSection: rules', () => {
     expect(server.puts).toEqual([[{ kind: 'repo', path: 'old-repo' }]])
   })
 
+  it('adds a Drive folder rule and the whole Drive, both removable', async () => {
+    const server = stubServer()
+    render(<GeminiSection />)
+    const card = rulesCard()
+    await within(card).findByText(/Nothing is locked/)
+    fireEvent.change(within(card).getByLabelText('Lock a'), { target: { value: 'gdrive' } })
+    fireEvent.change(within(card).getByLabelText('Folder in My Drive'), { target: { value: '/Clients/Acme/' } })
+    fireEvent.click(within(card).getByRole('button', { name: 'Add rule' }))
+    expect(await within(card).findByText('Drive: Clients/Acme/')).toBeTruthy()
+    expect(server.puts).toEqual([[{ kind: 'gdrive', path: 'Clients/Acme' }]])
+    fireEvent.change(within(card).getByLabelText('Lock a'), { target: { value: 'gdrive' } })
+    fireEvent.change(within(card).getByLabelText('Folder in My Drive'), { target: { value: '' } })
+    fireEvent.click(within(card).getByRole('button', { name: 'Add rule' }))
+    expect(await within(card).findByText('All of Google Drive')).toBeTruthy()
+    expect(server.puts[1]).toEqual([
+      { kind: 'gdrive', path: 'Clients/Acme' },
+      { kind: 'gdrive', path: '/' },
+    ])
+  })
+
   it('refuses a note path without .md and does not call the server', async () => {
     const server = stubServer()
     render(<GeminiSection />)
@@ -415,6 +435,14 @@ describe('Gemini access helpers', () => {
     expect(checkExclusionPath('repo', ' pythia ', list)).toEqual({ path: 'pythia' })
     expect(checkExclusionPath('repo', '../pythia', list)).toHaveProperty('error')
     expect(checkExclusionPath('repo', 'pythia.git', list)).toHaveProperty('error')
+    expect(checkExclusionPath('gdrive', ' /Clients/Acme/ ', list)).toEqual({ path: 'Clients/Acme' })
+    expect(checkExclusionPath('gdrive', '', list)).toEqual({ path: '/' })
+    expect(checkExclusionPath('gdrive', ' // ', list)).toEqual({ path: '/' })
+    expect(checkExclusionPath('gdrive', 'Clients//Acme', list)).toHaveProperty('error')
+    expect(checkExclusionPath('gdrive', 'Clients/../Acme', list)).toHaveProperty('error')
+    expect(checkExclusionPath('gdrive', 'clients/acme', [{ kind: 'gdrive', path: 'Clients/Acme' }])).toEqual({
+      error: 'That is already on the list.',
+    })
   })
 
   it('maps errors to messages', () => {

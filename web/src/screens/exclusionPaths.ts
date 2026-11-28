@@ -13,6 +13,22 @@ const REPO_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/
 /** The only `path` of a `keep` rule. */
 export const KEEP_RULE_PATH = 'keep'
 
+/** The `path` of the Drive rule that covers the whole Drive. */
+export const DRIVE_ROOT_RULE_PATH = '/'
+
+/**
+ * Mirrors the server's `normalizeDriveRulePath`: `/` or nothing is the whole
+ * Drive; otherwise a folder without leading or trailing `/`, no empty, `.` or
+ * `..` part. Null when it is not one.
+ */
+export function normalizeDriveRulePath(input: string): string | null {
+  if (/^\s*\/*\s*$/.test(input)) return DRIVE_ROOT_RULE_PATH
+  const trimmed = input.trim().replace(/^\/+|\/+$/g, '')
+  const parts = trimmed.split('/')
+  if (parts.some((part) => part === '' || part === '.' || part === '..')) return null
+  return parts.join('/')
+}
+
 /**
  * Mirrors the server's `normalizeVaultPath`: `\` becomes `/`, empty and `.`
  * segments go, spaces around the path are trimmed. Null for an empty path or one with `..`.
@@ -53,6 +69,8 @@ function normalizeRulePath(kind: LlmExclusionKind, input: string): string | null
       return normalizeRepoName(input)
     case 'keep':
       return KEEP_RULE_PATH
+    case 'gdrive':
+      return normalizeDriveRulePath(input)
   }
 }
 
@@ -62,6 +80,7 @@ const EMPTY: Record<LlmExclusionKind, string> = {
   tag: 'Type a tag.',
   repo: 'Type a repo name.',
   keep: '',
+  gdrive: '',
 }
 
 const INVALID: Record<LlmExclusionKind, string> = {
@@ -70,6 +89,7 @@ const INVALID: Record<LlmExclusionKind, string> = {
   tag: 'A tag has only letters, digits, “_”, “-” and “/”, and not only digits, for example private or private/health.',
   repo: 'A repo name has up to 100 letters, digits, “.”, “_” or “-”, starts with a letter or digit and doesn’t end in .git.',
   keep: '',
+  gdrive: 'Use a folder path in My Drive, for example Clients/Acme, without “..” or “//”.',
 }
 
 /** Checks a typed rule before it is sent; returns the clean path or a message for the owner. */
@@ -78,7 +98,7 @@ export function checkExclusionPath(
   input: string,
   list: readonly LlmExclusion[],
 ): { path: string } | { error: string } {
-  if (kind !== 'keep' && input.trim() === '') return { error: EMPTY[kind] }
+  if (kind !== 'keep' && kind !== 'gdrive' && input.trim() === '') return { error: EMPTY[kind] }
   if (CONTROL_CHARACTER.test(input) || input.length > MAX_PATH_LENGTH) return { error: 'That path can’t be used.' }
   const path = normalizeRulePath(kind, input)
   if (path === null) return { error: INVALID[kind] }

@@ -78,8 +78,10 @@ describe('readCacheCounts', () => {
       doc(3, 'repo', 'alpha'),
       doc(4, 'repo', 'beta'),
       doc(5, 'repo', 'beta'),
+      doc(6, 'gdrive', 'gdrive'),
     ])
-    expect(await readCacheCounts(db)).toEqual({ notes: 2, repoFiles: 3, syncedAt: null })
+    // Drive files are cached like notes.
+    expect(await readCacheCounts(db)).toEqual({ notes: 3, repoFiles: 3, syncedAt: null })
     await db.state.put({ key: SYNC_STATE_KEY, cursor: '9', repos: [], syncedAt: '2026-11-26T01:00:00.000Z' })
     expect((await readCacheCounts(db)).syncedAt).toBe('2026-11-26T01:00:00.000Z')
     db.close()

@@ -113,6 +113,31 @@ describe('settings routes: Gemini exclusion list', () => {
     expect(await (await get()).json()).toEqual(saved)
   })
 
+  it('saves Drive rules for the whole Drive and for a folder, normalized, with counts', async () => {
+    store = createMemoryLlmExclusionStore([], (rule) => (rule.kind !== 'gdrive' ? 0 : rule.path === '/' ? 9 : 4))
+    const res = await put({
+      exclusions: [
+        { kind: 'gdrive', path: '/Clients/Acme/' },
+        { kind: 'gdrive' },
+        { kind: 'gdrive', path: ' / ' },
+        { kind: 'gdrive', path: 'clients/acme' },
+      ],
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({
+      exclusions: [
+        { kind: 'gdrive', path: '/', documents: 9 },
+        { kind: 'gdrive', path: 'Clients/Acme', documents: 4 },
+      ],
+    })
+  })
+
+  it.each([['../etc'], ['a//b'], ['Work/../Home']])('rejects the Drive folder %s', async (path) => {
+    const res = await put({ exclusions: [{ kind: 'gdrive', path }] })
+    expect(res.status).toBe(400)
+    expect(((await res.json()) as { error: { message: string } }).error.message).toMatch(/exclusions\.0\.path/)
+  })
+
   it('removes entries by saving the shorter list', async () => {
     await put({ exclusions: [{ kind: 'folder', path: 'Private' }, { kind: 'note', path: 'a.md' }] })
     await put({ exclusions: [{ kind: 'note', path: 'a.md' }] })

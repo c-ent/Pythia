@@ -43,6 +43,29 @@ const envSchema = z.object({
   // Repo discovery (T54): lists the token owner's GitHub repos each round and
   // adds new ones. On by default whenever GITHUB_TOKEN is set; `0` turns it off.
   PYTHIA_REPOS_DISCOVER: z.enum(['0', '1']).default('1'),
+  // Google Drive (R19, T61). The rclone remote for the owner's My Drive (read-only
+  // scope), e.g. `gdrive:`; unset turns Drive off. The login lives in rclone.conf
+  // on the host, never in .env.
+  PYTHIA_DRIVE_REMOTE: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value === '' ? undefined : value))
+    .refine((value) => value === undefined || /^[A-Za-z0-9_][A-Za-z0-9_. -]*:\P{Cc}*$/u.test(value), 'must be an rclone remote like gdrive:'),
+  PYTHIA_DRIVE_DIR: z.string().trim().min(1).default('data/gdrive'),
+  // `{ "exclude": [...] }`; unset means nothing is excluded.
+  PYTHIA_DRIVE_CONFIG: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value === '' ? undefined : value)),
+  PYTHIA_DRIVE_PULL_MINUTES: z.coerce.number().int().min(5).max(1440).default(30),
+  // rclone.conf holding the Drive remote; unset means rclone's default location.
+  PYTHIA_RCLONE_CONFIG: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value === '' ? undefined : value)),
   // Read-only, fine-grained token for private repos on github.com. Unset
   // still works for public repos and local paths.
   GITHUB_TOKEN: optionalSecret(20),
@@ -107,6 +130,18 @@ export interface ReposConfig {
   discover: boolean
 }
 
+export interface DriveConfig {
+  /** rclone remote for My Drive, e.g. `gdrive:`. */
+  remote: string
+  /** The mirror rclone writes and the indexer reads. */
+  mirrorDir: string
+  /** `/config/gdrive.json` with the exclude list, or null for none. */
+  configFile: string | null
+  pullIntervalMs: number
+  /** rclone.conf path, or null for rclone's default. */
+  rcloneConfig: string | null
+}
+
 export interface DbConfig {
   host: string
   port: number
@@ -137,6 +172,8 @@ export interface Config {
   embed: EmbedConfig
   vault: VaultConfig | null
   repos: ReposConfig | null
+  /** Null when PYTHIA_DRIVE_REMOTE is unset. */
+  drive: DriveConfig | null
   auth: AuthConfig
   ask: AskConfig
   /** `PYTHIA_SECRETS_KEY` as 32 bytes, or null when unset. */
@@ -191,6 +228,16 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
             fetchIntervalMs: data.PYTHIA_REPOS_FETCH_MINUTES * 60_000,
             githubToken: data.GITHUB_TOKEN ?? null,
             discover: data.PYTHIA_REPOS_DISCOVER === '1',
+          },
+    drive:
+      data.PYTHIA_DRIVE_REMOTE === undefined
+        ? null
+        : {
+            remote: data.PYTHIA_DRIVE_REMOTE,
+            mirrorDir: data.PYTHIA_DRIVE_DIR,
+            configFile: data.PYTHIA_DRIVE_CONFIG ?? null,
+            pullIntervalMs: data.PYTHIA_DRIVE_PULL_MINUTES * 60_000,
+            rcloneConfig: data.PYTHIA_RCLONE_CONFIG ?? null,
           },
     auth: {
       passwordHash: data.PYTHIA_PASSWORD_HASH ?? null,

@@ -20,6 +20,8 @@
 #   PYTHIA_RCLONE_CONFIG_DIR   host folder holding rclone.conf with a Dropbox remote (default ./data/rclone)
 #   PYTHIA_RCLONE_SOURCE       remote path, e.g. dropbox:Apps/remotely-save/<vault name>
 #   PYTHIA_REPOS_CONFIG=/config/repos.json  (optional; put repos.json in ./data/config)
+#   PYTHIA_DRIVE_REMOTE=gdrive:  (optional, T61; a read-only Drive remote in rclone.conf,
+#     and ./data/config/gdrive.json holding { "exclude": [] })
 services:
   app:
     network_mode: host
@@ -29,10 +31,19 @@ services:
       OLLAMA_URL: http://127.0.0.1:${PYTHIA_OLLAMA_PORT:-11434}
       PYTHIA_VAULT_PATH: /vault
       PYTHIA_REPOS_DIR: /data/repos
+      # Google Drive (R19, T61): off until PYTHIA_DRIVE_REMOTE is set in .env.
+      PYTHIA_DRIVE_REMOTE: ${PYTHIA_DRIVE_REMOTE:-}
+      PYTHIA_DRIVE_DIR: /data/gdrive
+      PYTHIA_DRIVE_CONFIG: /config/gdrive.json
+      PYTHIA_RCLONE_CONFIG: /rclone/rclone.conf
     volumes:
       - ${PYTHIA_HOST_VAULT_DIR:-./data/vault}:/vault:ro
       - ${PYTHIA_HOST_CONFIG_DIR:-./data/config}:/config:ro
       - repos:/data/repos
+      # The Drive mirror: written only by rclone in this container, read by the indexer.
+      - gdrive:/data/gdrive
+      # Writable: rclone saves the refreshed Google token back into rclone.conf.
+      - ${PYTHIA_RCLONE_CONFIG_DIR:-./data/rclone}:/rclone
 
   rclone:
     image: rclone/rclone:1
@@ -61,3 +72,4 @@ services:
 
 volumes:
   repos:
+  gdrive:

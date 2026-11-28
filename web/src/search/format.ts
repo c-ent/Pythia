@@ -1,17 +1,30 @@
-import { FolderGit2, NotebookPen, StickyNote, type LucideIcon } from 'lucide-react'
+import { Cloud, FolderGit2, NotebookPen, StickyNote, type LucideIcon } from 'lucide-react'
 import { ApiError } from '../api/client'
 import type { SearchResult, SourceKind, SourceRef } from '../api/search'
 
 export const SEARCH_LIMIT = 20
 
-/** Source chip labels (the mock-ups' All, Notes, Repos, Keep). */
-export const SOURCE_LABELS: Record<SourceKind, string> = { obsidian: 'Notes', repo: 'Repos', keep: 'Keep' }
-export const SOURCE_ICONS: Record<SourceKind, LucideIcon> = { obsidian: NotebookPen, repo: FolderGit2, keep: StickyNote }
+/** Source chip labels (the mock-ups' All, Notes, Repos, Keep, plus Drive from R19). */
+export const SOURCE_LABELS: Record<SourceKind, string> = { obsidian: 'Notes', repo: 'Repos', keep: 'Keep', gdrive: 'Drive' }
+export const SOURCE_ICONS: Record<SourceKind, LucideIcon> = {
+  obsidian: NotebookPen,
+  repo: FolderGit2,
+  keep: StickyNote,
+  gdrive: Cloud,
+}
 
 /** Badge text: the repo's name for repos, the source kind otherwise. */
 export function sourceLabel(source: SourceRef): string {
-  if (source.kind === 'repo') return source.name
-  return source.kind === 'obsidian' ? 'Obsidian' : 'Keep'
+  switch (source.kind) {
+    case 'repo':
+      return source.name
+    case 'obsidian':
+      return 'Obsidian'
+    case 'keep':
+      return 'Keep'
+    case 'gdrive':
+      return 'Drive'
+  }
 }
 
 /** The heading path without the note title in front, joined with `›`, or null when it adds nothing. */

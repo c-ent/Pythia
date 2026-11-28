@@ -38,6 +38,23 @@ const APPLY_KEEP_SQL = `
   ) AS x
   WHERE d.source_id = x.id AND d.allow_llm IS DISTINCT FROM x.allowed`
 
+// Drive (R19, T62): a `gdrive` rule covers the whole Drive (`/`) or a folder
+// and its subfolders, ignoring case. Documents a rule covers are locked at
+// once. Documents no rule covers are given back here too, except Markdown
+// files: they can carry frontmatter `llm: false`, so the next Drive round
+// (DriveIndexer.fullScan) re-reads them and gives them back if allowed.
+const APPLY_DRIVE_SQL = `
+  UPDATE documents AS d SET allow_llm = x.allowed, updated_at = now()
+  FROM (
+    SELECT d2.id, NOT EXISTS (
+      SELECT 1 FROM llm_exclusions e
+      WHERE e.kind = 'gdrive' AND (e.path = '/' OR starts_with(lower(d2.path), lower(e.path) || '/'))
+    ) AS allowed, lower(d2.path) LIKE '%.md' AS markdown
+    FROM documents d2 JOIN sources s ON s.id = d2.source_id
+    WHERE s.kind = 'gdrive'
+  ) AS x
+  WHERE d.id = x.id AND d.allow_llm IS DISTINCT FROM x.allowed AND (NOT x.allowed OR NOT x.markdown)`
+
 // Documents each rule covers, whatever their allow_llm (an `llm: false` note
 // in a listed folder still counts).
 const COUNT_SQL = `
@@ -52,13 +69,14 @@ const COUNT_SQL = `
       )
       WHEN 'repo' THEN s.kind = 'repo' AND lower(s.name) = lower(r.path)
       WHEN 'keep' THEN s.kind = 'keep'
+      WHEN 'gdrive' THEN s.kind = 'gdrive' AND (r.path = '/' OR starts_with(lower(d.path), lower(r.path) || '/'))
       ELSE false
     END
   ) AS n
   FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS r (kind, path, i)
   ORDER BY r.i`
 
-const KIND_ORDER_SQL = `CASE kind WHEN 'folder' THEN 0 WHEN 'note' THEN 1 WHEN 'tag' THEN 2 WHEN 'repo' THEN 3 ELSE 4 END`
+const KIND_ORDER_SQL = `CASE kind WHEN 'folder' THEN 0 WHEN 'note' THEN 1 WHEN 'tag' THEN 2 WHEN 'repo' THEN 3 WHEN 'keep' THEN 4 ELSE 5 END`
 
 export function createPgLlmExclusionStore(pool: Pool): LlmExclusionStore {
   return {
@@ -84,6 +102,7 @@ export function createPgLlmExclusionStore(pool: Pool): LlmExclusionStore {
           await client.query(TIGHTEN_VAULT_SQL)
           await client.query(APPLY_REPO_SQL)
           await client.query(APPLY_KEEP_SQL)
+          await client.query(APPLY_DRIVE_SQL)
           await client.query('COMMIT')
         } catch (error) {
           await client.query('ROLLBACK')

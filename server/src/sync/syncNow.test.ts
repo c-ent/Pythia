@@ -52,7 +52,7 @@ function setup(options: { vault?: boolean; repos?: boolean; names?: string[] } =
 describe('sync now', () => {
   it('starts the vault scan and the repo round side by side', async () => {
     const { sync, gate, calls } = setup()
-    expect(sync.syncNow()).toEqual({ started: true, vault: 'started', repos: 'started' })
+    expect(sync.syncNow()).toEqual({ started: true, vault: 'started', repos: 'started', drive: 'off' })
     expect(calls).toMatchObject({ vault: 1, repos: 1 })
     expect(sync.state()).toEqual({ running: true, repos: [] })
     gate.resolve()
@@ -63,20 +63,20 @@ describe('sync now', () => {
   it('never starts a second run while one is in progress (pressed twice quickly)', async () => {
     const { sync, gate, calls } = setup()
     sync.syncNow()
-    expect(sync.syncNow()).toEqual({ started: false, vault: 'running', repos: 'running' })
-    expect(sync.syncNow()).toEqual({ started: false, vault: 'running', repos: 'running' })
+    expect(sync.syncNow()).toEqual({ started: false, vault: 'running', repos: 'running', drive: 'off' })
+    expect(sync.syncNow()).toEqual({ started: false, vault: 'running', repos: 'running', drive: 'off' })
     expect(calls).toMatchObject({ vault: 1, repos: 1 })
     gate.resolve()
     await sync.idle()
-    expect(sync.syncNow()).toEqual({ started: true, vault: 'started', repos: 'started' })
+    expect(sync.syncNow()).toEqual({ started: true, vault: 'started', repos: 'started', drive: 'off' })
     expect(calls).toMatchObject({ vault: 2, repos: 2 })
     await sync.idle()
   })
 
   it('reports a part that is not configured as off', async () => {
     const { sync, gate, calls } = setup({ vault: false })
-    expect(sync.syncNow()).toEqual({ started: true, vault: 'off', repos: 'started' })
-    expect(sync.syncNow()).toEqual({ started: false, vault: 'off', repos: 'running' })
+    expect(sync.syncNow()).toEqual({ started: true, vault: 'off', repos: 'started', drive: 'off' })
+    expect(sync.syncNow()).toEqual({ started: false, vault: 'off', repos: 'running', drive: 'off' })
     expect(calls.vault).toBe(0)
     gate.resolve()
     await sync.idle()
@@ -84,7 +84,7 @@ describe('sync now', () => {
 
   it('finishes at once when nothing is configured', async () => {
     const { sync } = setup({ vault: false, repos: false })
-    expect(sync.syncNow()).toEqual({ started: true, vault: 'off', repos: 'off' })
+    expect(sync.syncNow()).toEqual({ started: true, vault: 'off', repos: 'off', drive: 'off' })
     await sync.idle()
     expect(sync.state().running).toBe(false)
   })

@@ -17,9 +17,15 @@ ENV NODE_ENV=production
 ENV PYTHIA_WEB_DIR=/app/web
 # git for the read-only repo mirrors (T15). /data/repos is created here so a
 # named volume mounted on it starts out owned by the node user.
-RUN apk add --no-cache git \
- && mkdir -p /data/repos \
- && chown node:node /data/repos
+# LibreOffice (Writer, Calc, Impress only) converts old Office and
+# OpenDocument files from Drive to OOXML before extraction (T64); it adds
+# several hundred MB to the image.
+# rclone pulls My Drive into /data/gdrive every 30 minutes (T61); the login
+# lives in the host's rclone.conf, mounted at /rclone by the prod compose file.
+RUN apk add --no-cache git rclone \
+    libreoffice-common libreoffice-writer libreoffice-calc libreoffice-impress font-dejavu \
+ && mkdir -p /data/repos /data/gdrive \
+ && chown node:node /data/repos /data/gdrive
 WORKDIR /app
 COPY --from=build /out/package.json ./
 COPY --from=build /out/node_modules node_modules

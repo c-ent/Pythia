@@ -1,3 +1,4 @@
+import type { DriveIndexResult } from '../ingest/driveIndexer.js'
 import type { IndexResult } from '../ingest/vaultIndexer.js'
 import { logSecretsDrop, type SecretsDropLogger } from '../security/secrets.js'
 
@@ -15,6 +16,7 @@ export const ACTIVITY_KINDS = [
   'secrets_blocked',
   'keep_imported',
   'sync_error',
+  'drive_pulled',
 ] as const
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number]
 
@@ -27,6 +29,7 @@ export const MAX_ACTIVITY_TEXT = 200
 export const VAULT_SOURCE = 'obsidian'
 export const REPOS_SOURCE = 'github'
 export const KEEP_SOURCE = 'keep'
+export const DRIVE_SOURCE = 'gdrive'
 
 export interface NewActivity {
   kind: ActivityKind
@@ -70,7 +73,13 @@ export interface ActivityLogOptions {
   onError?: (error: unknown) => void
 }
 
-const SUCCESS_KINDS: ReadonlySet<ActivityKind> = new Set(['vault_synced', 'repos_fetched', 'repo_fetched', 'keep_imported'])
+const SUCCESS_KINDS: ReadonlySet<ActivityKind> = new Set([
+  'vault_synced',
+  'repos_fetched',
+  'repo_fetched',
+  'keep_imported',
+  'drive_pulled',
+])
 
 const clip = (text: string | null | undefined): string | null => (text == null ? null : text.slice(0, MAX_ACTIVITY_TEXT))
 
@@ -253,6 +262,65 @@ export function createRepoActivity(activity: ActivityLog | undefined, log?: Secr
   }
 }
 
+/** Fixed reason shown on Sources and sync when the Google login behind the Drive remote is revoked or expired. */
+export const DRIVE_LOGIN_REASON = 'Drive login expired; renew it on the host'
+
+/**
+ * The event for one finished Drive round (pull, then index). `count` is the
+ * documents indexed or removed; skipped and failed files are counts only.
+ */
+export function driveRunEvents(result: DriveIndexResult): NewActivity[] {
+  if (result.keptEmptyMirror === true) {
+    return [{ kind: 'sync_error', source: DRIVE_SOURCE, message: 'Drive mirror is empty; index kept' }]
+  }
+  const skipped = Object.values(result.skipped).reduce((sum, n) => sum + n, 0)
+  const failed = result.failed.length
+  const notes = [skipped > 0 ? `${skipped} skipped` : null, failed > 0 ? `${failed} failed` : null].filter(
+    (note): note is string => note !== null,
+  )
+  return [
+    {
+      kind: 'drive_pulled',
+      source: DRIVE_SOURCE,
+      count: result.indexed.length + result.deleted.length,
+      message: notes.length > 0 ? notes.join(', ') : null,
+    },
+  ]
+}
+
+/** A Drive round failure: the login phrase for an expired login, else the error class. */
+export function driveErrorEvent(error: unknown): NewActivity {
+  if (error instanceof Error && error.name === 'DriveLoginError') {
+    return { kind: 'sync_error', source: DRIVE_SOURCE, message: DRIVE_LOGIN_REASON }
+  }
+  return syncErrorEvent(DRIVE_SOURCE, 'Drive round failed', error)
+}
+
+/** Records Drive rounds (startDrive). */
+export interface DriveActivity {
+  /** Pass to the Drive indexer. */
+  logSecrets: SecretsDropLogger
+  /** Runs one round and records it; a failure is recorded and rethrown. */
+  round(task: () => Promise<DriveIndexResult>): Promise<DriveIndexResult>
+}
+
+export function createDriveActivity(activity: ActivityLog | undefined, log?: SecretsDropLogger): DriveActivity {
+  const tally = createSecretsTally(log)
+  return {
+    logSecrets: tally.logger,
+    async round(task) {
+      try {
+        const result = await task()
+        await recordAll(activity, [...driveRunEvents(result), ...secretsEvents(DRIVE_SOURCE, tally)])
+        return result
+      } catch (error) {
+        await recordAll(activity, [...secretsEvents(DRIVE_SOURCE, tally), driveErrorEvent(error)])
+        throw error
+      }
+    },
+  }
+}
+
 export type SyncState = 'healthy' | 'error'
 
 export interface DerivedState {
@@ -265,6 +333,7 @@ export interface DerivedState {
 export interface DerivedSourceStates {
   vault: DerivedState
   keep: DerivedState
+  drive: DerivedState
   /** The repo rounds as a whole: last round time. */
   repos: DerivedState
   repo: Map<string, DerivedState>
@@ -281,6 +350,7 @@ const healthy = (): DerivedState => ({ state: 'healthy', reason: null, lastSyncA
 export function deriveSourceStates(events: readonly ActivityEvent[], repoNames: readonly string[]): DerivedSourceStates {
   const vault = healthy()
   const keep = healthy()
+  const drive = healthy()
   const repos = healthy()
   const repo = new Map<string, DerivedState>(repoNames.map((name) => [name, healthy()]))
   let beforeRound = new Map<string, Date | null>()
@@ -293,6 +363,11 @@ export function deriveSourceStates(events: readonly ActivityEvent[], repoNames: 
       const state = event.source === VAULT_SOURCE ? vault : keep
       if (event.kind === 'vault_synced' || event.kind === 'keep_imported') ok(state, event.at)
       else if (event.kind === 'sync_error') fail(state, event.message)
+      continue
+    }
+    if (event.source === DRIVE_SOURCE) {
+      if (event.kind === 'drive_pulled') ok(drive, event.at)
+      else if (event.kind === 'sync_error') fail(drive, event.message)
       continue
     }
     if (event.kind === 'repos_fetched') {
@@ -318,7 +393,7 @@ export function deriveSourceStates(events: readonly ActivityEvent[], repoNames: 
       fail(state, event.message)
     }
   }
-  return { vault, keep, repos, repo }
+  return { vault, keep, drive, repos, repo }
 }
 
 /** In-memory `ActivityStore` for tests; same trimming as the Postgres one. */

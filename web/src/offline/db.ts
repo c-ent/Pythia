@@ -3,11 +3,11 @@ import Dexie, { type EntityTable } from 'dexie'
 /**
  * The browser's offline copy of the index (R11), in IndexedDB via Dexie.
  * Read-only: the server is the only writer, through `syncOnce` (sync.ts).
- * Obsidian, Keep and chat notes are always cached; repo files only for
- * pinned repos.
+ * Obsidian, Keep, Drive and chat documents are always cached; repo files only
+ * for pinned repos.
  */
 
-export type CachedSourceKind = 'obsidian' | 'keep' | 'repo' | 'chat'
+export type CachedSourceKind = 'obsidian' | 'keep' | 'repo' | 'chat' | 'gdrive'
 
 export interface CachedDocument {
   id: number
