@@ -113,6 +113,31 @@ Pythia (named after the Oracle at Delphi) is a private, read-only Personal Knowl
   - Given a valid Keep Takeout zip, when uploaded, then Keep notes appear in search with `allow_llm = true`, and a second upload replaces rather than duplicates them.
   - Given a 30-question eval JSON file, when the eval script runs, then it outputs per-question pass/fail and aggregate `hit@5`.
 
+#### R19. Google Drive Documents Ingestion (owner decisions 2026-11-27)
+
+All points below are owner decisions (2026-11-27); no open questions.
+
+- Behaviour:
+  - One-way `rclone sync` of the owner's My Drive only (owner decision: not "Shared with me", not shared drives) into the server's read-only `/data/gdrive` directory: at startup, every 30 minutes, and on Sync now. Access is the owner's own Google login through rclone with the read-only scope (`drive.readonly`), kept in the host's rclone config like the Dropbox remote; Pythia never writes to Drive. rclone exports Google Docs as `.docx`, Google Sheets as `.xlsx` and Google Slides as `.pptx`.
+  - Indexed documents: Google Docs and Word `.docx`, Google Sheets and Excel `.xlsx`, Google Slides and PowerPoint `.pptx`, `.pdf` with a text layer, `.md` and `.txt`, plus (owner decision) old Office `.doc` / `.xls` / `.ppt`, OpenDocument `.odt` / `.ods` / `.odp`, `.rtf` and `.csv`.
+  - No size cap (owner decision): every document is indexed in full, whatever its size. Not indexed, counted as skipped: files that are not documents (images, audio, video, archives, executables), Google Forms, Drawings and Sites, PDFs without text, encrypted or password-protected files.
+  - Chunking: `.docx` headings become `heading_path` and reuse the R3 heading chunker (~300–500 tokens); `.md` and `.txt` use R3 directly; PDF text is split by page, then by the same token target; each sheet of a spreadsheet is a section (`File > Sheet`) split into row windows, with the header row repeated at the top of every chunk; each slide is a section (`File > Slide N: title`) holding its text and speaker notes; a `.csv` is one sheet. `.doc`, `.rtf` and `.odt` are converted to `.docx`, `.xls` and `.ods` to `.xlsx`, and `.ppt` and `.odp` to `.pptx` with LibreOffice headless in the app container, then chunked the same way; a file that fails to convert is skipped and counted.
+  - Each file is one `documents` row in a source of the new kind `gdrive` (added to `sources.kind`, owner OK): `path` is relative to the Drive root, `title` is the file name without extension.
+  - Same pipeline as the vault: file blocklist, `content_hash` skip, secrets scan on every chunk before embedding or insert (count-only logging), `search_document: ` prefix, `embed_model` per chunk. Files gone from the mirror are deleted from the index; an empty or missing mirror deletes nothing (like `keptEmptyVault`).
+  - `allow_llm = true` by default, like Obsidian notes and Keep (owner decision). The Gemini rules list (R16) gets a Drive rule kind that locks either the whole Drive or one Drive folder and its subfolders; applying it changes `allow_llm` without re-embedding.
+  - Search, Ask, `/mcp` and the source filter accept `gdrive`. The PWA shows a Drive filter chip, a Drive card on Sources and sync (state, last pull, file count, skipped count, last error), and activity events (pulled with changed count, skipped count, blocked secrets as a count only). Drive text is cached offline like notes (owner decision) and counts toward the R11 ~100 MB target.
+  - Work material: the whole Drive is read, so work documents could come in. Folders on the Drive `exclude` list (owner decision; `"exclude"` in `/config/gdrive.json`, edited on the host like the repo config) are never pulled (passed to rclone as `--exclude`) and never indexed; adding an already indexed folder to the list removes its documents at the next round. A `gdrive` source is never `kind = 'work'`.
+- Edge cases: Drive unreachable (keep the index, source state `error`, retry next round); Google login revoked or expired (same, and Sources and sync says the Drive login must be renewed on the host); two files with the same name in one Drive folder (rclone keeps one; log the duplicate count); file renamed or moved (old path removed, new path indexed); Doc with no headings; very large file (indexed in full; on the 1 OCPU host it may take hours to embed, and searches still go first per T51); spreadsheet with thousands of rows or empty sheets; slide with no title; Sync now pressed during a scheduled round (no double run).
+- Acceptance criteria:
+  - Given a Drive with a Google Doc, a Word file, a Google Sheet, an Excel file, a Google Slides deck, a PowerPoint file and a PDF with text, when a round runs, then all of them appear in search with source `gdrive` and heading-, sheet-, slide- or page-scoped chunks, and an image in the same folder is skipped and counted.
+  - Given a Drive Gemini rule on a folder, when saved, then that folder's documents get `allow_llm = false` and Ollama is not called.
+  - Given a `.doc`, an `.odt`, an `.ods`, a `.ppt`, an `.rtf` and a `.csv` in My Drive, when a round runs, then each is found in search, and a file that fails to convert is skipped and counted.
+  - Given a folder on the Drive `exclude` list, when a round runs, then none of its files are pulled or indexed, and a file only shared with the owner (not in My Drive) is never indexed.
+  - Given an unchanged file, when the next round runs, then Ollama is not called for it.
+  - Given a file deleted from the Drive folder, when the next round runs, then its document is removed; given an empty or missing mirror, then nothing is deleted.
+  - Given a Doc with a planted fake key, when indexed, then that chunk is not stored and the logs contain only the count.
+  - Given the Google login is revoked, when a round runs, then existing Drive results stay searchable and Sources and sync shows the error.
+
 ### Search, Ask & MCP
 
 #### R4. Hybrid Search & Retrieval API
@@ -285,6 +310,94 @@ Pythia (named after the Oracle at Delphi) is a private, read-only Personal Knowl
 - Acceptance criteria:
   - Given Sync now, when a vault file changed since the last scan, then it is indexed without waiting for the watcher or the schedule, and an activity event records the changed count.
   - Given a blocked secret during a fetch, when Sources and sync is opened, then the event shows only the blocked count.
+
+### Knowledge map (owner request 2026-11-27)
+
+#### R20. Knowledge Map: Related Documents, Backlinks, Graphs & Topic Map (owner decisions 2026-11-27)
+
+Owner answers 2026-11-27: build after Google Drive (R19); all parts (Related, backlinks, local graph, topic map, whole-vault graph); the mind map is the classic kind, with a centre and many connections; all sources, but repos only through their README and docs, not code; leave out `LICENSE`, `package.json` and similar. Every other detail was left to the builder's recommendation ("do what's better"); those choices are recorded below and can be changed by the owner before the row that uses them is built. Rows T65 to T76b.
+
+- Purpose: show how notes, Keep notes, Drive documents and repo docs connect, including across sources, which have no explicit links between them.
+- Map documents (the only documents that appear anywhere in the map):
+  - Every Obsidian note, Keep note and Drive document.
+  - From repos, only `README*` files at any depth, Markdown and text files under `docs/` or `doc/`, and `CHANGELOG*` and `CONTRIBUTING*` (owner decision: no code files).
+  - Never: `LICENSE*`, `COPYING*`, lockfiles (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `Cargo.lock`, `poetry.lock`, `composer.lock`), `package.json`, config files (`*.config.*`, `tsconfig*.json`, `.eslintrc*`, `.prettierrc*`, `.editorconfig`, `Dockerfile`, `docker-compose*.yml`, CI files under `.github/`), `kind = 'work'` documents, Drive `exclude` folders (R19), and documents with no stored chunks (all dropped by the secrets scanner).
+  - Repo code stays searchable in Search, Ask and `/mcp` exactly as today; it is only left out of the map.
+- Connections:
+  - Semantic (all sources): a document's vector is the mean of its chunk embeddings, stored in `document_vectors` with its `embed_model`. Each map document keeps its top 8 neighbours above a cut-off score in `document_neighbours`, compared only with documents of the same `embed_model` (D5). Stored at index time and refreshed after each index round for changed documents and the documents that listed them, so reading the map never waits on Ollama. The cut-off starts at cosine similarity 0.6 and is tuned on real data in T67b.
+  - Explicit (Obsidian, Keep): wikilinks `[[Note]]`, `[[Note|alias]]`, `[[Note#Heading]]`, embeds `![[Note]]`, Markdown links to other notes, inline `#tags` and frontmatter `tags`, and Keep labels. Stored in `links`. Targets resolve by path, then title, then frontmatter `aliases`; when two notes share a title, the one in the same folder wins, then the shorter path. A target that resolves to nothing is kept as a ghost.
+  - Structural: a repo is one node, and its map documents hang off it. Tags are nodes of their own, linked to every note that carries them.
+- Views:
+  - Related panel on the document page: up to 8 semantic neighbours from any source, each with source label, title, a score band (strong, medium, weak) and the neighbour's best matching passage, which is the reason for the link.
+  - Backlinks panel on the document page. Wikilinks to other notes become links in the viewer; a ghost target shows as muted text (T69; a link the server has not resolved, for example offline, stays text, see `ui.md`).
+  - Local graph on the document page: the document and everything 2 steps out (links, tags, repo node, semantic neighbours, ghost nodes in grey). Force-directed layout. Works offline (T72).
+  - Map screen (new navigation item), topic map: the owner types a topic and picks the usual filter chips. Hybrid search (R4) returns the top 40 map documents. They are grouped in plain TypeScript (no dependency) into 3 to 7 branches by embedding similarity, and a branch with more than 8 documents is split once more, so the map is at most 2 levels deep. Labels are keywords taken from titles, heading paths and text: instant and no LLM call, so no text goes to Gemini. Layout is a radial tree: topic in the centre, branches around it, documents as leaves. Clicking a branch builds a new map around its label; clicking a leaf opens the document. "Copy as Markdown" copies the map as a nested outline. Online only.
+  - Map screen, whole-vault graph: every map document, tag and repo; edges are explicit links plus each document's top 3 neighbours; force-directed, with the filter chips.
+  - All graphs: colour by source, node size by number of links, click to open, hover (long press on touch) for a preview, zoom and pan. Every graph has a list or nested-list view. Under 640 px wide (iPhone, iPad in split view) the list view is the default and a toggle shows the graph.
+  - Graphs use Cytoscape.js (MIT; owner confirmed the dependency and the `document_vectors`, `document_neighbours` and `links` tables on 2026-11-27), lazy-loaded in its own chunk so search and the app shell do not load it.
+- REST (built in T68c, T70, T72; web clients in `web/src/api/`):
+  - `GET /api/documents/:id/backlinks?limit=` gives `{ documentId, supported, backlinks: [{ id, source, sourceLabel, title, allowLlm, count, display, heading, passage: { headingPath, text } | null }], outgoing: [{ target, heading, display, documentId | null }] }`. Backlinks sorted by title then path. `supported: false` for repo and Drive documents. `outgoing` holds the note's wikilink, embed and Markdown note links; `documentId: null` is a ghost. `target` is the link as stored in `links.target` (wikilink target without heading, Markdown path decoded); the viewer matches it with `noteLinkKey` (`web/src/document/noteLinks.ts`), which mirrors the server's `nameKey`. Passage text is plain text.
+  - `GET /api/documents/:id/graph?sources=&repo=` gives `{ documentId, inMap, center, nodes: [{ id, type: document|tag|repo|ghost, label, documentId, source, sourceLabel, path, allowLlm, links, depth }], edges: [{ source, target, kind: link|tag|repo|neighbour, score }], truncated }`. `inMap: false` with no nodes for repo code and boilerplate; 404 for missing, switched-off or `work` documents.
+  - `GET /api/graph` is the whole-vault graph: same shape without `depth`, `documentId` and `center`, and no ghosts.
+  - Sync rows (`/api/sync`) carry `inMap`, `neighbours` (`{ id, score }`) and `links` (`{ kind, target, heading, display }`), so the device builds Related, backlinks and the local graph offline (`web/src/offline/offlineMap.ts`).
+- MCP: `related_documents`, `backlinks` and `topic_map` tools, sharing `server/src/search/` with REST. `allow_llm = false` text is withheld like in `search`.
+- Rules that already apply:
+  - Text of `allow_llm = false` documents never goes into a Gemini prompt, including prompts that label topic map groups (R8, D4).
+  - `kind = 'work'` never appears; Drive `exclude` folders never appear (R2, R19).
+  - Connections are computed only from stored, already scanned chunks (R2); nothing is written back to any source.
+  - Source and repo filters are applied inside each query that ranks documents, not only on the outer result (R4).
+  - Keyboard navigable, >= 4.5:1 contrast in both themes, >= 44x44px touch targets; every graph has a list alternative for screen readers.
+- Edge cases: wikilink to a note that does not exist; two notes with the same title; a note renamed or moved (its old links go); a document with no stored chunks (all dropped by the secrets scanner); boilerplate files (`LICENSE`, lockfiles, `package.json`, configs) that cluster together; chunks with a different `embed_model` or dimension (D5); a very large graph; offline; Ollama busy or down (Related still answers because vectors are stored; topic map needs a query embed).
+- Acceptance criteria:
+  - Given a repo with `README.md`, `docs/setup.md`, `src/index.ts`, `LICENSE` and `package.json`, when the map is built, then only the README and the setup doc are in it, and `src/index.ts` is still found in Search.
+  - Given a Keep note and an Obsidian note about the same subject with no link between them, when the Obsidian note is opened, then the Keep note is in its Related panel.
+  - Given note A with `[[B]]`, when B is opened, then A is in B's backlinks.
+  - Given a `kind = 'work'` document or a file on the boilerplate list, when any related list, graph or topic map is built, then it is not in it.
+  - Given an `allow_llm = false` document in a topic map, when group labels are made, then its text is not in any Gemini request.
+  - Given a topic, when the topic map is built, then every leaf opens its document and the map can be read as a nested list.
+
+### Server health & Oracle plan (owner request 2026-11-27)
+
+#### R21. Server Health, Connection Checks & Oracle Plan Usage (owner decisions 2026-11-27)
+
+Owner answers 2026-11-27: show every detail about the server in the app, in Settings; use the Oracle Cloud API for plan usage (not only the limits written into the app); a red "something is broken" dot in the top bar as well as the Settings page; build after the Drive rows and the knowledge map (R19, R20). Other details are the builder's recommendation, recorded below; the owner can change them before the row that uses them is built. Rows T77 to T83b; the rows that need the owner's input (Oracle access, the manual check) come last.
+
+- Host (read inside the app container, which shares the host kernel; no new access needed):
+  - CPU: core count, load average (1, 5, 15 min) and busy % over the last minute, sampled every 10 s in the background.
+  - Memory: host total, used and available (`/proc/meminfo`), and the memory Ollama holds for loaded models (`GET /api/ps`).
+  - Disk: size, used and free of the filesystem the app runs on (`fs.statfs`), and the Postgres database size (`pg_database_size`).
+  - Uptime of the host and the app, app version and git commit.
+- Connection checks, each `ok` or `broken` with a short reason (an error class or a status code, never a secret or note text), each with its own 2 s timeout, results cached 30 s:
+  - Postgres answers `SELECT 1`.
+  - Ollama answers and `nomic-embed-text` is installed; whether it is loaded right now.
+  - Gemini key: the existing R16/R18 availability (`off` when no key is set, which is not broken).
+  - `GITHUB_TOKEN`: valid (`GET /rate_limit`, which costs no quota) and the remaining core rate limit; `off` when no token is set.
+  - Vault folder: mounted and readable (`off` when no `PYTHIA_VAULT_PATH`).
+  - Sources: the R18 source states (vault, github, Drive); any source in `error` counts as broken.
+  - Oracle API: answers with the configured key (`off` when not configured).
+- Oracle plan usage (Oracle Cloud Infrastructure API, read-only, refreshed every 15 minutes in the background and kept in memory; the page shows the last good values with "as of", never waits on Oracle):
+  - Ampere A1 OCPUs and memory used by all instances in the tenancy against the Always Free 4 OCPU / 24 GB.
+  - Block storage: boot and block volumes in the tenancy against 200 GB; volume backups against 5.
+  - Outbound data this month against 10 TB.
+  - Cost this month from the Usage API (expected $0; anything above $0 is a warning).
+  - Reclaim risk: Oracle may reclaim an Always Free instance when over 7 days its CPU 95th percentile, its network use and (A1 only) its memory are all under 20%. From the Monitoring API the page shows the three 7-day values and `at risk` when all three are under 20%.
+  - The builder confirms the exact API operations, metric names and limit names against Oracle's documentation in T81 and writes them here.
+- Oracle access and secrets:
+  - A dedicated Oracle user in its own group with read-only policies (inspect or read only: instances, volumes, metrics, usage reports, limits); never manage or use permissions. The setup steps are shown in Settings › Server and in T83b.
+  - Configuration: `PYTHIA_OCI_TENANCY`, `PYTHIA_OCI_USER`, `PYTHIA_OCI_FINGERPRINT`, `PYTHIA_OCI_REGION` in `.env`, and the API private key as a file on the existing `/config` mount (`PYTHIA_OCI_KEY_FILE`, default `/config/oci_api_key.pem`), never in the database, never in git. Any value missing means Oracle is `off`, not broken.
+  - Requests are signed with Node's built-in `crypto` (Oracle's RSA-SHA256 request signature), so no Oracle SDK dependency.
+  - The key and the OCIDs are never returned by any route or written to logs or activity events; errors are logged by class only. Oracle calls go only to Oracle's own endpoints for the configured region.
+- API: `GET /api/status/server`, behind the normal session (R5), not on `/mcp`. Returns host, checks, Oracle usage and an overall `health`: `broken` when any check is broken, `warning` when any plan value is at or over 90% of its limit, cost is above $0, or reclaim risk is `at risk`, else `ok`. `GET /api/status` (R18) gains the same `health` field only, so the top bar reads it without loading the full server status.
+- Views:
+  - Settings › Server: gauges for CPU, memory and disk; the connection checks list; Oracle plan usage with each value against its limit; reclaim risk with the three 7-day values; "as of" times; a Refresh button that reruns the checks (Oracle values keep their 15-minute refresh).
+  - Top bar: a red dot when `health` is `broken`, with a label for screen readers naming the broken checks; selecting it opens Settings › Server. `warning` shows no dot in the top bar, only in Settings › Server (builder choice; the owner can ask for an amber dot).
+  - Offline: Settings › Server says it needs the server; the top bar shows no dot.
+- Edge cases: Oracle API down or rate limited (keep the last good values, check shows broken with the status code); key file missing or unreadable; clock skew rejected by Oracle's signature check (reason says so); Ollama busy embedding (check still answers; the 2 s timeout is the reason when it does not); Docker reporting the overlay filesystem (disk is the filesystem backing it); a second instance in the tenancy (A1 and storage totals cover the whole tenancy, host gauges only this machine).
+- Acceptance criteria:
+  - Given the Ollama container stopped, when any page is open, then within 60 s the top bar shows the red dot and Settings › Server shows Ollama broken with a reason.
+  - Given Oracle configured with a read-only user, when Settings › Server is opened, then A1 OCPUs, memory and block storage match the Oracle console.
+  - Given no Oracle values in `.env`, when Settings › Server is opened, then Oracle shows `off` with the setup steps, and `health` is not `broken` because of it.
+  - Given any response or log line from the server, then it contains no Oracle key, fingerprint or OCID.
 
 ## Constraints
 
