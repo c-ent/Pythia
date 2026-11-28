@@ -11,12 +11,14 @@ import { dropTestDatabase } from './testDatabase.js'
 describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('activity against Postgres', () => {
   const dbName = `pythia_activity_test_${process.pid}_${Date.now()}`
   let admin: pg.Client
+  let adminConnected = false
   let pool: pg.Pool
 
   beforeAll(async () => {
     const db = loadConfig(process.env).db
     admin = new pg.Client({ ...db, database: 'postgres' })
     await admin.connect()
+    adminConnected = true
     await admin.query(`CREATE DATABASE "${dbName}"`)
     pool = new pg.Pool({ ...db, database: dbName })
     pool.on('error', () => {})
@@ -30,7 +32,7 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('activity against Postgres'
 
   afterAll(async () => {
     await pool?.end()
-    if (admin !== undefined) {
+    if (adminConnected) {
       await dropTestDatabase(admin, dbName)
       await admin.end()
     }
@@ -53,7 +55,8 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('activity against Postgres'
   })
 
   it('stores a count-only secrets event and a short error reason', async () => {
-    const activity = createActivityLog(createPgActivityStore(pool))
+    let clock = Date.UTC(2026, 10, 27)
+    const activity = createActivityLog(createPgActivityStore(pool), { now: () => (clock += 1000) })
     await activity.record({ kind: 'secrets_blocked', source: 'obsidian', count: 3 })
     await activity.record({ kind: 'sync_error', source: 'pythia', message: 'fetch failed: GitError' })
     const events = await activity.list()

@@ -96,8 +96,9 @@ function fakeRclone() {
 }
 
 function setup(options: { exclude?: string[] | null } = {}) {
+  let clock = Date.UTC(2026, 10, 27)
   const mem = memoryStore()
-  const activity = createActivityLog(createMemoryActivityStore())
+  const activity = createActivityLog(createMemoryActivityStore(), { now: () => (clock += 1000) })
   const recorder = createDriveActivity(activity, () => {})
   const indexer = createDriveIndexer({
     root,
@@ -230,7 +231,7 @@ describe('Drive schedule and Sync now (T61)', () => {
       driveRound: () => scheduler.state(),
       log: () => {},
     })
-    await vi.waitFor(() => expect(rclone.calls).toHaveLength(1))
+    await vi.waitFor(() => expect(rclone.calls).toHaveLength(1), { timeout: 5000 })
     expect((await status.status()).syncing).toBe(true)
     expect((await status.status()).sources.find((source) => source.id === DRIVE_SOURCE)!.syncing).toBe(true)
     expect(sync.syncNow()).toEqual({ started: true, vault: 'off', repos: 'off', drive: 'started' })

@@ -280,7 +280,7 @@ describe('SourcesScreen', () => {
   })
 
   it('polls while the server syncs and stops once it is done', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.useFakeTimers()
     const { count } = stubApi({
       'GET /api/status': [
         statusOf({ syncing: true, sources: [obsidian({ syncing: true }), github(), keep()] }),
@@ -288,13 +288,16 @@ describe('SourcesScreen', () => {
       ],
     })
     render(<SourcesScreen />)
-    expect((await findCard('Obsidian vault')).getByText('Syncing…')).toBeTruthy()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(card('Obsidian vault').getByText('Syncing…')).toBeTruthy()
     expect(syncAll().disabled).toBe(true)
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(SYNC_POLL_MS)
     })
-    expect(await card('Obsidian vault').findByText(/^Healthy · /)).toBeTruthy()
+    expect(card('Obsidian vault').getByText(/^Healthy · /)).toBeTruthy()
     expect(syncAll().disabled).toBe(false)
     expect(count('GET /api/status')).toBe(2)
 
