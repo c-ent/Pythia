@@ -1,7 +1,44 @@
 import { MonitorSmartphone, UserRound } from 'lucide-react'
+import type { ServerHealth } from '../api/status'
 import { useProfile } from '../profile/profile'
 import { plural } from '../repos/format'
 import { followLink, settingsPath } from '../router'
+
+/** Screen-reader label for the top-bar broken-health indicator (R21). */
+function brokenHealthLabel(brokenChecks: readonly string[]): string {
+  return brokenChecks.length > 0 ? `Server health broken: ${brokenChecks.join(', ')}` : 'Server health broken'
+}
+
+/**
+ * Red dot shown in the top bar only when online, reachable, and `health === 'broken'`
+ * (R21, T80). `warning` and offline show no dot; clicking opens Settings › Server.
+ */
+export function HealthDot({
+  health,
+  online,
+  reachable,
+  brokenChecks = [],
+}: {
+  health?: ServerHealth
+  online: boolean
+  reachable?: boolean
+  brokenChecks?: readonly string[]
+}) {
+  if (!online || reachable === false || health !== 'broken') return null
+  const path = settingsPath('server')
+  const label = brokenHealthLabel(brokenChecks)
+  return (
+    <a
+      href={path}
+      onClick={(event) => followLink(event, path)}
+      aria-label={label}
+      title={label}
+      className="inline-flex size-11 items-center justify-center rounded-full transition-colors hover:bg-surface/75"
+    >
+      <span aria-hidden="true" className="size-2.5 rounded-full bg-danger" />
+    </a>
+  )
+}
 
 /**
  * Online, Offline, or "Server unreachable" when this device has a connection
@@ -42,6 +79,8 @@ export function Avatar({ name, className = '' }: { name?: string; className?: st
 export function TopBar({
   online,
   reachable,
+  health,
+  brokenChecks,
   devices,
   gemini,
   name,
@@ -49,6 +88,8 @@ export function TopBar({
   online: boolean
   /** From `GET /api/status`; undefined until it answers or fails. */
   reachable?: boolean
+  health?: ServerHealth
+  brokenChecks?: readonly string[]
   devices?: number
   gemini?: boolean
   name?: string
@@ -73,6 +114,7 @@ export function TopBar({
         </a>
       </div>
       <div className="flex flex-wrap items-center gap-2.5">
+        <HealthDot online={online} reachable={reachable} health={health} brokenChecks={brokenChecks} />
         <OnlinePill online={online} reachable={reachable} />
         {gemini === undefined ? null : (
           <span className="inline-flex h-9 items-center rounded-full bg-surface/75 px-3.5 text-sm text-ink">

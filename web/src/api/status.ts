@@ -77,6 +77,8 @@ export interface DocumentCounts {
   gdrive: number
 }
 
+export type ServerHealth = 'ok' | 'warning' | 'broken'
+
 export interface ServerStatus {
   reachable: boolean
   checkedAt: string
@@ -85,6 +87,7 @@ export interface ServerStatus {
   documents: DocumentCounts
   /** A Sync now (or Re-sync) run is in progress. Startup, watcher and scheduled runs do not set it. */
   syncing: boolean
+  health: ServerHealth
   /** obsidian, github, keep, then gdrive (Google Drive) on servers that have it. */
   sources: SourceHealth[]
   /** Configured repos in config order. */
@@ -208,6 +211,7 @@ export function parseServerStatus(body: Record<string, unknown>): ServerStatus {
       gdrive: count(documents.gdrive),
     },
     syncing: body.syncing,
+    health: body.health === 'broken' ? 'broken' : body.health === 'warning' ? 'warning' : 'ok',
     sources: body.sources.map(parseSource).filter(present),
     repos: Array.isArray(body.repos) ? body.repos.map(parseRepo).filter(present) : [],
     activity: body.activity === undefined ? [] : parseActivity(body.activity),

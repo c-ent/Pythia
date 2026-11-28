@@ -1,11 +1,44 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppShell } from './AppShell'
 import { SIDEBAR_KEY } from './nav'
 
+const json = (status: number, body: unknown) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+
+function statusPayload(health: 'ok' | 'warning' | 'broken' = 'ok') {
+  return {
+    reachable: true,
+    checkedAt: '2026-11-28T00:00:00.000Z',
+    gemini: { available: true },
+    devices: { active: 1 },
+    documents: { obsidian: 1, keep: 0, repo: 0, chat: 0, gdrive: 0 },
+    syncing: false,
+    health,
+    sources: [],
+    repos: [],
+    activity: [],
+  }
+}
+
+function serverDetailsPayload(checks: Record<string, { state: 'ok' | 'broken' | 'off'; reason: string | null }>) {
+  return {
+    sampledAt: '2026-11-28T00:00:00.000Z',
+    checkedAt: '2026-11-28T00:00:00.000Z',
+    health: 'broken',
+    cpu: { cores: 4, loadAverage: [0.1, 0.2, 0.3], busyPercent: 10 },
+    memory: { totalBytes: 1000, availableBytes: 500, usedBytes: 500 },
+    disk: { totalBytes: 2000, freeBytes: 1000, usedBytes: 1000 },
+    databaseBytes: 100,
+    uptimeSeconds: { host: 1000, app: 100 },
+    version: { app: '1.0.0', commit: null },
+    checks,
+  }
+}
+
 // jsdom applies no CSS, so the sidebar, the rail and the phone tab bar are all
 // in the tree; each test picks the layout it means.
-function layout(name: 'desktop' | 'tablet' | 'mobile'): HTMLElement {
+function layout(name: 'desktop' | 'tablet' | 'mobile' | 'topbar' | 'mobile-top'): HTMLElement {
   const element = document.querySelector<HTMLElement>(`[data-layout="${name}"]`)
   if (element === null) throw new Error(`No ${name} layout`)
   return element
@@ -181,5 +214,80 @@ describe('AppShell', () => {
     })
     expect(screen.queryByText(/You’re offline. Search and Ask need a connection./)).toBeNull()
     online.mockRestore()
+  })
+
+  it('shows the top bar red dot naming broken checks, opens Settings › Server, and hides it offline', async () => {
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/status') return json(200, statusPayload('broken'))
+      if (url === '/api/status/server') {
+        return json(
+          200,
+          serverDetailsPayload({
+            postgres: { state: 'ok', reason: null },
+            ollama: { state: 'broken', reason: 'TimeoutError' },
+            vault: { state: 'broken', reason: 'EACCES' },
+          }),
+        )
+      }
+      return json(404, {})
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    render(<AppShell onSignOut={() => {}} />)
+
+    expect(
+      await within(layout('topbar')).findByRole('link', {
+        name: 'Server health broken: Ollama, Vault folder',
+      }),
+    ).toBeTruthy()
+    expect(
+      within(layout('mobile-top')).getByRole('link', {
+        name: 'Server health broken: Ollama, Vault folder',
+      }),
+    ).toBeTruthy()
+
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    act(() => {
+      window.dispatchEvent(new Event('offline'))
+    })
+    expect(screen.queryByRole('link', { name: /Server health broken/ })).toBeNull()
+
+    online.mockReturnValue(true)
+    act(() => {
+      window.dispatchEvent(new Event('online'))
+    })
+    const backDot = await within(layout('topbar')).findByRole('link', {
+      name: 'Server health broken: Ollama, Vault folder',
+    })
+    expect(backDot).toBeTruthy()
+    fireEvent.click(backDot)
+    expect(window.location.pathname).toBe('/settings/server')
+    expect(await screen.findByRole('heading', { level: 2, name: 'Server' })).toBeTruthy()
+    online.mockRestore()
+  })
+
+  it('shows no top bar red dot when health is ok or warning without fetching /api/status/server', async () => {
+    let currentHealth: 'ok' | 'warning' = 'ok'
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === '/api/status') return json(200, statusPayload(currentHealth))
+      return json(404, {})
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    const { rerender } = render(<AppShell onSignOut={() => {}} />)
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/status', expect.anything()))
+    expect(screen.queryByRole('link', { name: /Server health broken/ })).toBeNull()
+
+    currentHealth = 'warning'
+    act(() => {
+      window.dispatchEvent(new Event('pythia:status'))
+    })
+    await waitFor(() =>
+      expect(fetch.mock.calls.filter(([url]) => String(url) === '/api/status').length).toBeGreaterThanOrEqual(2),
+    )
+    rerender(<AppShell onSignOut={() => {}} />)
+    expect(screen.queryByRole('link', { name: /Server health broken/ })).toBeNull()
+    expect(fetch.mock.calls.some(([url]) => String(url) === '/api/status/server')).toBe(false)
   })
 })

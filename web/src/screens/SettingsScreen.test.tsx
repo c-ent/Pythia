@@ -34,9 +34,16 @@ describe('SettingsScreen', () => {
     expect(screen.getByRole('region', { name: 'Kept away from Gemini' })).toBeTruthy()
   })
 
-  it('no longer has a Storage tab', () => {
+  it('shows the Server section', () => {
+    render(<SettingsScreen section="server" onSignOut={() => {}} />)
+    expect(screen.getByRole('link', { name: 'Server' }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('heading', { level: 2, name: 'Server' })).toBeTruthy()
+  })
+
+  it('includes the Server tab and no longer has a Storage tab', () => {
     render(<SettingsScreen section="profile" onSignOut={() => {}} />)
     const tabs = screen.getByRole('navigation', { name: 'Settings' })
+    expect(tabs.textContent).toContain('Server')
     expect(tabs.textContent).not.toContain('Storage')
   })
 })

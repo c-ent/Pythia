@@ -21,8 +21,11 @@ describe('router', () => {
     ['/pinned', 'pinned'],
     ['/map', 'map'],
     ['/sources', 'sources'],
+
+
     ['/settings/', 'settings'],
     ['/settings/gemini', 'settings'],
+    ['/settings/server', 'settings'],
     ['/import', 'search'],
     ['/nope', 'search'],
     ['', 'search'],
@@ -54,7 +57,7 @@ describe('router', () => {
     expect(redirectFor(from)).toBe(to)
   })
 
-  it.each(['/', '/sources', '/ask', '/settings/gemini', '/doc/3', '/repos/pythia', '/import/extra'])(
+  it.each(['/', '/sources', '/ask', '/settings/gemini', '/settings/server', '/doc/3', '/repos/pythia', '/import/extra'])(
     'leaves the current address %s alone',
     (path) => {
       expect(redirectFor(path)).toBeNull()

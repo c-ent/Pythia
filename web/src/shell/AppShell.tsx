@@ -25,6 +25,7 @@ import { NAV, SETTINGS_SECTION_LABELS, readSidebarCollapsed, saveSidebarCollapse
 import { MobileTabBar, MobileTopBar, Rail, Sidebar, type CurrentFor } from './Navigation'
 import { isNewSearchShortcut, startNewSearch } from './newSearch'
 import { TopBar } from './TopBar'
+import { useBrokenChecks } from './useBrokenChecks'
 import { useDeviceCount } from './useDeviceCount'
 import { useGeminiStatus } from './useGeminiStatus'
 
@@ -52,6 +53,8 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
   // The status says whether Gemini is usable (a key is set and the last call
   // did not fail on it); until it arrives, or if it fails, the key status stands in.
   const server = useServerStatus(online, { refreshMs: STATUS_REFRESH_MS })
+  const broken = online && server.reachable !== false && server.status?.health === 'broken'
+  const brokenChecks = useBrokenChecks(broken, server.status?.checkedAt)
   const gemini = server.status?.gemini.available ?? geminiConfigured
   const pinnedRepos = usePinnedRepos()
   useOfflineSync(true, pinnedRepos)
@@ -168,8 +171,20 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
       />
 
       <div className="panel-glow flex min-h-dvh min-w-0 flex-1 flex-col md:min-h-[calc(100dvh-1.5rem)] md:rounded-panel">
-        <MobileTopBar online={online} reachable={server.reachable} />
-        <TopBar online={online} reachable={server.reachable} devices={devices} gemini={gemini} />
+        <MobileTopBar
+          online={online}
+          reachable={server.reachable}
+          health={server.status?.health}
+          brokenChecks={brokenChecks}
+        />
+        <TopBar
+          online={online}
+          reachable={server.reachable}
+          health={server.status?.health}
+          brokenChecks={brokenChecks}
+          devices={devices}
+          gemini={gemini}
+        />
         <main
           id="main"
           tabIndex={-1}

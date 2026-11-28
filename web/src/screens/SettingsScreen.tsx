@@ -5,6 +5,7 @@ import { SETTINGS_SECTION_LABELS } from '../shell/nav'
 import { ConnectSection } from './settings/ConnectSection'
 import { GeminiSection } from './settings/GeminiSection'
 import { ProfileSection } from './settings/ProfileSection'
+import { ServerSection } from './settings/ServerSection'
 
 /**
  * Settings opens one section at a time, each at `/settings/<section>`. Offline
@@ -40,6 +41,7 @@ export function SettingsScreen({ section, onSignOut }: { section: SettingsSectio
         {section === 'profile' ? <ProfileSection onSignOut={onSignOut} /> : null}
         {section === 'gemini' ? <GeminiSection /> : null}
         {section === 'devices' ? <ConnectSection onSignedOut={onSignOut} /> : null}
+        {section === 'server' ? <ServerSection /> : null}
       </div>
     </>
   )
