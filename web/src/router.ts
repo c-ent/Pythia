@@ -1,7 +1,10 @@
 import { useSyncExternalStore, type MouseEvent } from 'react'
+import type { SourceKind } from './api/search'
 
 export const ROUTES = ['search', 'ask', 'repos', 'pinned', 'map', 'sources', 'settings'] as const
 export type RouteName = (typeof ROUTES)[number]
+
+export const BROWSABLE_SOURCES = ['obsidian', 'repo', 'keep', 'gdrive'] as const
 
 export const SETTINGS_SECTIONS = ['profile', 'gemini', 'devices', 'server'] as const
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
@@ -72,6 +75,42 @@ export function documentPath(id: number): string {
   return `/doc/${id}`
 }
 
+function decodeSegment(raw: string): string | null {
+  try {
+    const decoded = decodeURIComponent(raw).trim()
+    return decoded === '' ? null : decoded
+  } catch {
+    return null
+  }
+}
+
+/** The repo name in `/repos/<name>`, or null for `/repos` or any other path. */
+export function repoNameFromPath(pathname: string): string | null {
+  const parts = segments(pathname)
+  if (parts.length !== 2 || parts[0] !== 'repos' || parts[1] === undefined) return null
+  return decodeSegment(parts[1])
+}
+
+export function repoPath(name: string, folder?: string): string {
+  const base = `/repos/${encodeURIComponent(name)}`
+  if (folder === undefined || folder === '') return base
+  return `${base}?${new URLSearchParams({ folder }).toString()}`
+}
+
+/** The source kind in `/sources/<kind>`, or null for `/sources` or an unknown segment. */
+export function sourceKindFromPath(pathname: string): SourceKind | null {
+  const parts = segments(pathname)
+  if (parts.length !== 2 || parts[0] !== 'sources' || parts[1] === undefined) return null
+  if (parts[1] === 'github') return 'repo'
+  return (BROWSABLE_SOURCES as readonly string[]).includes(parts[1]) ? (parts[1] as SourceKind) : null
+}
+
+export function sourceBrowsePath(kind: SourceKind, folder?: string): string {
+  const base = `/sources/${kind}`
+  if (folder === undefined || folder === '') return base
+  return `${base}?${new URLSearchParams({ folder }).toString()}`
+}
+
 function subscribe(onChange: () => void): () => void {
   window.addEventListener('popstate', onChange)
   return () => window.removeEventListener('popstate', onChange)
@@ -81,7 +120,7 @@ function subscribe(onChange: () => void): () => void {
 const IN_APP = { pythia: true }
 
 export function navigate(path: string): void {
-  if (window.location.pathname === path) return
+  if (`${window.location.pathname}${window.location.search}` === path) return
   window.history.pushState(IN_APP, '', path)
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
@@ -114,6 +153,15 @@ export function usePathname(): string {
     subscribe,
     () => window.location.pathname,
     () => '/',
+  )
+}
+
+/** The address bar query string, kept in sync with navigation and back/forward. */
+export function useLocationSearch(): string {
+  return useSyncExternalStore(
+    subscribe,
+    () => window.location.search,
+    () => '',
   )
 }
 

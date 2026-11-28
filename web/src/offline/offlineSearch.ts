@@ -48,6 +48,7 @@ export function buildIndex(documents: readonly CachedDocument[], key = ''): Offl
 export interface OfflineSearchParams {
   query: string
   sources?: readonly SourceKind[]
+  repo?: string
   limit?: number
 }
 
@@ -56,6 +57,7 @@ export function searchIndex(index: OfflineIndex, params: OfflineSearchParams): S
   const words = [...new Set(tokenize(params.query))]
   if (words.length === 0 || index.docs.size === 0) return []
   const allowed = params.sources !== undefined && params.sources.length > 0 ? new Set(params.sources) : null
+  const repo = params.repo
 
   const hits = index.engine.search(words.join(' '), {
     combineWith: 'OR',
@@ -63,7 +65,13 @@ export function searchIndex(index: OfflineIndex, params: OfflineSearchParams): S
     prefix: (_term, position, terms) => position === terms.length - 1,
     fuzzy: false,
     weights: { fuzzy: 0, prefix: PREFIX_WEIGHT },
-    filter: (hit) => allowed === null || allowed.has(index.docs.get(hit.id as number)?.sourceKind as SourceKind),
+    filter: (hit) => {
+      const doc = index.docs.get(hit.id as number)
+      if (doc === undefined) return false
+      if (allowed !== null && !allowed.has(doc.sourceKind as SourceKind)) return false
+      if (repo !== undefined && (doc.sourceKind !== 'repo' || doc.sourceName !== repo)) return false
+      return true
+    },
   })
 
   return hits

@@ -5,7 +5,7 @@ import { getLocalGraph, type LocalGraphResponse } from '../api/graph'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useOnline } from '../hooks/useOnline'
 import { offlineLocalGraph } from '../offline/offlineMap'
-import { documentPath, followLink } from '../router'
+import { documentPath, followLink, repoPath } from '../router'
 import { connectedCount, isLocalGraphResponse, listGroups, TONE_LABELS, TONE_SWATCH, tonesIn, type ListEntry } from './graphModel'
 
 // Cytoscape is large; it loads only when the graph view is shown, in its own chunk.
@@ -223,7 +223,7 @@ function GraphListItem({ entry }: { entry: ListEntry }) {
   const { node, tone, reason } = entry
   const kind = node.type === 'document' ? (node.sourceLabel ?? TONE_LABELS[tone]) : TONE_LABELS[tone]
   const opens = node.type === 'document' && node.documentId !== null
-  const path = opens ? documentPath(node.documentId!) : null
+  const path = opens ? documentPath(node.documentId!) : node.type === 'repo' ? repoPath(node.label) : null
   return (
     <li className="flex min-h-11 items-start gap-3 py-2">
       <span aria-hidden="true" className={`mt-2 size-2.5 shrink-0 rounded-full ${TONE_SWATCH[tone]}`} />

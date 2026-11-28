@@ -47,6 +47,7 @@ export interface AskResponse {
 export interface AskParams {
   question: string
   sources?: SourceKind[]
+  repo?: string
   limit?: number
 }
 

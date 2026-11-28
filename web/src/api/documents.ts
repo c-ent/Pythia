@@ -1,5 +1,5 @@
 import { apiFetch } from './client'
-import type { SourceRef } from './search'
+import type { SourceKind, SourceRef } from './search'
 
 // Mirrors `GET /api/documents/:id` (DocumentView in server/src/search/searchService.ts).
 // Dates arrive as ISO strings.
@@ -28,4 +28,23 @@ export interface DocumentView extends DocumentInfo {
 export async function getDocument(id: number, signal?: AbortSignal): Promise<DocumentView> {
   const res = await apiFetch(`/api/documents/${id}`, { signal })
   return (await res.json()) as DocumentView
+}
+
+export interface ListFilesParams {
+  source: SourceKind
+  name?: string
+  limit?: number
+}
+
+export interface ListFilesResponse {
+  documents: DocumentInfo[]
+  total: number
+}
+
+export async function listFiles(params: ListFilesParams, signal?: AbortSignal): Promise<ListFilesResponse> {
+  const query = new URLSearchParams({ source: params.source })
+  if (params.name !== undefined) query.set('name', params.name)
+  if (params.limit !== undefined) query.set('limit', String(params.limit))
+  const res = await apiFetch(`/api/files?${query.toString()}`, { signal })
+  return (await res.json()) as ListFilesResponse
 }

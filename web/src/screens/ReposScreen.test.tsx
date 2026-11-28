@@ -166,6 +166,9 @@ describe('ReposScreen', () => {
     expect(panel.querySelector('dd time[datetime="2026-11-26T23:42:00.000Z"]')).toBeTruthy()
     const indexed = within(within(panel).getByRole('list', { name: 'Indexed folders and files' })).getAllByRole('listitem')
     expect(indexed.map((li) => li.textContent)).toEqual(['src/ · 3 files', 'README.md', 'package.json'])
+    expect(within(panel).getByRole('link', { name: 'kitchen-app' }).getAttribute('href')).toBe('/repos/kitchen-app')
+    expect(within(panel).getByRole('link', { name: 'View files' }).getAttribute('href')).toBe('/repos/kitchen-app')
+    expect(within(panel).getByRole('link', { name: /src\// }).getAttribute('href')).toBe('/repos/kitchen-app?folder=src')
     expect(within(panel).getByText(/^Skipped: /)).toBeTruthy()
     expect(within(panel).getByRole('link', { name: 'Open overview' }).getAttribute('href')).toBe('/doc/30')
 

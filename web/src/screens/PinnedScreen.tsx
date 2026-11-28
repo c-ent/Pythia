@@ -15,7 +15,7 @@ import {
 import { clearOfflineCache, OFFLINE_CACHE_CHANGED, offlineCacheChanged } from '../offline/sync'
 import { formatDateTime, plural } from '../repos/format'
 import { setRepoPinned, usePinnedRepos } from '../repos/pins'
-import { followLink, pathFor } from '../router'
+import { followLink, pathFor, repoPath } from '../router'
 import { isSyncing, startSyncNow, syncProgressText, useSyncNow } from '../sources/syncNow'
 import {
   CLEAR_DONE_MESSAGE,
@@ -140,7 +140,15 @@ function PinnedRepos({ pins, device }: { pins: readonly string[]; device: Device
                   <FolderGit2 aria-hidden="true" className="size-[1.125rem]" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="font-mono text-sm break-all">{name}</p>
+                  <p className="font-mono text-sm break-all">
+                    <a
+                      href={repoPath(name)}
+                      onClick={(event) => followLink(event, repoPath(name))}
+                      className="hover:text-accent-ink hover:underline"
+                    >
+                      {name}
+                    </a>
+                  </p>
                   <p className="mt-0.5 text-xs text-muted">
                     {size === undefined
                       ? 'No files cached'

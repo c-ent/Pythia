@@ -42,6 +42,7 @@ export interface SearchResponse {
 export interface SearchParams {
   query: string
   sources?: SourceKind[]
+  repo?: string
   limit?: number
 }
 

@@ -4,7 +4,7 @@ import type { SourceKind } from '../api/search'
 import { getVaultGraph, type GraphNode, type GraphResponse } from '../api/graph'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useOnline } from '../hooks/useOnline'
-import { documentPath, followLink } from '../router'
+import { documentPath, followLink, repoPath } from '../router'
 import { SOURCE_LABELS } from '../search/format'
 import { isGraphResponse, nodeTone, TONE_LABELS, TONE_SWATCH, tonesIn } from './graphModel'
 
@@ -42,7 +42,7 @@ export function VaultGraphPanel({ sources, repo }: { sources: SourceKind[]; repo
     {state.status === 'offline' ? <p className="py-8 text-center text-sm text-warning">The whole-vault graph needs the server.</p> : null}
     {state.status === 'error' ? <div role="alert" className="flex flex-wrap items-center gap-3 py-5 text-sm text-danger"><TriangleAlert aria-hidden="true" className="size-4" /><span className="flex-1">{state.message}</span><button type="button" onClick={() => setAttempt((n) => n + 1)} className="inline-flex min-h-11 items-center gap-2 rounded-control border border-line px-4 text-ink"><RotateCw aria-hidden="true" className="size-4" />Retry</button></div> : null}
     {graph ? <>
-      {graph.nodes.length === 0 ? <p className="py-10 text-center text-sm text-muted">No map documents match these filters.</p> : listView ? <VaultGraphList nodes={graph.nodes} /> : <Suspense fallback={<p role="status" className="flex h-88 items-center justify-center gap-2 text-sm text-muted"><LoaderCircle aria-hidden="true" className="size-4 animate-spin" />Drawing the graph…</p>}><GraphCanvas graph={graph} title="Vault Atlas" /></Suspense>}
+      {graph.nodes.length === 0 ? <p className="py-10 text-center text-sm text-muted">No map documents match these filters.</p> : listView ? <VaultGraphList nodes={graph.nodes} /> : <Suspense fallback={<p role="status" className="flex h-[62dvh] min-h-104 items-center justify-center gap-2 text-sm text-muted md:h-[68dvh]"><LoaderCircle aria-hidden="true" className="size-4 animate-spin" />Drawing the graph…</p>}><GraphCanvas graph={graph} title="Vault Atlas" heightClassName="h-[62dvh] min-h-104 md:h-[68dvh]" /></Suspense>}
       {graph.nodes.length ? <ul aria-label="Graph colours" className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">{tones.map((tone) => <li key={tone} className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`size-2.5 rounded-full ${TONE_SWATCH[tone]}`} />{TONE_LABELS[tone]}</li>)}</ul> : null}
       {graph.truncated ? <p className="mt-2 text-xs text-muted">The graph is showing the best-connected items; more are available.</p> : null}
     </> : null}
@@ -61,7 +61,12 @@ function VaultGraphList({ nodes }: { nodes: GraphNode[] }) {
 function GraphNodeGroup({ title, nodes }: { title: string; nodes: GraphNode[] }) {
   return <section><h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-muted">{title}</h3><ul className="divide-y divide-line">{nodes.map((node) => {
     const tone = nodeTone(node)
-    const path = node.type === 'document' && node.documentId !== null ? documentPath(node.documentId) : null
+    const path =
+      node.type === 'document' && node.documentId !== null
+        ? documentPath(node.documentId)
+        : node.type === 'repo'
+          ? repoPath(node.label)
+          : null
     const label = node.type === 'tag' ? `#${node.label}` : node.label
     return <li key={node.id} className="flex min-h-11 items-center gap-3 py-1.5"><span aria-hidden="true" className={`size-2.5 shrink-0 rounded-full ${TONE_SWATCH[tone]}`} /><div className="min-w-0 flex-1">{path ? <a href={path} onClick={(event) => followLink(event, path)} className="inline-flex min-h-11 items-center rounded-control px-1 text-sm font-medium text-ink hover:bg-raised">{label}</a> : <span className="text-sm text-ink">{label}</span>}<p className="text-xs text-muted">{node.type === 'document' ? (node.sourceLabel ?? (node.source ? SOURCE_LABELS[node.source.kind] : 'Document')) : TONE_LABELS[tone]} · {node.links} {node.links === 1 ? 'connection' : 'connections'}</p></div></li>
   })}</ul></section>

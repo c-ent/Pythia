@@ -58,6 +58,9 @@ function fakeStore(over: Partial<SearchStore> = {}) {
     async recentDocuments() {
       return [doc()]
     },
+    async listDocuments() {
+      return { documents: [doc()], total: 1 }
+    },
     ...over,
   }
   return { store, calls }
@@ -177,5 +180,33 @@ describe('search service', () => {
     await service.recent({ days: 3, source: 'keep', limit: 5 })
     expect(since?.toISOString()).toBe('2026-11-22T12:00:00.000Z')
     expect(sources).toEqual(['keep'])
+  })
+
+  it('lists documents for a source and optional repo name with clamped limit', async () => {
+    let seen: unknown
+    const { store } = fakeStore({
+      listDocuments: async (params) => {
+        seen = params
+        return { documents: [doc()], total: 1 }
+      },
+    })
+    const service = createSearchService({ store, embedder: embedder() })
+    const res = await service.listDocuments!({ source: 'repo', name: 'pythia', limit: 99999 })
+    expect(seen).toEqual({ source: 'repo', name: 'pythia', limit: 5000 })
+    expect(res).toEqual({
+      documents: [
+        {
+          id: 10,
+          source: { kind: 'obsidian', name: 'vault' },
+          path: 'a.md',
+          title: 'a',
+          language: null,
+          allowLlm: true,
+          mtime: null,
+          updatedAt: new Date('2026-11-01T00:00:00Z'),
+        },
+      ],
+      total: 1,
+    })
   })
 })

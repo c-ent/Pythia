@@ -15,6 +15,8 @@ export const DEFAULT_SEARCH_LIMIT = 10
 export const MAX_SEARCH_LIMIT = SEARCH_CANDIDATES
 /** Matches the 200 KB repo file cap (R9); notes are far smaller. */
 export const DEFAULT_MAX_DOCUMENT_CHARS = 200_000
+export const DEFAULT_LIST_LIMIT = 2000
+export const MAX_LIST_LIMIT = 5000
 const DAY_MS = 24 * 60 * 60 * 1000
 
 /** Input the service refuses; transports map it to 400. */
@@ -90,12 +92,24 @@ export interface RecentRequest {
   limit: number
 }
 
+export interface ListDocumentsRequest {
+  source: SearchableKind
+  name?: string
+  limit?: number
+}
+
+export interface ListDocumentsResponse {
+  documents: DocumentInfo[]
+  total: number
+}
+
 export interface SearchService {
   search(request: SearchRequest): Promise<SearchResponse>
   getDocument(id: number): Promise<DocumentView | null>
   /** `name` picks the source when several of `kind` exist (repos). */
   findDocument(kind: SearchableKind, name: string | null, path: string): Promise<DocumentView | null>
   recent(request: RecentRequest): Promise<DocumentInfo[]>
+  listDocuments?(request: ListDocumentsRequest): Promise<ListDocumentsResponse>
 }
 
 export interface SearchServiceOptions {
@@ -238,6 +252,16 @@ export function createSearchService(options: SearchServiceOptions): SearchServic
         limit: request.limit,
       })
       return docs.map(toInfo)
+    },
+
+    async listDocuments(request) {
+      const limit = Math.min(MAX_LIST_LIMIT, Math.max(1, Math.trunc(request.limit ?? DEFAULT_LIST_LIMIT)))
+      const result = await store.listDocuments({
+        source: request.source,
+        name: request.name,
+        limit,
+      })
+      return { documents: result.documents.map(toInfo), total: result.total }
     },
   }
 }

@@ -247,6 +247,20 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('hybrid search against Post
     ])
     const everything = await search.recent({ days: 1, limit: 200 })
     expect(everything.some((doc) => doc.path.startsWith('work/') || doc.path.startsWith('keep/'))).toBe(false)
+
+    const kitchen = await ensureSource(pool, 'repo', 'kitchen-app', '/repos/kitchen-app')
+    await addDoc(kitchen.id, ':SUMMARY', 'Repository: kitchen-app')
+    const repoFiles = await search.listDocuments!({ source: 'repo', name: 'kitchen-app' })
+    expect(repoFiles.total).toBe(1)
+    expect(repoFiles.documents.map((d) => d.path)).toEqual(['README.md'])
+    const obsidianFiles = await search.listDocuments!({ source: 'obsidian' })
+    expect(obsidianFiles.total).toBe(4)
+    expect(obsidianFiles.documents.map((d) => d.path)).toEqual([
+      'Kitchen/Bread.md',
+      'Pets/Cats.md',
+      'Private/Money.md',
+      'Space/Launch.md',
+    ])
   })
 
   it('loads chunk text with allow_llm, leaving out work, disabled and missing chunks', async () => {

@@ -12,6 +12,7 @@ import {
   backlinksInputSchema,
   documentLookupSchema,
   graphInputSchema,
+  listDocumentsInputSchema,
   recentInputSchema,
   relatedInputSchema,
   repoOverviewSchema,
@@ -166,6 +167,13 @@ export function createApiRouter(
     const input = parseInput(recentInputSchema, req.query)
     res.json({ documents: await search.recent(input) })
   })
+
+  if (search.listDocuments !== undefined) {
+    router.get('/files', async (req, res) => {
+      const input = parseInput(listDocumentsInputSchema, req.query)
+      res.json(await search.listDocuments!(input))
+    })
+  }
 
   if (sync !== undefined) {
     router.get('/sync', async (req, res) => {

@@ -1,4 +1,5 @@
 import type { Pool } from 'pg'
+import { SUMMARY_PATH } from './repoStore.js'
 
 /** Kinds a search or document lookup can return. `work` never appears (R2). */
 export const SEARCHABLE_KINDS = ['obsidian', 'keep', 'repo', 'chat', 'gdrive'] as const
@@ -64,6 +65,17 @@ export interface RecentParams {
   limit: number
 }
 
+export interface ListDocumentsParams {
+  source: SearchableKind
+  name?: string
+  limit: number
+}
+
+export interface ListDocumentsResult {
+  documents: DocumentSummary[]
+  total: number
+}
+
 /** What the search service needs from the database. Tests use an in-memory version. */
 export interface SearchStore {
   hybridSearch(params: HybridSearchParams): Promise<ChunkHit[]>
@@ -71,6 +83,7 @@ export interface SearchStore {
   /** Ids of documents at `path` in sources of `kind` (and `name`, when given). */
   findDocumentIds(kind: SearchableKind, name: string | null, path: string): Promise<number[]>
   recentDocuments(params: RecentParams): Promise<DocumentSummary[]>
+  listDocuments(params: ListDocumentsParams): Promise<ListDocumentsResult>
 }
 
 export interface ChunkText {
@@ -309,6 +322,22 @@ export function createPgSearchStore(pool: Pool): SearchStore {
         [params.since, params.sources === undefined ? null : [...params.sources], params.limit],
       )
       return rows.map(toSummary)
+    },
+
+    async listDocuments(params) {
+      const { rows } = await pool.query<DocumentRow & { total_count: string }>(
+        `SELECT ${DOCUMENT_COLUMNS}, count(*) OVER() AS total_count
+         FROM documents d JOIN sources s ON s.id = d.source_id
+         WHERE ${VISIBLE_SOURCE}
+           AND s.kind = $1
+           AND ($2::text IS NULL OR s.name = $2::text)
+           AND (s.kind <> 'repo' OR d.path <> $3)
+         ORDER BY lower(d.path), d.path, d.id
+         LIMIT $4`,
+        [params.source, params.name ?? null, SUMMARY_PATH, params.limit],
+      )
+      const total = rows[0] === undefined ? 0 : Number(rows[0].total_count)
+      return { documents: rows.map(toSummary), total }
     },
   }
 }

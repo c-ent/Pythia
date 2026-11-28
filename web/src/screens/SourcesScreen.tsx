@@ -15,7 +15,7 @@ import { useState, type ReactNode } from 'react'
 import { statusChanged, type ActivityEvent, type ServerStatus, type SourceHealth } from '../api/status'
 import { useOnline } from '../hooks/useOnline'
 import { plural } from '../repos/format'
-import { followLink, pathFor, settingsPath } from '../router'
+import { followLink, pathFor, settingsPath, sourceBrowsePath } from '../router'
 import {
   activityText,
   formatWhen,
@@ -159,15 +159,32 @@ function SourceList({ server, online }: { server: ReturnType<typeof useServerSta
   )
 }
 
+function sourceBrowseUrl(source: SourceHealth): string | null {
+  if (source.state === 'off') return null
+  switch (source.id) {
+    case 'obsidian':
+      return sourceBrowsePath('obsidian')
+    case 'github':
+      return pathFor('repos')
+    case 'keep':
+      return sourceBrowsePath('keep')
+    case 'gdrive':
+      return sourceBrowsePath('gdrive')
+  }
+}
+
 function SourceCard({ source, status }: { source: SourceHealth; status: ServerStatus }) {
   const Icon = SOURCE_ICONS[source.id]
   const title = sourceTitle(source.id)
   const state = sourceState(source)
   const failing = source.id === 'github' ? status.repos.filter((repo) => repo.state === 'error') : []
+  const browseUrl = sourceBrowseUrl(source)
   return (
     <article
       aria-label={title}
-      className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-card border border-line bg-surface p-4 shadow-[0_1px_2px_rgb(15_15_16/0.04)]"
+      className={`relative flex flex-wrap items-center gap-x-4 gap-y-3 rounded-card border border-line bg-surface p-4 shadow-[0_1px_2px_rgb(15_15_16/0.04)] ${
+        browseUrl === null ? '' : 'transition-colors hover:border-muted/50'
+      }`}
     >
       <span
         aria-hidden="true"
@@ -176,7 +193,19 @@ function SourceCard({ source, status }: { source: SourceHealth; status: ServerSt
         <Icon className="size-5" />
       </span>
       <div className="min-w-0 flex-1 basis-48">
-        <h3 className="text-base font-semibold">{title}</h3>
+        <h3 className="text-base font-semibold">
+          {browseUrl === null ? (
+            title
+          ) : (
+            <a
+              href={browseUrl}
+              onClick={(event) => followLink(event, browseUrl)}
+              className="outline-none after:absolute after:inset-0 after:rounded-card hover:underline focus-visible:after:outline-2 focus-visible:after:outline-offset-2 focus-visible:after:outline-accent-ink"
+            >
+              {title}
+            </a>
+          )}
+        </h3>
         <p className="mt-0.5 text-sm text-muted">{sourceDetail(source, status.repos.length)}</p>
         {failing.length === 0 ? null : (
           <p className="mt-1 text-sm text-danger">
@@ -188,7 +217,7 @@ function SourceCard({ source, status }: { source: SourceHealth; status: ServerSt
         )}
       </div>
       <span
-        className={`inline-flex min-h-8 items-center gap-2 rounded-full bg-raised px-3 text-sm ${TONE_TEXT[state.tone]}`}
+        className={`relative z-10 inline-flex min-h-8 items-center gap-2 rounded-full bg-raised px-3 text-sm ${TONE_TEXT[state.tone]}`}
       >
         {source.syncing ? (
           <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin" />
@@ -197,13 +226,16 @@ function SourceCard({ source, status }: { source: SourceHealth; status: ServerSt
         )}
         {state.label}
       </span>
-      <SourceAction source={source} />
+      <div className="relative z-10 flex flex-wrap items-center gap-2 empty:hidden">
+        <SourceAction source={source} />
+      </div>
     </article>
   )
 }
 
 function SourceAction({ source }: { source: SourceHealth }) {
-  if (source.id === 'github' && source.state !== 'off') {
+  if (source.state === 'off') return null
+  if (source.id === 'github') {
     const path = pathFor('repos')
     return (
       <a href={path} onClick={(event) => followLink(event, path)} className={BUTTON}>
@@ -211,22 +243,33 @@ function SourceAction({ source }: { source: SourceHealth }) {
       </a>
     )
   }
-  if (source.id === 'keep' && source.state !== 'off') {
+  if (source.id === 'keep') {
+    const path = sourceBrowsePath('keep')
     return (
-      <button
-        type="button"
-        onClick={() => {
-          const target = document.getElementById(KEEP_IMPORT_ID)
-          target?.scrollIntoView?.({ block: 'start' })
-          target?.querySelector<HTMLInputElement>('input[type="file"]')?.focus()
-        }}
-        className={BUTTON}
-      >
-        Import
-      </button>
+      <>
+        <a href={path} onClick={(event) => followLink(event, path)} className={BUTTON}>
+          View notes
+        </a>
+        <button
+          type="button"
+          onClick={() => {
+            const target = document.getElementById(KEEP_IMPORT_ID)
+            target?.scrollIntoView?.({ block: 'start' })
+            target?.querySelector<HTMLInputElement>('input[type="file"]')?.focus()
+          }}
+          className={BUTTON}
+        >
+          Import
+        </button>
+      </>
     )
   }
-  return null
+  const path = sourceBrowsePath(source.id === 'obsidian' ? 'obsidian' : 'gdrive')
+  return (
+    <a href={path} onClick={(event) => followLink(event, path)} className={BUTTON}>
+      View files
+    </a>
+  )
 }
 
 function ChatHistoryCard() {

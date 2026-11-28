@@ -14,6 +14,7 @@ import type { TopicMapRequest, TopicMapService } from '../search/topicMapService
 import {
   AmbiguousDocumentError,
   type DocumentView,
+  type ListDocumentsRequest,
   type RecentRequest,
   type SearchRequest,
   type SearchService,
@@ -44,6 +45,7 @@ describe('REST API', () => {
   let base: string
   const searches: SearchRequest[] = []
   const recents: RecentRequest[] = []
+  const fileLists: ListDocumentsRequest[] = []
 
   const service: SearchService = {
     async search(request) {
@@ -61,6 +63,10 @@ describe('REST API', () => {
     async recent(request) {
       recents.push(request)
       return [view]
+    },
+    async listDocuments(request) {
+      fileLists.push(request)
+      return { documents: [view], total: 1 }
     },
   }
 
@@ -468,6 +474,23 @@ describe('REST API', () => {
   it.each(['days=0', 'days=abc', 'days=400', 'source=work', 'limit=1000'])('returns 400 for recent %s', async (q) => {
     expect((await fetch(`${base}/api/recent?${q}`)).status).toBe(400)
   })
+
+  it('lists files for a source and optional repo name with no caching', async () => {
+    const res = await fetch(`${base}/api/files?source=repo&name=kitchen-app&limit=50`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(await res.json()).toMatchObject({ documents: [{ id: 7, path: 'Projects/Pythia.md' }], total: 1 })
+    expect(fileLists.at(-1)).toEqual({ source: 'repo', name: 'kitchen-app', limit: 50 })
+  })
+
+  it.each(['', 'source=work', 'source=obsidian&limit=0', 'source=obsidian&limit=99999'])(
+    'returns 400 for files query %s',
+    async (q) => {
+      const res = await fetch(`${base}/api/files${q === '' ? '' : `?${q}`}`)
+      expect(res.status).toBe(400)
+      expect(await res.json()).toMatchObject({ error: { code: 'invalid_input' } })
+    },
+  )
 
   it('syncs everything from cursor 0, with no caching', async () => {
     const res = await fetch(`${base}/api/sync`)

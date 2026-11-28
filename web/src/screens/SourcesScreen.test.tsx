@@ -145,9 +145,12 @@ describe('SourcesScreen', () => {
     const vault = await findCard('Obsidian vault')
     expect(vault.getByText('48 notes · 210 chunks · watching for changes')).toBeTruthy()
     expect(vault.getByText(/^Healthy · /)).toBeTruthy()
+    expect(vault.getByRole('link', { name: 'Obsidian vault' }).getAttribute('href')).toBe('/sources/obsidian')
+    expect(vault.getByRole('link', { name: 'View files' }).getAttribute('href')).toBe('/sources/obsidian')
 
     const repos = card('GitHub repos')
     expect(repos.getByText('2 repos · 120 files · every hour')).toBeTruthy()
+    expect(repos.getByRole('link', { name: 'GitHub repos' }).getAttribute('href')).toBe('/repos')
     expect(repos.getByText('Error · 1 repo failing')).toBeTruthy()
     expect(repos.getByText('1 repo failing: beta (fetch failed)')).toBeTruthy()
     expect(repos.getByRole('link', { name: 'Manage' }).getAttribute('href')).toBe('/repos')
@@ -155,6 +158,7 @@ describe('SourcesScreen', () => {
     const notes = card('Google Keep')
     expect(notes.getByText('Takeout import · 3 notes · not imported yet')).toBeTruthy()
     expect(notes.getByText('Manual · not imported yet')).toBeTruthy()
+    expect(notes.getByRole('link', { name: 'View notes' }).getAttribute('href')).toBe('/sources/keep')
 
     expect(card('Chat history').getByText('Coming later')).toBeTruthy()
 
@@ -205,6 +209,7 @@ describe('SourcesScreen', () => {
     render(<SourcesScreen />)
     const driveCard = await findCard('Google Drive')
     expect(driveCard.getByText('12 files · 40 chunks · pulled every 30 min')).toBeTruthy()
+    expect(driveCard.getByRole('link', { name: 'View files' }).getAttribute('href')).toBe('/sources/gdrive')
     const activity = within(screen.getByRole('list', { name: 'Activity' }))
     expect(activity.getByText('Drive synced')).toBeTruthy()
     expect(activity.getByText(/3 files changed/)).toBeTruthy()

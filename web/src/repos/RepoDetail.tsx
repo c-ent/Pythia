@@ -1,8 +1,8 @@
-import { Check, FileText, HardDriveDownload, LoaderCircle, Pin, PinOff, RefreshCw, RotateCw, TriangleAlert } from 'lucide-react'
+import { Check, ChevronRight, FileText, FolderOpen, HardDriveDownload, LoaderCircle, Pin, PinOff, RefreshCw, RotateCw, TriangleAlert } from 'lucide-react'
 import { useId, type ReactNode } from 'react'
 import type { RepoInfo } from '../api/repos'
 import type { RepoStatus } from '../api/repoSync'
-import { documentPath, followLink } from '../router'
+import { documentPath, followLink, repoPath } from '../router'
 import { timeAgo } from '../search/format'
 import { formatDateTime, plural, SKIPPED_TEXT } from './format'
 import { isSyncBusy, type AllowAskState, type OverviewEntry, type SyncEntry } from './state'
@@ -114,7 +114,14 @@ export function RepoDetail(props: RepoDetailProps) {
         <RepoTile name={repo.name} large />
         <div className="min-w-0">
           <h2 id={props.headingId} tabIndex={-1} className="text-lg font-semibold break-all outline-none">
-            {repo.name}
+            <a
+              href={repoPath(repo.name)}
+              onClick={(event) => followLink(event, repoPath(repo.name))}
+              className="inline-flex items-center gap-1 rounded-control transition-colors hover:text-accent-ink hover:underline"
+            >
+              <span>{repo.name}</span>
+              <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted" />
+            </a>
           </h2>
           <p className="text-[0.8125rem] text-muted">
             {parts?.branch == null ? 'GitHub repo' : `GitHub repo · ${parts.branch}`}
@@ -144,7 +151,7 @@ export function RepoDetail(props: RepoDetailProps) {
 
       <div className="mt-4 border-t border-line pt-4">
         <h3 className={SECTION_TITLE}>What is indexed</h3>
-        {parts !== null && parts.tree.length > 0 ? <Tree parts={parts} /> : null}
+        {parts !== null && parts.tree.length > 0 ? <Tree repoName={repo.name} parts={parts} /> : null}
         <p className="mt-2 text-xs text-muted">{SKIPPED_TEXT}</p>
       </div>
 
@@ -198,17 +205,39 @@ function Languages({ languages }: { languages: readonly LanguageShare[] }) {
   )
 }
 
-function Tree({ parts }: { parts: RepoSummaryParts }) {
+function Tree({ repoName, parts }: { repoName: string; parts: RepoSummaryParts }) {
   const more = Math.max(0, parts.tree.length - TREE_SHOWN) + parts.moreEntries
   return (
     <ul aria-label="Indexed folders and files" className="mt-2 flex flex-wrap gap-1.5">
-      {parts.tree.slice(0, TREE_SHOWN).map((entry) => (
-        <li key={entry.name} className="rounded-full bg-raised px-2.5 py-1 font-mono text-xs break-all text-ink">
-          {entry.name}
-          {entry.files === null ? null : <span className="text-muted"> · {plural(entry.files, 'file')}</span>}
+      {parts.tree.slice(0, TREE_SHOWN).map((entry) => {
+        const href =
+          entry.files !== null
+            ? repoPath(repoName, entry.name.replace(/\/+$/, ''))
+            : `${repoPath(repoName)}?${new URLSearchParams({ q: entry.name }).toString()}`
+        return (
+          <li key={entry.name}>
+            <a
+              href={href}
+              onClick={(event) => followLink(event, href)}
+              className="inline-flex items-center rounded-full bg-raised px-2.5 py-1 font-mono text-xs break-all text-ink transition-colors hover:text-accent-ink hover:underline"
+            >
+              {entry.name}
+              {entry.files === null ? null : <span className="text-muted"> · {plural(entry.files, 'file')}</span>}
+            </a>
+          </li>
+        )
+      })}
+      {more > 0 ? (
+        <li>
+          <a
+            href={repoPath(repoName)}
+            onClick={(event) => followLink(event, repoPath(repoName))}
+            className="inline-flex items-center rounded-full bg-raised px-2.5 py-1 text-xs text-muted transition-colors hover:text-accent-ink hover:underline"
+          >
+            +{more} more
+          </a>
         </li>
-      ))}
-      {more > 0 ? <li className="rounded-full bg-raised px-2.5 py-1 text-xs text-muted">+{more} more</li> : null}
+      ) : null}
     </ul>
   )
 }
@@ -272,19 +301,28 @@ function Actions({
   const busy = isSyncBusy(sync)
   const pinned = pinState !== 'online'
   const PinIcon = pinned ? PinOff : Pin
-  const path = summaryId === null ? null : documentPath(summaryId)
+  const overviewPath = summaryId === null ? null : documentPath(summaryId)
+  const filesPath = repoPath(repo.name)
   return (
     <div className="mt-4 flex flex-wrap gap-2 border-t border-line pt-4">
-      {path === null ? (
-        <button type="button" disabled className={`${BUTTON} flex-1 bg-strong text-on-strong`}>
+      <a
+        href={filesPath}
+        onClick={(event) => followLink(event, filesPath)}
+        className={`${BUTTON} flex-1 bg-strong text-on-strong hover:opacity-90`}
+      >
+        <FolderOpen aria-hidden="true" className="size-4" />
+        View files
+      </a>
+      {overviewPath === null ? (
+        <button type="button" disabled className={`${BUTTON} flex-1 border border-line bg-surface text-ink`}>
           <FileText aria-hidden="true" className="size-4" />
           Open overview
         </button>
       ) : (
         <a
-          href={path}
-          onClick={(event) => followLink(event, path)}
-          className={`${BUTTON} flex-1 bg-strong text-on-strong hover:opacity-90`}
+          href={overviewPath}
+          onClick={(event) => followLink(event, overviewPath)}
+          className={`${BUTTON} flex-1 border border-line bg-surface text-ink hover:bg-raised`}
         >
           <FileText aria-hidden="true" className="size-4" />
           Open overview

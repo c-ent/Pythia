@@ -2,13 +2,18 @@ import { describe, expect, it } from 'vitest'
 import {
   documentIdFromPath,
   documentPath,
+  navigate,
   pathFor,
   redirectFor,
+  repoNameFromPath,
+  repoPath,
   routeFromPath,
   ROUTES,
   SETTINGS_SECTIONS,
   settingsPath,
   settingsSectionFromPath,
+  sourceBrowsePath,
+  sourceKindFromPath,
 } from './router'
 
 describe('router', () => {
@@ -76,4 +81,28 @@ describe('router', () => {
       expect(documentIdFromPath(path)).toBeNull()
     },
   )
+
+  it('parses and builds repo and source browse paths', () => {
+    expect(repoNameFromPath('/repos/kitchen-app')).toBe('kitchen-app')
+    expect(repoNameFromPath('/repos/a%20b')).toBe('a b')
+    expect(repoNameFromPath('/repos')).toBeNull()
+    expect(repoNameFromPath('/repos/a/b')).toBeNull()
+    expect(repoPath('a b')).toBe('/repos/a%20b')
+    expect(repoPath('a b', 'src/routes')).toBe('/repos/a%20b?folder=src%2Froutes')
+
+    expect(sourceKindFromPath('/sources/obsidian')).toBe('obsidian')
+    expect(sourceKindFromPath('/sources/keep')).toBe('keep')
+    expect(sourceKindFromPath('/sources/gdrive')).toBe('gdrive')
+    expect(sourceKindFromPath('/sources/github')).toBe('repo')
+    expect(sourceKindFromPath('/sources')).toBeNull()
+    expect(sourceKindFromPath('/sources/nope')).toBeNull()
+    expect(sourceBrowsePath('obsidian', 'Projects')).toBe('/sources/obsidian?folder=Projects')
+  })
+
+  it('updates search query when navigating between the same pathname with different query strings', () => {
+    window.history.replaceState(null, '', '/repos/pythia?folder=src')
+    navigate('/repos/pythia')
+    expect(window.location.pathname).toBe('/repos/pythia')
+    expect(window.location.search).toBe('')
+  })
 })
