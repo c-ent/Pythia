@@ -42,3 +42,9 @@ To add a new skill, run `npx skills add <owner/repo>` and commit the updated `sk
 | vercel-react-best-practices | vercel-labs/agent-skills |
 | vitest | antfu/skills |
 | web-design-guidelines | vercel-labs/agent-skills |
+
+
+Building the App on Oracle
+```sh
+git pull origin dev && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build app
+```
