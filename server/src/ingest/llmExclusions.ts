@@ -17,6 +17,7 @@ import { normalizeTag, tagCovers } from './noteTags.js'
  *   Drive, else a Drive-relative folder whose files and subfolders it covers.
  */
 export type LlmExclusionKind = 'folder' | 'note' | 'tag' | 'repo' | 'keep' | 'gdrive'
+export type ExclusionScope = 'llm' | 'all'
 
 export const LLM_EXCLUSION_KINDS = [
   'folder',
@@ -26,6 +27,8 @@ export const LLM_EXCLUSION_KINDS = [
   'keep',
   'gdrive',
 ] as const satisfies readonly LlmExclusionKind[]
+
+export const EXCLUSION_SCOPES = ['llm', 'all'] as const satisfies readonly ExclusionScope[]
 
 /** The only `path` of a `keep` rule. */
 export const KEEP_RULE_PATH = 'keep'
@@ -42,6 +45,8 @@ export interface LlmExclusion {
    * trailing `/`.
    */
   path: string
+  /** `'llm'` (default): kept away from Gemini only. `'all'`: excluded from search, Ask, maps, and `/mcp`. */
+  scope?: ExclusionScope
 }
 
 export interface CatalogFolder {
@@ -197,7 +202,13 @@ function compareExclusions(a: LlmExclusion, b: LlmExclusion): number {
 
 /** Folders, notes, tags, repos, Keep, then Drive; within a kind by path ignoring case. */
 export function sortExclusions(list: readonly LlmExclusion[]): LlmExclusion[] {
-  return list.map((exclusion) => ({ kind: exclusion.kind, path: exclusion.path })).sort(compareExclusions)
+  return list
+    .map((exclusion): LlmExclusion =>
+      exclusion.scope === 'all'
+        ? { kind: exclusion.kind, path: exclusion.path, scope: 'all' }
+        : { kind: exclusion.kind, path: exclusion.path },
+    )
+    .sort(compareExclusions)
 }
 
 /**
@@ -214,7 +225,11 @@ export function cleanExclusions(list: readonly LlmExclusion[]): LlmExclusion[] {
     const key = `${exclusion.kind}:${path.toLowerCase()}`
     if (seen.has(key)) continue
     seen.add(key)
-    clean.push({ kind: exclusion.kind, path })
+    clean.push(
+      exclusion.scope === 'all'
+        ? { kind: exclusion.kind, path, scope: 'all' }
+        : { kind: exclusion.kind, path },
+    )
   }
   return sortExclusions(clean)
 }

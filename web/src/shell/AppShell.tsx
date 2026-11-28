@@ -6,6 +6,7 @@ import { loadProfile } from '../profile/profile'
 import { usePinnedRepos } from '../repos/pins'
 import {
   documentIdFromPath,
+  isSourcesActivityPath,
   redirect,
   redirectFor,
   repoNameFromPath,
@@ -14,6 +15,7 @@ import {
   sourceKindFromPath,
   usePathname,
 } from '../router'
+import { ActivityScreen } from '../screens/ActivityScreen'
 import { AskScreen } from '../screens/AskScreen'
 import { BrowseFilesScreen } from '../screens/BrowseFilesScreen'
 import { DocumentScreen } from '../screens/DocumentScreen'
@@ -52,6 +54,7 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
   const documentId = documentIdFromPath(pathname)
   const repoName = repoNameFromPath(pathname)
   const browseSource = sourceKindFromPath(pathname)
+  const activityOpen = isSourcesActivityPath(pathname)
   const section = settingsSectionFromPath(pathname)
   const online = useOnline()
   const devices = useDeviceCount(online)
@@ -85,9 +88,10 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
     if (documentId !== null) document.title = 'Document · Pythia'
     else if (repoName !== null) document.title = `${repoName} · Repos · Pythia`
     else if (browseSource !== null) document.title = `${NAV.find((item) => item.route === 'sources')?.label ?? 'Sources'} · Pythia`
+    else if (activityOpen) document.title = 'Recent activity · Sources · Pythia'
     else if (route === 'settings') document.title = `${SETTINGS_SECTION_LABELS[section]} · Settings · Pythia`
     else document.title = `${NAV.find((item) => item.route === route)?.label ?? 'Search'} · Pythia`
-  }, [route, section, documentId, repoName, browseSource])
+  }, [route, section, documentId, repoName, browseSource, activityOpen])
 
   // Ctrl K / ⌘ K starts a new search from anywhere, also from inside a field.
   useEffect(() => {
@@ -107,7 +111,7 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
     requestAnimationFrame(() => document.getElementById(next ? 'sidebar-expand' : 'sidebar-collapse')?.focus())
   }
 
-  const subpageOpen = documentId !== null || repoName !== null || browseSource !== null
+  const subpageOpen = documentId !== null || repoName !== null || browseSource !== null || activityOpen
   const current: CurrentFor = (item) => (item !== route ? undefined : !subpageOpen ? 'page' : 'true')
 
   let screen
@@ -140,6 +144,8 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
       if (browseSource !== null) {
         width = 'max-w-5xl'
         screen = <BrowseFilesScreen key={`source:${browseSource}`} source={browseSource} />
+      } else if (activityOpen) {
+        screen = <ActivityScreen />
       } else {
         // The sources list and the activity side by side from lg.
         width = 'max-w-6xl'

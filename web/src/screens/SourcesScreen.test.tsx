@@ -160,8 +160,6 @@ describe('SourcesScreen', () => {
     expect(notes.getByText('Manual · not imported yet')).toBeTruthy()
     expect(notes.getByRole('link', { name: 'View notes' }).getAttribute('href')).toBe('/sources/keep')
 
-    expect(card('Chat history').getByText('Coming later')).toBeTruthy()
-
     const activity = within(screen.getByRole('list', { name: 'Activity' }))
     const rows = activity.getAllByRole('listitem')
     expect(rows).toHaveLength(2)
@@ -395,18 +393,16 @@ describe('SourcesScreen', () => {
     expect(document.activeElement).toBe(importForm().getByLabelText('Keep Takeout zip'))
   })
 
-  it('shows the first activity rows and the rest on demand', async () => {
+  it('shows the first activity rows and links to the full activity page when there are more', async () => {
     const events = Array.from({ length: ACTIVITY_PREVIEW + 2 }, (_, i) => event(100 - i))
     stubApi({ 'GET /api/status': statusOf({ activity: events }) })
     render(<SourcesScreen />)
     const list = await screen.findByRole('list', { name: 'Activity' })
     expect(within(list).getAllByRole('listitem')).toHaveLength(ACTIVITY_PREVIEW)
 
-    const toggle = screen.getByRole('button', { name: `Show all ${events.length}` })
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
-    fireEvent.click(toggle)
-    expect(within(list).getAllByRole('listitem')).toHaveLength(events.length)
-    fireEvent.click(screen.getByRole('button', { name: 'Show less' }))
-    expect(within(list).getAllByRole('listitem')).toHaveLength(ACTIVITY_PREVIEW)
+    const link = screen.getByRole('link', { name: `Show all ${events.length}` })
+    expect(link.getAttribute('href')).toBe('/sources/activity')
+    fireEvent.click(link)
+    expect(window.location.pathname).toBe('/sources/activity')
   })
 })

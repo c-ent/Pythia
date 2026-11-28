@@ -221,7 +221,7 @@ export interface RelatedStore {
 
 // Same visibility and filters as hybrid search (searchStore.ts). Uses $5
 // (kinds or null) and $6 (repo name or null).
-const NEIGHBOUR_FILTER = `s.enabled AND s.kind <> 'work'
+const NEIGHBOUR_FILTER = `s.enabled AND s.kind <> 'work' AND NOT d.excluded
   AND ($5::text[] IS NULL OR s.kind = ANY ($5::text[]))
   AND ($6::text IS NULL OR (s.kind = 'repo' AND s.name = $6::text))`
 
@@ -292,7 +292,7 @@ export function createPgRelatedStore(pool: Pool): RelatedStore {
          FROM documents d
          JOIN sources s ON s.id = d.source_id
          LEFT JOIN document_vectors v ON v.document_id = d.id
-         WHERE d.id = $1 AND s.enabled AND s.kind <> 'work'`,
+         WHERE d.id = $1 AND s.enabled AND s.kind <> 'work' AND NOT d.excluded`,
         [params.documentId],
       )
       const me = own.rows[0]

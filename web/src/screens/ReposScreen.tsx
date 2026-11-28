@@ -520,7 +520,7 @@ function RepoCard({
           )}
         </span>
       </div>
-      {parts?.description == null ? null : <p className="mt-2 line-clamp-2 text-sm text-ink/80">{parts.description}</p>}
+      {parts?.description == null ? null : <p className="mt-2 line-clamp-2 text-sm break-words text-ink/80">{parts.description}</p>}
       {languages.length === 0 ? null : (
         <ul aria-label="Languages" className="mt-2 flex flex-wrap gap-1.5">
           {languages.map((share) => (

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   documentIdFromPath,
   documentPath,
+  isSourcesActivityPath,
   navigate,
   pathFor,
   redirectFor,
@@ -14,6 +15,7 @@ import {
   settingsSectionFromPath,
   sourceBrowsePath,
   sourceKindFromPath,
+  sourcesActivityPath,
 } from './router'
 
 describe('router', () => {
@@ -97,6 +99,11 @@ describe('router', () => {
     expect(sourceKindFromPath('/sources')).toBeNull()
     expect(sourceKindFromPath('/sources/nope')).toBeNull()
     expect(sourceBrowsePath('obsidian', 'Projects')).toBe('/sources/obsidian?folder=Projects')
+
+    expect(isSourcesActivityPath('/sources/activity')).toBe(true)
+    expect(isSourcesActivityPath('/sources')).toBe(false)
+    expect(isSourcesActivityPath('/sources/obsidian')).toBe(false)
+    expect(sourcesActivityPath()).toBe('/sources/activity')
   })
 
   it('updates search query when navigating between the same pathname with different query strings', () => {

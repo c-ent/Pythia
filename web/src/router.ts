@@ -111,6 +111,17 @@ export function sourceBrowsePath(kind: SourceKind, folder?: string): string {
   return `${base}?${new URLSearchParams({ folder }).toString()}`
 }
 
+export const SOURCES_ACTIVITY_PATH = '/sources/activity'
+
+export function isSourcesActivityPath(pathname: string): boolean {
+  const parts = segments(pathname)
+  return parts.length === 2 && parts[0] === 'sources' && parts[1] === 'activity'
+}
+
+export function sourcesActivityPath(): string {
+  return SOURCES_ACTIVITY_PATH
+}
+
 function subscribe(onChange: () => void): () => void {
   window.addEventListener('popstate', onChange)
   return () => window.removeEventListener('popstate', onChange)

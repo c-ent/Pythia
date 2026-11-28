@@ -108,7 +108,7 @@ export function RepoDetail(props: RepoDetailProps) {
   return (
     <section
       aria-labelledby={props.headingId}
-      className="rounded-card border border-line bg-surface p-5 shadow-[0_1px_2px_rgb(15_15_16/0.05)]"
+      className="min-w-0 rounded-card border border-line bg-surface p-5 shadow-[0_1px_2px_rgb(15_15_16/0.05)]"
     >
       <div className="flex items-center gap-3">
         <RepoTile name={repo.name} large />
@@ -128,7 +128,7 @@ export function RepoDetail(props: RepoDetailProps) {
           </p>
         </div>
       </div>
-      {parts?.description == null ? null : <p className="mt-3 text-sm text-ink/80">{parts.description}</p>}
+      {parts?.description == null ? null : <p className="mt-3 text-sm break-words text-ink/80">{parts.description}</p>}
       {overviewNote}
 
       {parts !== null && parts.languages.length > 0 ? <Languages languages={parts.languages} /> : null}

@@ -63,7 +63,7 @@ fts AS (
     CROSS JOIN q
     WHERE c.fts @@ q.tsq AND c.embedding IS NOT NULL AND c.embed_model = $7
       AND ($10::float8 IS NULL OR (c.embedding <=> $2::vector) <= $10::float8)
-      AND s.enabled AND s.kind <> 'work'
+      AND s.enabled AND s.kind <> 'work' AND NOT d.excluded AND NOT d.excluded
       AND ($3::text[] IS NULL OR s.kind = ANY ($3::text[]))
       AND ($4::text IS NULL OR (s.kind = 'repo' AND s.name = $4::text))
     GROUP BY c.document_id
@@ -91,7 +91,7 @@ semantic_chunks AS (
         )
       )
     )
-    AND s.enabled AND s.kind <> 'work'
+    AND s.enabled AND s.kind <> 'work' AND NOT d.excluded
     AND ($3::text[] IS NULL OR s.kind = ANY ($3::text[]))
     AND ($4::text IS NULL OR (s.kind = 'repo' AND s.name = $4::text))
   ORDER BY c.embedding <=> $2::vector
@@ -139,7 +139,7 @@ JOIN LATERAL (
     LIMIT 8
   ) part
 ) content ON true
-WHERE s.enabled AND s.kind <> 'work'
+WHERE s.enabled AND s.kind <> 'work' AND NOT d.excluded
 ORDER BY f.score DESC, d.id`
 
 const toVector = (text: string): number[] => {

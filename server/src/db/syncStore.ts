@@ -66,7 +66,7 @@ export interface SyncStore {
 const CHANGES_SQL = `
 SELECT * FROM (
   SELECT d.sync_seq AS seq, d.id,
-         (s.enabled AND s.kind <> 'work' AND (s.kind <> 'repo' OR s.name = ANY ($3::text[]))) AS visible,
+         (s.enabled AND s.kind <> 'work' AND NOT d.excluded AND (s.kind <> 'repo' OR s.name = ANY ($3::text[]))) AS visible,
          s.kind, s.name AS source_name, d.path, d.title, d.language, d.allow_llm, d.mtime, d.updated_at,
          (v.document_id IS NOT NULL) AS in_map
   FROM documents d

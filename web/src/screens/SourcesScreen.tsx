@@ -3,7 +3,6 @@ import {
   Cloud,
   FolderGit2,
   LoaderCircle,
-  MessagesSquare,
   NotebookText,
   RefreshCw,
   RotateCw,
@@ -11,11 +10,11 @@ import {
   TriangleAlert,
   type LucideIcon,
 } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { statusChanged, type ActivityEvent, type ServerStatus, type SourceHealth } from '../api/status'
 import { useOnline } from '../hooks/useOnline'
 import { plural } from '../repos/format'
-import { followLink, pathFor, settingsPath, sourceBrowsePath } from '../router'
+import { followLink, pathFor, settingsPath, sourceBrowsePath, sourcesActivityPath } from '../router'
 import {
   activityText,
   formatWhen,
@@ -61,7 +60,7 @@ const BUTTON =
 /**
  * Sources and sync (R18, ui.md): the Obsidian vault, GitHub repos, Google
  * Keep and Google Drive with health and last sync, Sync all, the Keep Takeout
- * import, chat history marked "Coming later", and recent activity.
+ * import, and recent activity.
  */
 export function SourcesScreen() {
   const online = useOnline()
@@ -123,7 +122,6 @@ export function SourcesScreen() {
             Sources
           </h2>
           <SourceList server={server} online={online} />
-          <ChatHistoryCard />
         </section>
 
         <aside aria-label="Sync activity" className="min-w-0 space-y-4">
@@ -314,33 +312,10 @@ function SourceAction({ source }: { source: SourceHealth }) {
   )
 }
 
-function ChatHistoryCard() {
-  return (
-    <article
-      aria-label="Chat history"
-      className="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-card border border-line bg-surface p-4"
-    >
-      <span
-        aria-hidden="true"
-        className="inline-flex size-11 shrink-0 items-center justify-center rounded-control bg-raised text-muted"
-      >
-        <MessagesSquare className="size-5" />
-      </span>
-      <div className="min-w-0 flex-1 basis-48">
-        <h3 className="text-base font-semibold">Chat history</h3>
-        <p className="mt-0.5 text-sm text-muted">Claude, ChatGPT and Gemini exports, added by importing their files.</p>
-      </div>
-      <span className="inline-flex min-h-8 items-center rounded-full bg-raised px-3 text-sm text-muted">
-        Coming later
-      </span>
-    </article>
-  )
-}
-
 function ActivityPanel({ status, loading, online }: { status: ServerStatus | null; loading: boolean; online: boolean }) {
-  const [expanded, setExpanded] = useState(false)
   const events = status?.activity ?? []
-  const shown = expanded ? events : events.slice(0, ACTIVITY_PREVIEW)
+  const shown = events.slice(0, ACTIVITY_PREVIEW)
+  const activityPath = sourcesActivityPath()
   return (
     <section aria-labelledby="activity-heading" className="rounded-card border border-line bg-surface p-4">
       <h2 id="activity-heading" className="text-base font-semibold">
@@ -360,14 +335,13 @@ function ActivityPanel({ status, loading, online }: { status: ServerStatus | nul
             ))}
           </ol>
           {events.length > ACTIVITY_PREVIEW ? (
-            <button
-              type="button"
-              aria-expanded={expanded}
-              onClick={() => setExpanded((open) => !open)}
+            <a
+              href={activityPath}
+              onClick={(event) => followLink(event, activityPath)}
               className="mt-3 inline-flex min-h-11 items-center rounded-control px-2 text-sm font-medium text-accent-ink hover:bg-raised"
             >
-              {expanded ? 'Show less' : `Show all ${events.length}`}
-            </button>
+              {`Show all ${events.length}`}
+            </a>
           ) : null}
         </>
       )}
@@ -375,7 +349,7 @@ function ActivityPanel({ status, loading, online }: { status: ServerStatus | nul
   )
 }
 
-function ActivityRow({ event }: { event: ActivityEvent }) {
+export function ActivityRow({ event }: { event: ActivityEvent }) {
   const { title, detail, tone } = activityText(event)
   return (
     <li className="flex gap-3">
@@ -391,11 +365,11 @@ function ActivityRow({ event }: { event: ActivityEvent }) {
   )
 }
 
-function EmptyCard({ children }: { children: ReactNode }) {
+export function EmptyCard({ children }: { children: ReactNode }) {
   return <p className="rounded-card border border-line bg-surface p-4 text-sm text-muted">{children}</p>
 }
 
-function Alert({ message, onRetry }: { message: string; onRetry?: () => void }) {
+export function Alert({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <div
       role="alert"

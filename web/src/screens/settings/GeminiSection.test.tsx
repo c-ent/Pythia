@@ -109,10 +109,10 @@ function setOnline(online: boolean): void {
 }
 
 const keyCard = (): HTMLElement => screen.getByRole('region', { name: 'API key' })
-const rulesCard = (): HTMLElement => screen.getByRole('region', { name: 'Kept away from Gemini' })
+const rulesCard = (): HTMLElement => screen.getByRole('region', { name: 'Access & exclusions' })
 
 function access(label: string): HTMLElement {
-  return within(rulesCard()).getByRole('radiogroup', { name: `Gemini access for ${label}` })
+  return within(rulesCard()).getByRole('radiogroup', { name: `Access for ${label}` })
 }
 
 function checked(label: string): string | undefined {
@@ -291,15 +291,15 @@ describe('GeminiSection: rules', () => {
       expect.stringContaining('secret-repo'),
     ])
     expect(checked('open-repo')).toBe('Allowed')
-    expect(checked('secret-repo')).toBe('Locked')
+    expect(checked('secret-repo')).toBe('No Gemini')
 
     // Expanding Obsidian shows Folders, Tags and Notes tabs.
     fireEvent.click(obsidianBtn)
-    expect(checked('Journal/')).toBe('Locked')
+    expect(checked('Journal/')).toBe('No Gemini')
     fireEvent.click(within(card).getByRole('tab', { name: /Tags/ }))
-    expect(checked('#private')).toBe('Locked')
+    expect(checked('#private')).toBe('No Gemini')
     fireEvent.click(within(card).getByRole('tab', { name: /Notes/ }))
-    expect(checked('Health/Doctor.md')).toBe('Locked')
+    expect(checked('Health/Doctor.md')).toBe('No Gemini')
     expect(within(card).getByText('Inside Journal/')).toBeTruthy()
   })
 
@@ -312,15 +312,15 @@ describe('GeminiSection: rules', () => {
     render(<GeminiSection />)
     const card = rulesCard()
     fireEvent.click(await within(card).findByRole('button', { name: /GitHub/ }))
-    fireEvent.click(within(access('open-repo')).getByRole('radio', { name: 'Locked' }))
-    await waitFor(() => expect(checked('open-repo')).toBe('Locked'))
-    fireEvent.click(within(access('Google Keep')).getByRole('radio', { name: 'Locked' }))
-    await waitFor(() => expect(checked('Google Keep')).toBe('Locked'))
+    fireEvent.click(within(access('open-repo')).getByRole('radio', { name: 'No Gemini' }))
+    await waitFor(() => expect(checked('open-repo')).toBe('No Gemini'))
+    fireEvent.click(within(access('Google Keep')).getByRole('radio', { name: 'Excluded' }))
+    await waitFor(() => expect(checked('Google Keep')).toBe('Excluded'))
     expect(server.puts).toEqual([
       [{ kind: 'repo', path: 'open-repo' }],
       [
         { kind: 'repo', path: 'open-repo' },
-        { kind: 'keep', path: 'keep' },
+        { kind: 'keep', path: 'keep', scope: 'all' },
       ],
     ])
   })
@@ -334,15 +334,15 @@ describe('GeminiSection: rules', () => {
     expect(within(card).getByText('Summary.docx')).toBeTruthy()
     expect(within(card).getByText('Notes.pdf')).toBeTruthy()
 
-    fireEvent.click(within(access('Drive: Finance/')).getByRole('radio', { name: 'Locked' }))
-    await waitFor(() => expect(checked('Drive: Finance/')).toBe('Locked'))
-    fireEvent.click(within(access('All of Google Drive')).getByRole('radio', { name: 'Locked' }))
-    await waitFor(() => expect(checked('All of Google Drive')).toBe('Locked'))
+    fireEvent.click(within(access('Drive: Finance/')).getByRole('radio', { name: 'Excluded' }))
+    await waitFor(() => expect(checked('Drive: Finance/')).toBe('Excluded'))
+    fireEvent.click(within(access('All of Google Drive')).getByRole('radio', { name: 'No Gemini' }))
+    await waitFor(() => expect(checked('All of Google Drive')).toBe('No Gemini'))
     expect(within(card).getByText('Covered by Drive lock')).toBeTruthy()
     expect(server.puts).toEqual([
-      [{ kind: 'gdrive', path: 'Finance' }],
+      [{ kind: 'gdrive', path: 'Finance', scope: 'all' }],
       [
-        { kind: 'gdrive', path: 'Finance' },
+        { kind: 'gdrive', path: 'Finance', scope: 'all' },
         { kind: 'gdrive', path: '/' },
       ],
     ])
@@ -357,8 +357,8 @@ describe('GeminiSection: rules', () => {
     fireEvent.click(within(access('Journal/')).getByRole('radio', { name: 'Allowed' }))
     await waitFor(() => expect(checked('Journal/')).toBe('Allowed'))
     expect(within(card).getByText('64 notes')).toBeTruthy()
-    fireEvent.click(within(access('Journal/')).getByRole('radio', { name: 'Locked' }))
-    await waitFor(() => expect(checked('Journal/')).toBe('Locked'))
+    fireEvent.click(within(access('Journal/')).getByRole('radio', { name: 'No Gemini' }))
+    await waitFor(() => expect(checked('Journal/')).toBe('No Gemini'))
     fireEvent.click(within(card).getByRole('button', { name: 'Remove Journal/' }))
     await waitFor(() => expect(within(card).queryByText('Journal/')).toBeNull())
     expect(server.puts).toEqual([[], [{ kind: 'folder', path: 'Journal' }], []])
@@ -368,7 +368,7 @@ describe('GeminiSection: rules', () => {
     const server = stubServer()
     render(<GeminiSection />)
     const card = rulesCard()
-    await within(card).findByText(/Nothing is locked/)
+    await within(card).findByText(/Nothing is restricted/)
     fireEvent.click(within(card).getByRole('button', { name: /Obsidian/ }))
     fireEvent.change(within(card).getByLabelText('Path in the vault'), { target: { value: ' ./Work\\Clients/ ' } })
     fireEvent.click(within(card).getByRole('button', { name: 'Add rule' }))
@@ -393,11 +393,11 @@ describe('GeminiSection: rules', () => {
     const server = stubServer({ repos: null })
     render(<GeminiSection />)
     const card = rulesCard()
-    await within(card).findByText(/Nothing is locked/)
+    await within(card).findByText(/Nothing is restricted/)
     fireEvent.click(within(card).getByRole('button', { name: /GitHub/ }))
     fireEvent.change(within(card).getByLabelText('Lock a repo by name'), { target: { value: ' old-repo ' } })
     fireEvent.click(within(card).getByRole('button', { name: 'Add repo' }))
-    await waitFor(() => expect(checked('old-repo')).toBe('Locked'))
+    await waitFor(() => expect(checked('old-repo')).toBe('No Gemini'))
 
     fireEvent.click(within(card).getByRole('button', { name: /Google Drive/ }))
     fireEvent.change(within(card).getByLabelText('Add Drive folder'), { target: { value: '/Clients/Acme/' } })
@@ -416,7 +416,7 @@ describe('GeminiSection: rules', () => {
     const server = stubServer()
     render(<GeminiSection />)
     const card = rulesCard()
-    await within(card).findByText(/Nothing is locked/)
+    await within(card).findByText(/Nothing is restricted/)
     fireEvent.click(within(card).getByRole('button', { name: /Obsidian/ }))
     fireEvent.change(within(card).getByLabelText('Lock a'), { target: { value: 'note' } })
     fireEvent.change(within(card).getByLabelText('Path in the vault'), { target: { value: 'Health/Doctor' } })
@@ -436,7 +436,7 @@ describe('GeminiSection: rules', () => {
     fireEvent.click(within(card).getByRole('button', { name: 'Remove Journal/' }))
     expect(await within(card).findByText('Couldn’t save the change. Try again.')).toBeTruthy()
     expect(within(card).getByText('Journal/')).toBeTruthy()
-    expect(checked('Journal/')).toBe('Locked')
+    expect(checked('Journal/')).toBe('No Gemini')
   })
 
   it('shows a load error and retries', async () => {
@@ -571,8 +571,8 @@ describe('Gemini access helpers', () => {
       [],
     )
     expect(repos).toEqual([
-      { name: 'alpha', files: 5, locked: false, inIndex: true },
-      { name: 'removed-repo', files: 2, locked: true, inIndex: false },
+      { name: 'alpha', files: 5, locked: false, access: 'allowed', inIndex: true },
+      { name: 'removed-repo', files: 2, locked: true, access: 'llm', inIndex: false },
     ])
 
     const drive = buildDriveView(
@@ -595,9 +595,10 @@ describe('Gemini access helpers', () => {
     })
     expect(drive.rootFiles).toEqual([{ path: 'Root.pdf', name: 'Root.pdf' }])
 
-    expect(buildKeepRow({ documents: 12 }, [])).toEqual({ locked: false, documents: 12 })
+    expect(buildKeepRow({ documents: 12 }, [])).toEqual({ locked: false, access: 'allowed', documents: 12 })
     expect(buildKeepRow({ documents: 12 }, [{ kind: 'keep', path: 'keep', documents: 15 }])).toEqual({
       locked: true,
+      access: 'llm',
       documents: 15,
     })
   })

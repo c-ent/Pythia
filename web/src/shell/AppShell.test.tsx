@@ -185,8 +185,14 @@ describe('AppShell', () => {
     unmount()
 
     window.history.replaceState(null, '', '/sources/obsidian')
-    render(<AppShell onSignOut={() => {}} />)
+    const { unmount: unmountObsidian } = render(<AppShell onSignOut={() => {}} />)
     expect(await screen.findByRole('heading', { level: 1, name: 'Obsidian vault' })).toBeTruthy()
+    expect(nav().getByRole('link', { name: 'Sources' }).getAttribute('aria-current')).toBe('true')
+    unmountObsidian()
+
+    window.history.replaceState(null, '', '/sources/activity')
+    render(<AppShell onSignOut={() => {}} />)
+    expect(await screen.findByRole('heading', { level: 1, name: 'Recent activity' })).toBeTruthy()
     expect(nav().getByRole('link', { name: 'Sources' }).getAttribute('aria-current')).toBe('true')
   })
 

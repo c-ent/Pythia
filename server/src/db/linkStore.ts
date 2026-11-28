@@ -100,7 +100,7 @@ export function createPgBacklinkStore(pool: Pool): BacklinkStore {
                 ) AS aliases
          FROM documents d
          JOIN sources s ON s.id = d.source_id
-         WHERE d.id = $1 AND s.enabled AND s.kind <> 'work'`,
+         WHERE d.id = $1 AND s.enabled AND s.kind <> 'work' AND NOT d.excluded`,
         [documentId],
       )
       const row = rows[0]
@@ -135,7 +135,7 @@ export function createPgBacklinkStore(pool: Pool): BacklinkStore {
         `SELECT l.document_id, l.ordinal, l.kind, l.target, l.heading, l.display
          FROM links l
          JOIN documents d ON d.id = l.document_id
-         WHERE l.target_key = ANY ($2::text[]) AND l.kind = ANY ($3::text[]) AND d.source_id = $1
+         WHERE l.target_key = ANY ($2::text[]) AND l.kind = ANY ($3::text[]) AND d.source_id = $1 AND NOT d.excluded
          ORDER BY l.document_id, l.ordinal`,
         [sourceId, [...keys], NOTE_KINDS],
       )
@@ -148,7 +148,7 @@ export function createPgBacklinkStore(pool: Pool): BacklinkStore {
                 array_remove(array_agg(l.target ORDER BY l.ordinal), NULL) AS aliases
          FROM documents d
          LEFT JOIN links l ON l.document_id = d.id AND l.kind = 'alias'
-         WHERE d.source_id = $1
+         WHERE d.source_id = $1 AND NOT d.excluded
          GROUP BY d.id
          ORDER BY d.id`,
         [sourceId],

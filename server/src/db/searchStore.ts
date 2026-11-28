@@ -163,7 +163,7 @@ export function createPgAskContextLoader(pool: Pool): AskContextLoader {
          FROM documents d
          JOIN sources s ON s.id = d.source_id
          JOIN chunks c ON c.document_id = d.id AND c.ordinal = 0
-         WHERE s.enabled AND s.kind = 'repo' AND d.path = $1
+         WHERE s.enabled AND s.kind = 'repo' AND NOT d.excluded AND d.path = $1
            AND ($2::text IS NULL OR s.name = $2::text)
          ORDER BY coalesce(d.mtime, d.updated_at) DESC, s.name`,
         [SUMMARY_PATH, filters.repo ?? null],
@@ -246,7 +246,7 @@ export function createPgChunkTextLoader(pool: Pool): ChunkTextLoader {
          FROM chunks c
          JOIN documents d ON d.id = c.document_id
          JOIN sources s ON s.id = d.source_id
-         WHERE c.id = ANY ($1::bigint[]) AND s.enabled AND s.kind <> 'work'`,
+         WHERE c.id = ANY ($1::bigint[]) AND s.enabled AND s.kind <> 'work' AND NOT d.excluded`,
         [ids.map(String)],
       )
       return new Map(rows.map((row) => [Number(row.id), { content: row.content, allowLlm: row.allow_llm }]))
@@ -265,7 +265,7 @@ export const RRF_K = 60
 
 // Shared by both CTEs so filtered-out rows never take one of the top slots.
 // Uses $3 (kinds or null) and $4 (repo name or null).
-const SOURCE_FILTER = `s.enabled AND s.kind <> 'work'
+const SOURCE_FILTER = `s.enabled AND s.kind <> 'work' AND NOT d.excluded
   AND ($3::text[] IS NULL OR s.kind = ANY ($3::text[]))
   AND ($4::text IS NULL OR (s.kind = 'repo' AND s.name = $4::text))`
 
@@ -378,7 +378,7 @@ const toSummary = (row: DocumentRow): DocumentSummary => ({
 const toVectorLiteral = (vector: readonly number[]): string => `[${vector.join(',')}]`
 
 const DOCUMENT_COLUMNS = `d.id, s.kind, s.name AS source_name, d.path, d.title, d.language, d.allow_llm, d.mtime, d.updated_at`
-const VISIBLE_SOURCE = `s.enabled AND s.kind <> 'work'`
+const VISIBLE_SOURCE = `s.enabled AND s.kind <> 'work' AND NOT d.excluded`
 
 export function createPgSearchStore(pool: Pool): SearchStore {
   return {

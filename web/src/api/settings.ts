@@ -11,11 +11,14 @@ import { apiFetch } from './client'
  *   folder in My Drive (its files and subfolders).
  */
 export type LlmExclusionKind = 'folder' | 'note' | 'tag' | 'repo' | 'keep' | 'gdrive'
+export type ExclusionScope = 'llm' | 'all'
 
-/** One rule on the "Kept away from Gemini" list. */
+/** One rule on the "Access & exclusions" list. */
 export interface LlmExclusion {
   kind: LlmExclusionKind
   path: string
+  /** `'llm'` (default): kept away from Gemini only. `'all'`: excluded from search, Ask, maps, and `/mcp`. */
+  scope?: ExclusionScope
 }
 
 /** A rule as the server returns it, with how many stored documents it covers now. */
@@ -71,7 +74,11 @@ export async function saveLlmExclusions(exclusions: readonly LlmExclusion[]): Pr
   const res = await apiFetch('/api/settings/llm-exclusions', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ exclusions: exclusions.map(({ kind, path }) => ({ kind, path })) }),
+    body: JSON.stringify({
+      exclusions: exclusions.map(({ kind, path, scope }) =>
+        scope === 'all' ? { kind, path, scope } : { kind, path },
+      ),
+    }),
   })
   return ((await res.json()) as { exclusions: CountedLlmExclusion[] }).exclusions
 }

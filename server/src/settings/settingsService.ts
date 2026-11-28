@@ -2,6 +2,7 @@ import { z } from 'zod'
 import {
   cleanExclusions,
   EMPTY_EXCLUSION_CATALOG,
+  EXCLUSION_SCOPES,
   LLM_EXCLUSION_KINDS,
   normalizeRulePath,
   sortExclusions,
@@ -35,6 +36,7 @@ const exclusionSchema = z
       .max(MAX_PATH_LENGTH)
       .refine((path) => !CONTROL_CHARACTER.test(path), 'path must not contain control characters')
       .default(''),
+    scope: z.enum(EXCLUSION_SCOPES).optional(),
   })
   .transform((value, ctx): LlmExclusion => {
     const path = normalizeRulePath(value.kind, value.path)
@@ -47,7 +49,7 @@ const exclusionSchema = z
       ctx.addIssue({ code: 'custom', message: 'a note path must end in .md', path: ['path'] })
       return z.NEVER
     }
-    return { kind: value.kind, path }
+    return value.scope === 'all' ? { kind: value.kind, path, scope: 'all' } : { kind: value.kind, path }
   })
 
 /** Body of `PUT /api/settings/llm-exclusions`: the whole list, replacing the stored one. */

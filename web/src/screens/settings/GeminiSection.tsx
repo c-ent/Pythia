@@ -3,6 +3,7 @@ import {
   ChevronRight,
   CircleCheck,
   Cloud,
+  EyeOff,
   FileSpreadsheet,
   FileText,
   Folder,
@@ -55,6 +56,7 @@ import {
   keyWarningText,
   sameRule,
   testResultText,
+  type RuleAccess,
 } from './gemini'
 
 const CARD = 'rounded-card border border-line bg-surface p-4 sm:p-5'
@@ -366,11 +368,13 @@ function RulesCard({ online }: { online: boolean }) {
     }
   }
 
-  const toggleRule = (kind: LlmExclusionKind, path: string, locked: boolean): void => {
-    const target: LlmExclusion = { kind, path }
-    const exists = list.some((rule) => sameRule(rule, target))
-    if (locked === exists) return
-    void save(locked ? [...list, target] : list.filter((rule) => !sameRule(rule, target)))
+  const setAccess = (kind: LlmExclusionKind, path: string, access: RuleAccess): void => {
+    const target: LlmExclusion = access === 'all' ? { kind, path, scope: 'all' } : { kind, path }
+    const current = list.find((rule) => sameRule(rule, target))
+    const currentAccess: RuleAccess = current === undefined ? 'allowed' : current.scope === 'all' ? 'all' : 'llm'
+    if (access === currentAccess) return
+    const without = list.filter((rule) => !sameRule(rule, target))
+    void save(access === 'allowed' ? without : [...without, target])
   }
 
   const removeRule = (kind: LlmExclusionKind, path: string): void => {
@@ -391,12 +395,14 @@ function RulesCard({ online }: { online: boolean }) {
         <Lock aria-hidden="true" className="mt-1 size-4 shrink-0 text-muted" />
         <div>
           <h3 id="gemini-rules-heading" className="text-base font-semibold">
-            Kept away from Gemini
+            Access &amp; exclusions
           </h3>
           <p className="mt-0.5 text-sm text-muted">
-            Locked folders, notes, tags, repos, Google Drive and Google Keep stay searchable but are never sent to Gemini.
-            Notes with <span className="font-mono">llm: false</span> in their frontmatter are always kept away. Anything no
-            rule covers is allowed.
+            Choose <strong className="font-medium text-ink">Allowed</strong>,{' '}
+            <strong className="font-medium text-ink">No Gemini</strong> (searchable and in maps, never sent to Gemini),
+            or <strong className="font-medium text-ink">Excluded</strong> (hidden from search, Ask, maps, offline sync,
+            and <span className="font-mono">/mcp</span>). Notes with <span className="font-mono">llm: false</span> in
+            frontmatter are always kept away from Gemini.
           </p>
         </div>
       </div>
@@ -413,7 +419,7 @@ function RulesCard({ online }: { online: boolean }) {
       ) : (
         <>
           {list.length === 0 ? (
-            <p className="mt-4 text-sm text-muted">Nothing is locked. Gemini may read every note.</p>
+            <p className="mt-4 text-sm text-muted">Nothing is restricted. Everything is searchable and Gemini may read every note.</p>
           ) : null}
 
           <div className="mt-4 space-y-2.5">
@@ -421,7 +427,7 @@ function RulesCard({ online }: { online: boolean }) {
               view={obsidian}
               list={list}
               saving={saving}
-              onToggle={(kind, path, locked) => toggleRule(kind, path, locked)}
+              onAccess={(kind, path, access) => setAccess(kind, path, access)}
               onRemove={(kind, path) => removeRule(kind, path)}
               onAdd={(item) => save([...list, item])}
             />
@@ -430,7 +436,7 @@ function RulesCard({ online }: { online: boolean }) {
               reposEnabled={repos !== null}
               list={list}
               saving={saving}
-              onToggle={(name, locked) => toggleRule('repo', name, locked)}
+              onAccess={(name, access) => setAccess('repo', name, access)}
               onRemove={(name) => removeRule('repo', name)}
               onAdd={(item) => save([...list, item])}
             />
@@ -438,15 +444,15 @@ function RulesCard({ online }: { online: boolean }) {
               view={drive}
               list={list}
               saving={saving}
-              onToggle={(path, locked) => toggleRule('gdrive', path, locked)}
+              onAccess={(path, access) => setAccess('gdrive', path, access)}
               onRemove={(path) => removeRule('gdrive', path)}
               onAdd={(item) => save([...list, item])}
             />
             <KeepRow
-              locked={keep.locked}
+              access={keep.access}
               documents={keep.documents}
               saving={saving}
-              onLocked={(locked) => toggleRule('keep', KEEP_RULE_PATH, locked)}
+              onAccess={(access) => setAccess('keep', KEEP_RULE_PATH, access)}
             />
           </div>
 
@@ -515,14 +521,14 @@ function ObsidianSection({
   view,
   list,
   saving,
-  onToggle,
+  onAccess,
   onRemove,
   onAdd,
 }: {
   view: ReturnType<typeof buildObsidianView>
   list: readonly LlmExclusion[]
   saving: boolean
-  onToggle: (kind: 'folder' | 'note' | 'tag', path: string, locked: boolean) => void
+  onAccess: (kind: 'folder' | 'note' | 'tag', path: string, access: RuleAccess) => void
   onRemove: (kind: 'folder' | 'note' | 'tag', path: string) => void
   onAdd: (item: LlmExclusion) => Promise<boolean>
 }) {
@@ -589,9 +595,9 @@ function ObsidianSection({
                 label={`${folder.path}/`}
                 count={folder.documents === null ? null : plural(folder.documents, 'note')}
                 badge={folder.coveredByParent === null ? null : `Inside ${folder.coveredByParent}/`}
-                locked={folder.locked}
+                access={folder.access}
                 saving={saving}
-                onLocked={(locked) => onToggle('folder', folder.path, locked)}
+                onAccess={(access) => onAccess('folder', folder.path, access)}
                 onRemove={folder.inCatalog ? undefined : () => onRemove('folder', folder.path)}
               />
             ))}
@@ -612,9 +618,9 @@ function ObsidianSection({
                 label={`#${item.tag}`}
                 count={item.documents === null ? null : plural(item.documents, 'note')}
                 badge={item.coveredByParent === null ? null : `Covered by #${item.coveredByParent}`}
-                locked={item.locked}
+                access={item.access}
                 saving={saving}
-                onLocked={(locked) => onToggle('tag', item.tag, locked)}
+                onAccess={(access) => onAccess('tag', item.tag, access)}
                 onRemove={item.inCatalog ? undefined : () => onRemove('tag', item.tag)}
               />
             ))}
@@ -634,9 +640,9 @@ function ObsidianSection({
               label={note.path}
               count={null}
               badge={note.coveredByFolder === null ? null : `Inside ${note.coveredByFolder}/`}
-              locked={note.locked}
+              access={note.access}
               saving={saving}
-              onLocked={(locked) => onToggle('note', note.path, locked)}
+              onAccess={(access) => onAccess('note', note.path, access)}
               onRemove={note.inCatalog ? undefined : () => onRemove('note', note.path)}
             />
           ))}
@@ -653,7 +659,7 @@ function GitHubSection({
   reposEnabled,
   list,
   saving,
-  onToggle,
+  onAccess,
   onRemove,
   onAdd,
 }: {
@@ -661,7 +667,7 @@ function GitHubSection({
   reposEnabled: boolean
   list: readonly LlmExclusion[]
   saving: boolean
-  onToggle: (name: string, locked: boolean) => void
+  onAccess: (name: string, access: RuleAccess) => void
   onRemove: (name: string) => void
   onAdd: (item: LlmExclusion) => Promise<boolean>
 }) {
@@ -694,9 +700,9 @@ function GitHubSection({
               label={repo.name}
               count={plural(repo.files, 'file')}
               badge={repo.inIndex ? null : 'Not in repos.json'}
-              locked={repo.locked}
+              access={repo.access}
               saving={saving}
-              onLocked={(locked) => onToggle(repo.name, locked)}
+              onAccess={(access) => onAccess(repo.name, access)}
               onRemove={repo.inIndex ? undefined : () => onRemove(repo.name)}
             />
           ))}
@@ -719,14 +725,14 @@ function DriveSection({
   view,
   list,
   saving,
-  onToggle,
+  onAccess,
   onRemove,
   onAdd,
 }: {
   view: ReturnType<typeof buildDriveView>
   list: readonly LlmExclusion[]
   saving: boolean
-  onToggle: (path: string, locked: boolean) => void
+  onAccess: (path: string, access: RuleAccess) => void
   onRemove: (path: string) => void
   onAdd: (item: LlmExclusion) => Promise<boolean>
 }) {
@@ -758,9 +764,9 @@ function DriveSection({
           label="All of Google Drive"
           count={plural(view.allDocuments, 'file')}
           badge={null}
-          locked={view.allLocked}
+          access={view.allAccess}
           saving={saving}
-          onLocked={(locked) => onToggle(DRIVE_ROOT_RULE_PATH, locked)}
+          onAccess={(access) => onAccess(DRIVE_ROOT_RULE_PATH, access)}
         />
       </ul>
       <p className="mt-1 text-xs text-muted">
@@ -786,7 +792,7 @@ function DriveSection({
               folder={folder}
               needle={needle}
               saving={saving}
-              onLocked={(locked) => onToggle(folder.path, locked)}
+              onAccess={(access) => onAccess(folder.path, access)}
               onRemove={folder.inCatalog ? undefined : () => onRemove(folder.path)}
             />
           ))}
@@ -826,13 +832,13 @@ function DriveFolderItem({
   folder,
   needle,
   saving,
-  onLocked,
+  onAccess,
   onRemove,
 }: {
   folder: ReturnType<typeof buildDriveView>['folders'][number]
   needle: string
   saving: boolean
-  onLocked: (locked: boolean) => void
+  onAccess: (access: RuleAccess) => void
   onRemove?: () => void
 }) {
   const [showAllFiles, setShowAllFiles] = useState(false)
@@ -860,9 +866,9 @@ function DriveFolderItem({
         )}
         <AccessToggle
           label={`Drive: ${folder.path}/`}
-          locked={folder.locked}
+          access={folder.access}
           saving={saving}
-          onLocked={onLocked}
+          onAccess={onAccess}
         />
         {onRemove === undefined ? null : (
           <RemoveButton label={`Drive: ${folder.path}/`} saving={saving} onRemove={onRemove} />
@@ -894,15 +900,15 @@ function DriveFolderItem({
 }
 
 function KeepRow({
-  locked,
+  access,
   documents,
   saving,
-  onLocked,
+  onAccess,
 }: {
-  locked: boolean
+  access: RuleAccess
   documents: number
   saving: boolean
-  onLocked: (locked: boolean) => void
+  onAccess: (access: RuleAccess) => void
 }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control border border-line bg-canvas px-3.5 py-2.5">
@@ -911,7 +917,7 @@ function KeepRow({
         <span className="text-sm font-semibold text-ink">Google Keep</span>
       </span>
       <span className="text-sm text-muted tabular-nums">{plural(documents, 'note')}</span>
-      <AccessToggle label="Google Keep" locked={locked} saving={saving} onLocked={onLocked} />
+      <AccessToggle label="Google Keep" access={access} saving={saving} onAccess={onAccess} />
     </div>
   )
 }
@@ -922,9 +928,9 @@ function RuleRowItem({
   label,
   count,
   badge,
-  locked,
+  access,
   saving,
-  onLocked,
+  onAccess,
   onRemove,
 }: {
   icon: LucideIcon
@@ -932,9 +938,9 @@ function RuleRowItem({
   label: string
   count: string | null
   badge: string | null
-  locked: boolean
+  access: RuleAccess
   saving: boolean
-  onLocked: (locked: boolean) => void
+  onAccess: (access: RuleAccess) => void
   onRemove?: () => void
 }) {
   return (
@@ -946,7 +952,7 @@ function RuleRowItem({
         {badge === null ? null : <span className="rounded-full bg-raised px-2 py-0.5 text-xs text-muted">{badge}</span>}
       </span>
       {count === null ? null : <span className="text-sm text-muted tabular-nums">{count}</span>}
-      <AccessToggle label={label} locked={locked} saving={saving} onLocked={onLocked} />
+      <AccessToggle label={label} access={access} saving={saving} onAccess={onAccess} />
       {onRemove === undefined ? null : <RemoveButton label={label} saving={saving} onRemove={onRemove} />}
     </li>
   )
@@ -954,22 +960,25 @@ function RuleRowItem({
 
 function AccessToggle({
   label,
-  locked,
+  access,
   saving,
-  onLocked,
+  onAccess,
 }: {
   label: string
-  locked: boolean
+  access: RuleAccess
   saving: boolean
-  onLocked: (locked: boolean) => void
+  onAccess: (access: RuleAccess) => void
 }) {
   return (
-    <div role="radiogroup" aria-label={`Gemini access for ${label}`} className="flex rounded-control bg-raised p-0.5">
-      <AccessButton checked={!locked} disabled={saving} onClick={() => onLocked(false)} icon={LockOpen}>
+    <div role="radiogroup" aria-label={`Access for ${label}`} className="flex flex-wrap rounded-control bg-raised p-0.5">
+      <AccessButton checked={access === 'allowed'} disabled={saving} onClick={() => onAccess('allowed')} icon={LockOpen}>
         Allowed
       </AccessButton>
-      <AccessButton checked={locked} disabled={saving} onClick={() => onLocked(true)} icon={Lock}>
-        Locked
+      <AccessButton checked={access === 'llm'} disabled={saving} onClick={() => onAccess('llm')} icon={Lock}>
+        No Gemini
+      </AccessButton>
+      <AccessButton checked={access === 'all'} disabled={saving} onClick={() => onAccess('all')} icon={EyeOff}>
+        Excluded
       </AccessButton>
     </div>
   )

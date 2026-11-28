@@ -1,6 +1,7 @@
 import type { Pool } from 'pg'
 import {
   buildExclusionCatalog,
+  type ExclusionScope,
   type LlmExclusion,
   type LlmExclusionCatalog,
   type LlmExclusionKind,
@@ -54,7 +55,7 @@ const APPLY_DRIVE_SQL = `
   FROM (
     SELECT d2.id, NOT EXISTS (
       SELECT 1 FROM llm_exclusions e
-      WHERE e.kind = 'gdrive' AND (e.path = '/' OR starts_with(lower(d2.path), lower(e.path) || '/'))
+      WHERE e.kind = 'gdrive' AND (e.path = '/' OR lower(d2.path) = lower(e.path) OR starts_with(lower(d2.path), lower(e.path) || '/'))
     ) AS allowed, lower(d2.path) LIKE '%.md' AS markdown
     FROM documents d2 JOIN sources s ON s.id = d2.source_id
     WHERE s.kind = 'gdrive'
@@ -75,22 +76,53 @@ const COUNT_SQL = `
       )
       WHEN 'repo' THEN s.kind = 'repo' AND lower(s.name) = lower(r.path)
       WHEN 'keep' THEN s.kind = 'keep'
-      WHEN 'gdrive' THEN s.kind = 'gdrive' AND (r.path = '/' OR starts_with(lower(d.path), lower(r.path) || '/'))
+      WHEN 'gdrive' THEN s.kind = 'gdrive' AND (r.path = '/' OR lower(d.path) = lower(r.path) OR starts_with(lower(d.path), lower(r.path) || '/'))
       ELSE false
     END
   ) AS n
   FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS r (kind, path, i)
   ORDER BY r.i`
 
+// Rules with scope = 'all' hide matching documents from Search, Ask, Maps,
+// Backlinks, Offline sync, and `/mcp` across all sources.
+const APPLY_EXCLUDED_SQL = `
+  UPDATE documents AS d SET
+    excluded = x.excluded,
+    allow_llm = CASE WHEN x.excluded THEN false ELSE d.allow_llm END,
+    updated_at = now()
+  FROM (
+    SELECT d2.id, EXISTS (
+      SELECT 1 FROM llm_exclusions e
+      WHERE e.scope = 'all' AND (
+        (s.kind = 'obsidian' AND (
+          (e.kind = 'folder' AND starts_with(lower(d2.path), lower(e.path) || '/'))
+          OR (e.kind = 'note' AND lower(d2.path) = lower(e.path))
+          OR (e.kind = 'tag' AND EXISTS (
+            SELECT 1 FROM unnest(d2.tags) AS t (tag)
+            WHERE t.tag = lower(e.path) OR starts_with(t.tag, lower(e.path) || '/')
+          ))
+        ))
+        OR (s.kind = 'repo' AND e.kind = 'repo' AND lower(s.name) = lower(e.path))
+        OR (s.kind = 'keep' AND e.kind = 'keep')
+        OR (s.kind = 'gdrive' AND e.kind = 'gdrive' AND (e.path = '/' OR lower(d2.path) = lower(e.path) OR starts_with(lower(d2.path), lower(e.path) || '/')))
+      )
+    ) AS excluded
+    FROM documents d2
+    JOIN sources s ON s.id = d2.source_id
+  ) AS x
+  WHERE d.id = x.id AND d.excluded IS DISTINCT FROM x.excluded`
+
 const KIND_ORDER_SQL = `CASE kind WHEN 'folder' THEN 0 WHEN 'note' THEN 1 WHEN 'tag' THEN 2 WHEN 'repo' THEN 3 WHEN 'keep' THEN 4 ELSE 5 END`
 
 export function createPgLlmExclusionStore(pool: Pool): LlmExclusionStore {
   return {
     async list() {
-      const { rows } = await pool.query<{ kind: LlmExclusionKind; path: string }>(
-        `SELECT kind, path FROM llm_exclusions ORDER BY ${KIND_ORDER_SQL}, lower(path), path`,
+      const { rows } = await pool.query<{ kind: LlmExclusionKind; path: string; scope: ExclusionScope }>(
+        `SELECT kind, path, scope FROM llm_exclusions ORDER BY ${KIND_ORDER_SQL}, lower(path), path`,
       )
-      return rows.map((row): LlmExclusion => ({ kind: row.kind, path: row.path }))
+      return rows.map((row): LlmExclusion =>
+        row.scope === 'all' ? { kind: row.kind, path: row.path, scope: 'all' } : { kind: row.kind, path: row.path },
+      )
     },
 
     async replace(list) {
@@ -100,15 +132,17 @@ export function createPgLlmExclusionStore(pool: Pool): LlmExclusionStore {
         try {
           await client.query('DELETE FROM llm_exclusions')
           if (list.length > 0) {
-            await client.query('INSERT INTO llm_exclusions (kind, path) SELECT * FROM unnest($1::text[], $2::text[])', [
+            await client.query('INSERT INTO llm_exclusions (kind, path, scope) SELECT * FROM unnest($1::text[], $2::text[], $3::text[])', [
               list.map((exclusion) => exclusion.kind),
               list.map((exclusion) => exclusion.path),
+              list.map((exclusion) => exclusion.scope ?? 'llm'),
             ])
           }
           await client.query(TIGHTEN_VAULT_SQL)
           await client.query(APPLY_REPO_SQL)
           await client.query(APPLY_KEEP_SQL)
           await client.query(APPLY_DRIVE_SQL)
+          await client.query(APPLY_EXCLUDED_SQL)
           await client.query('COMMIT')
         } catch (error) {
           await client.query('ROLLBACK')
