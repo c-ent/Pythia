@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createApp } from '../app.js'
 import type { AskService } from '../ask/askService.js'
 import { ALWAYS_FREE_LIMITS, OFF_ORACLE_USAGE, type OracleUsageSnapshot } from '../health/oci/index.js'
+import { EMPTY_STORAGE_SCAN, type StorageScanSnapshot } from '../health/storageScan.js'
 import type { SearchService } from '../search/searchService.js'
 import { testAuth } from './testAuth.js'
 
@@ -12,7 +13,8 @@ const search = {} as SearchService
 const ask = {} as AskService
 let server: Server | undefined
 
-async function start(overrides: { checksHealth?: 'ok' | 'broken'; oracle?: OracleUsageSnapshot } = {}) {
+async function start(overrides: { checksHealth?: 'ok' | 'broken'; oracle?: OracleUsageSnapshot; storage?: StorageScanSnapshot } = {}) {
+  let currentStorage = overrides.storage ?? EMPTY_STORAGE_SCAN
   const serverHealth = {
     async read() {
       return {
@@ -23,12 +25,29 @@ async function start(overrides: { checksHealth?: 'ok' | 'broken'; oracle?: Oracl
         databaseBytes: 200,
         uptimeSeconds: { host: 1000, app: 200 },
         version: { app: '1.2.3', commit: 'abc123' },
+        processes: {
+          scope: 'host' as const,
+          totalCount: 10,
+          topCpu: [{ pid: 10, name: 'ollama', cpuPercent: 12.5, memoryBytes: 300 }],
+          topMemory: [{ pid: 10, name: 'ollama', cpuPercent: 12.5, memoryBytes: 300 }],
+        },
       }
     },
     async health() {
       return { checkedAt: '2026-11-28T00:00:00.000Z', health: overrides.checksHealth ?? ('ok' as const), checks: {} as never }
     },
     ...(overrides.oracle === undefined ? {} : { oracle: () => overrides.oracle! }),
+    storage: () => currentStorage,
+    async scanStorage() {
+      currentStorage = {
+        ...EMPTY_STORAGE_SCAN,
+        status: 'ready',
+        scannedAt: '2026-11-28T00:02:00.000Z',
+        hostRootMounted: true,
+        largestFiles: [{ path: '/var/log/syslog', bytes: 1024 }],
+      }
+      return currentStorage
+    },
   }
   server = createServer(createApp({ search, ask, auth, hostMetrics: serverHealth }))
   await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
@@ -36,6 +55,7 @@ async function start(overrides: { checksHealth?: 'ok' | 'broken'; oracle?: Oracl
   return {
     base,
     get: (path: string, headers: Record<string, string> = {}) => fetch(`${base}${path}`, { headers }),
+    post: (path: string, headers: Record<string, string> = {}) => fetch(`${base}${path}`, { method: 'POST', headers }),
   }
 }
 
@@ -97,5 +117,24 @@ describe('GET /api/status/server', () => {
 
     const fallback = await start()
     expect(await (await fallback.get('/api/status/server', { cookie })).json()).toMatchObject({ oracle: OFF_ORACLE_USAGE })
+  })
+
+  it('triggers a storage scan via POST /api/status/server/scan for authenticated sessions', async () => {
+    const { post, get } = await start()
+    expect((await post('/api/status/server/scan')).status).toBe(401)
+
+    const scanRes = await post('/api/status/server/scan', { cookie })
+    expect(scanRes.status).toBe(200)
+    expect(scanRes.headers.get('cache-control')).toBe('no-store')
+    expect(await scanRes.json()).toMatchObject({
+      status: 'ready',
+      hostRootMounted: true,
+      largestFiles: [{ path: '/var/log/syslog', bytes: 1024 }],
+    })
+
+    const statusRes = await get('/api/status/server', { cookie })
+    expect(await statusRes.json()).toMatchObject({
+      storage: { status: 'ready', largestFiles: [{ path: '/var/log/syslog', bytes: 1024 }] },
+    })
   })
 })

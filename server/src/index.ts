@@ -46,6 +46,7 @@ import { createSyncNow } from './sync/syncNow.js'
 import { createHostMetrics } from './health/hostMetrics.js'
 import { createConnectionChecks } from './health/connectionChecks.js'
 import { combineOverallHealth, createOciClient, createOracleUsage } from './health/oci/index.js'
+import { createStorageScan } from './health/storageScan.js'
 
 const config = loadConfig(process.env)
 // A dropped Postgres connection is logged and reconnected, never fatal (T53).
@@ -205,6 +206,14 @@ const hostMetrics = createHostMetrics(pool, {
 })
 const oci = createOciClient(config.oci)
 const oracleUsage = createOracleUsage(oci, config.oci?.tenancyId ?? null)
+const storageScan = createStorageScan({
+  pool,
+  ollamaUrl: config.ollamaUrl,
+  hostRoot: config.hostRoot,
+  vaultPath: config.vaultPath,
+  reposDir: config.repos?.mirrorsDir ?? null,
+  driveDir: config.drive?.mirrorDir ?? null,
+})
 const connectionChecks = createConnectionChecks({
   pool,
   ollamaUrl: config.ollamaUrl,
@@ -221,6 +230,8 @@ const serverHealth = {
   read: () => hostMetrics.read(),
   health: () => connectionChecks.read(),
   oracle: () => oracleUsage.snapshot(),
+  storage: () => storageScan.snapshot(),
+  scanStorage: () => storageScan.scan(),
 }
 const server = createServer(
   createApp({
@@ -259,6 +270,7 @@ const shutdown = (): void => {
     await repos?.close()
     await drive?.close()
     await neighbours.idle()
+    storageScan.close()
     oracleUsage.close()
     hostMetrics.close()
     await pool.end()

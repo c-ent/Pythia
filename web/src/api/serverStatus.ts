@@ -76,6 +76,90 @@ export const OFF_ORACLE_USAGE: OracleUsageSnapshot = {
   usage: null,
 }
 
+export interface ProcessUsage {
+  pid: number
+  name: string
+  cpuPercent: number
+  memoryBytes: number
+}
+
+export type ProcessScope = 'host' | 'container' | 'self'
+
+export interface ProcessBreakdown {
+  scope: ProcessScope
+  totalCount: number
+  topCpu: ProcessUsage[]
+  topMemory: ProcessUsage[]
+}
+
+export const EMPTY_PROCESS_BREAKDOWN: ProcessBreakdown = {
+  scope: 'self',
+  totalCount: 0,
+  topCpu: [],
+  topMemory: [],
+}
+
+export interface StorageFolderEntry {
+  path: string
+  bytes: number
+}
+
+export interface StorageFileEntry {
+  path: string
+  bytes: number
+}
+
+export interface DatabaseTableUsage {
+  name: string
+  bytes: number
+}
+
+export interface OllamaModelUsage {
+  name: string
+  diskBytes: number
+  memoryBytes: number
+}
+
+export type StorageAreaId = 'vault' | 'repos' | 'gdrive' | 'database' | 'ollama'
+
+export interface StorageAreaUsage {
+  id: StorageAreaId
+  label: string
+  path: string | null
+  bytes: number | null
+  note: string | null
+}
+
+export type StorageScanStatus = 'idle' | 'scanning' | 'ready' | 'error'
+
+export interface StorageScanSnapshot {
+  status: StorageScanStatus
+  scannedAt: string | null
+  error: string | null
+  hostRootMounted: boolean
+  unreadableDirs: number
+  areas: StorageAreaUsage[]
+  hostTopDirs: StorageFolderEntry[]
+  largestDirs: StorageFolderEntry[]
+  largestFiles: StorageFileEntry[]
+  databaseTables: DatabaseTableUsage[]
+  ollamaModels: OllamaModelUsage[]
+}
+
+export const EMPTY_STORAGE_SCAN: StorageScanSnapshot = {
+  status: 'idle',
+  scannedAt: null,
+  error: null,
+  hostRootMounted: false,
+  unreadableDirs: 0,
+  areas: [],
+  hostTopDirs: [],
+  largestDirs: [],
+  largestFiles: [],
+  databaseTables: [],
+  ollamaModels: [],
+}
+
 export interface ServerStatusDetails {
   sampledAt: string
   checkedAt: string
@@ -86,8 +170,10 @@ export interface ServerStatusDetails {
   databaseBytes: number
   uptimeSeconds: { host: number; app: number }
   version: { app: string; commit: string | null }
+  processes: ProcessBreakdown
   checks: Record<string, ServerCheck>
   oracle: OracleUsageSnapshot
+  storage: StorageScanSnapshot
 }
 
 const badResponse = (): ApiError => new ApiError(500, 'bad_response', 'Unexpected response')
@@ -187,6 +273,125 @@ function parseCheck(value: unknown): ServerCheck | null {
   }
 }
 
+function parseProcessList(value: unknown): ProcessUsage[] | null {
+  if (!Array.isArray(value)) return null
+  const out: ProcessUsage[] = []
+  for (const item of value) {
+    if (!isObject(item) || !number(item.pid) || typeof item.name !== 'string' || !number(item.cpuPercent) || !number(item.memoryBytes)) {
+      return null
+    }
+    out.push({ pid: item.pid, name: item.name, cpuPercent: item.cpuPercent, memoryBytes: item.memoryBytes })
+  }
+  return out
+}
+
+function parseProcesses(value: unknown): ProcessBreakdown {
+  if (value === undefined) return EMPTY_PROCESS_BREAKDOWN
+  if (!isObject(value) || !['host', 'container', 'self'].includes(String(value.scope)) || !number(value.totalCount)) {
+    throw badResponse()
+  }
+  const topCpu = parseProcessList(value.topCpu)
+  const topMemory = parseProcessList(value.topMemory)
+  if (topCpu === null || topMemory === null) throw badResponse()
+  return {
+    scope: value.scope as ProcessScope,
+    totalCount: value.totalCount,
+    topCpu,
+    topMemory,
+  }
+}
+
+function parsePathEntries(value: unknown): StorageFolderEntry[] | null {
+  if (!Array.isArray(value)) return null
+  const out: StorageFolderEntry[] = []
+  for (const item of value) {
+    if (!isObject(item) || typeof item.path !== 'string' || !number(item.bytes)) return null
+    out.push({ path: item.path, bytes: item.bytes })
+  }
+  return out
+}
+
+function parseStorageAreas(value: unknown): StorageAreaUsage[] | null {
+  if (!Array.isArray(value)) return null
+  const out: StorageAreaUsage[] = []
+  for (const item of value) {
+    if (
+      !isObject(item) ||
+      !['vault', 'repos', 'gdrive', 'database', 'ollama'].includes(String(item.id)) ||
+      typeof item.label !== 'string' ||
+      (item.path !== null && typeof item.path !== 'string') ||
+      (item.bytes !== null && !number(item.bytes)) ||
+      (item.note !== null && typeof item.note !== 'string')
+    ) {
+      return null
+    }
+    out.push({
+      id: item.id as StorageAreaId,
+      label: item.label,
+      path: item.path,
+      bytes: item.bytes,
+      note: item.note,
+    })
+  }
+  return out
+}
+
+function parseDatabaseTables(value: unknown): DatabaseTableUsage[] | null {
+  if (!Array.isArray(value)) return null
+  const out: DatabaseTableUsage[] = []
+  for (const item of value) {
+    if (!isObject(item) || typeof item.name !== 'string' || !number(item.bytes)) return null
+    out.push({ name: item.name, bytes: item.bytes })
+  }
+  return out
+}
+
+function parseOllamaModels(value: unknown): OllamaModelUsage[] | null {
+  if (!Array.isArray(value)) return null
+  const out: OllamaModelUsage[] = []
+  for (const item of value) {
+    if (!isObject(item) || typeof item.name !== 'string' || !number(item.diskBytes) || !number(item.memoryBytes)) return null
+    out.push({ name: item.name, diskBytes: item.diskBytes, memoryBytes: item.memoryBytes })
+  }
+  return out
+}
+
+export function parseStorageScan(value: unknown): StorageScanSnapshot {
+  if (value === undefined) return EMPTY_STORAGE_SCAN
+  if (
+    !isObject(value) ||
+    !['idle', 'scanning', 'ready', 'error'].includes(String(value.status)) ||
+    (value.scannedAt !== null && typeof value.scannedAt !== 'string') ||
+    (value.error !== null && typeof value.error !== 'string') ||
+    typeof value.hostRootMounted !== 'boolean' ||
+    !number(value.unreadableDirs)
+  ) {
+    throw badResponse()
+  }
+  const areas = parseStorageAreas(value.areas)
+  const hostTopDirs = parsePathEntries(value.hostTopDirs)
+  const largestDirs = parsePathEntries(value.largestDirs)
+  const largestFiles = parsePathEntries(value.largestFiles)
+  const databaseTables = parseDatabaseTables(value.databaseTables)
+  const ollamaModels = parseOllamaModels(value.ollamaModels)
+  if (!areas || !hostTopDirs || !largestDirs || !largestFiles || !databaseTables || !ollamaModels) {
+    throw badResponse()
+  }
+  return {
+    status: value.status as StorageScanStatus,
+    scannedAt: value.scannedAt,
+    error: value.error,
+    hostRootMounted: value.hostRootMounted,
+    unreadableDirs: value.unreadableDirs,
+    areas,
+    hostTopDirs,
+    largestDirs,
+    largestFiles,
+    databaseTables,
+    ollamaModels,
+  }
+}
+
 export function parseServerStatusDetails(value: unknown): ServerStatusDetails {
   if (!isObject(value) || !isObject(value.cpu) || !isObject(value.memory) || !isObject(value.disk) ||
       !isObject(value.uptimeSeconds) || !isObject(value.version) || !isObject(value.checks) ||
@@ -205,7 +410,9 @@ export function parseServerStatusDetails(value: unknown): ServerStatusDetails {
       typeof version.app !== 'string' || (version.commit !== null && typeof version.commit !== 'string')) throw badResponse()
   const checks = Object.fromEntries(Object.entries(value.checks).map(([name, check]) => [name, parseCheck(check)]))
   if (Object.values(checks).some((check) => check === null)) throw badResponse()
+  const processes = parseProcesses(value.processes)
   const oracle = parseOracleUsage(value.oracle)
+  const storage = parseStorageScan(value.storage)
   return {
     sampledAt: value.sampledAt,
     checkedAt: value.checkedAt,
@@ -216,8 +423,10 @@ export function parseServerStatusDetails(value: unknown): ServerStatusDetails {
     databaseBytes: value.databaseBytes,
     uptimeSeconds: { host: uptime.host, app: uptime.app },
     version: { app: version.app, commit: version.commit },
+    processes,
     checks: checks as Record<string, ServerCheck>,
     oracle,
+    storage,
   }
 }
 
@@ -230,4 +439,15 @@ export async function getServerStatusDetails(signal?: AbortSignal): Promise<Serv
     throw badResponse()
   }
   return parseServerStatusDetails(body)
+}
+
+export async function scanServerStorage(signal?: AbortSignal): Promise<StorageScanSnapshot> {
+  const response = await apiFetch('/api/status/server/scan', { method: 'POST', signal })
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch {
+    throw badResponse()
+  }
+  return parseStorageScan(body)
 }

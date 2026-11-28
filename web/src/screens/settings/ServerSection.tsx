@@ -1,9 +1,18 @@
-import { Check, CircleAlert, LoaderCircle, RefreshCw, Server, WifiOff, X } from 'lucide-react'
+import { LoaderCircle, RefreshCw, Server, WifiOff } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
-import { getServerStatusDetails, serverCheckLabel, type ServerCheck, type ServerStatusDetails } from '../../api/serverStatus'
+import {
+  getServerStatusDetails,
+  scanServerStorage,
+  serverCheckLabel,
+  type ProcessBreakdown,
+  type ServerCheck,
+  type ServerStatusDetails,
+} from '../../api/serverStatus'
 import { useOnline } from '../../hooks/useOnline'
 import { formatBytes } from '../../offline/storage'
+import { serverCheckDetails, serverCheckState } from '../../sources/serverCheckFormat'
 import { OracleCard } from './OracleCard'
+import { StorageCard } from './StorageCard'
 
 const CARD = 'rounded-card border border-line bg-surface p-4'
 
@@ -48,35 +57,10 @@ function Meter({ label, value, detail, percent }: { label: string; value: string
   )
 }
 
-function checkState(check: ServerCheck): { label: string; tone: string; Icon: typeof Check } {
-  if (check.state === 'broken') return { label: 'Broken', tone: 'text-danger', Icon: X }
-  if (check.state === 'off') return { label: 'Not set up', tone: 'text-muted', Icon: CircleAlert }
-  return { label: 'OK', tone: 'text-success', Icon: Check }
-}
-
-function checkDetails(check: ServerCheck): string[] {
-  const details: string[] = []
-  if (check.reason) details.push(check.reason)
-  if (typeof check.modelInstalled === 'boolean') details.push(check.modelInstalled ? 'Embedding model installed' : 'Embedding model missing')
-  if (typeof check.modelLoaded === 'boolean') details.push(check.modelLoaded ? 'Model loaded' : 'Model not loaded')
-  if (typeof check.modelMemoryBytes === 'number' && check.modelMemoryBytes > 0) details.push(`${formatBytes(check.modelMemoryBytes)} model memory`)
-  if (typeof check.remainingCore === 'number') details.push(`${check.remainingCore.toLocaleString()} GitHub requests remaining`)
-  if (Array.isArray(check.states)) {
-    for (const value of check.states) {
-      if (value !== null && typeof value === 'object' && 'id' in value && 'state' in value) {
-        const row = value as { id: unknown; state: unknown; reason?: unknown }
-        const name = typeof row.id === 'string' ? serverCheckLabel(row.id) : 'Source'
-        details.push(`${name}: ${String(row.state)}${typeof row.reason === 'string' ? ` · ${row.reason}` : ''}`)
-      }
-    }
-  }
-  return details
-}
-
 function CheckRow({ name, check }: { name: string; check: ServerCheck }) {
-  const state = checkState(check)
+  const state = serverCheckState(check)
   const Icon = state.Icon
-  const details = checkDetails(check)
+  const details = serverCheckDetails(check)
   return (
     <li className="flex flex-wrap items-start justify-between gap-2 border-b border-line py-3 last:border-0 last:pb-0">
       <div className="min-w-0">
@@ -93,12 +77,22 @@ function CheckRow({ name, check }: { name: string; check: ServerCheck }) {
 
 type LoadState = 'loading' | 'ready' | 'error'
 
-/** Settings › Server (R21, T79, T83): host gauges, connection checks, and Oracle Cloud plan usage. */
+function processScopeLabel(processes: ProcessBreakdown): string {
+  if (processes.scope === 'host') return `Sampling ${processes.totalCount} host processes`
+  if (processes.scope === 'container') {
+    return `Sampling ${processes.totalCount} container processes (enable pid: host to see all host processes)`
+  }
+  return 'Showing app process only (/proc unavailable on this host)'
+}
+
+/** Settings › Server (R21, T79, T83): host gauges, top CPU/memory consumers, storage breakdown, connection checks, and Oracle Cloud plan usage. */
 export function ServerSection() {
   const online = useOnline()
   const [data, setData] = useState<ServerStatusDetails | null>(null)
   const [state, setState] = useState<LoadState>('loading')
   const [refreshing, setRefreshing] = useState(false)
+  const [scanningStorage, setScanningStorage] = useState(false)
+  const [scanError, setScanError] = useState(false)
 
   useEffect(() => {
     if (!online) return
@@ -127,6 +121,20 @@ export function ServerSection() {
       setState('error')
     } finally {
       setRefreshing(false)
+    }
+  }, [online])
+
+  const scanStorage = useCallback(async (): Promise<void> => {
+    if (!online) return
+    setScanningStorage(true)
+    setScanError(false)
+    try {
+      const storage = await scanServerStorage()
+      setData((prev) => (prev === null ? prev : { ...prev, storage }))
+    } catch {
+      setScanError(true)
+    } finally {
+      setScanningStorage(false)
     }
   }, [online])
 
@@ -194,7 +202,63 @@ export function ServerSection() {
               <div><dt className="text-muted">App uptime</dt><dd className="mt-0.5 font-medium">{formatDuration(data.uptimeSeconds.app)}</dd></div>
               <div><dt className="text-muted">Version</dt><dd className="mt-0.5 break-all font-mono text-xs">{data.version.app}{data.version.commit ? ` · ${data.version.commit}` : ''}</dd></div>
             </dl>
+            {data.processes.totalCount > 0 ? (
+              <div className="space-y-3 border-t border-line pt-3">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h4 className="text-sm font-semibold">Top CPU &amp; memory consumers</h4>
+                  <p className="text-xs text-muted">{processScopeLabel(data.processes)}</p>
+                </div>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="rounded-control border border-line bg-canvas p-3">
+                    <h5 className="text-xs font-semibold uppercase tracking-wide text-muted">Top CPU</h5>
+                    <ul className="mt-2 divide-y divide-line">
+                      {data.processes.topCpu.map((proc) => (
+                        <li key={`cpu-${proc.pid}`} className="flex items-baseline justify-between gap-2 py-1.5 text-sm first:pt-0 last:pb-0">
+                          <span className="min-w-0 truncate">
+                            <span className="font-mono text-xs font-medium">{proc.name}</span>
+                            <span className="ml-1.5 text-xs text-muted">PID {proc.pid}</span>
+                          </span>
+                          <span className="shrink-0 text-xs font-semibold tabular-nums">
+                            {proc.cpuPercent.toFixed(1)}%
+                            <span className="ml-1.5 font-normal text-muted">({formatBytes(proc.memoryBytes)})</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div className="rounded-control border border-line bg-canvas p-3">
+                    <h5 className="text-xs font-semibold uppercase tracking-wide text-muted">Top memory</h5>
+                    <ul className="mt-2 divide-y divide-line">
+                      {data.processes.topMemory.map((proc) => (
+                        <li key={`mem-${proc.pid}`} className="flex items-baseline justify-between gap-2 py-1.5 text-sm first:pt-0 last:pb-0">
+                          <span className="min-w-0 truncate">
+                            <span className="font-mono text-xs font-medium">{proc.name}</span>
+                            <span className="ml-1.5 text-xs text-muted">PID {proc.pid}</span>
+                          </span>
+                          <span className="shrink-0 text-xs font-semibold tabular-nums">
+                            {formatBytes(proc.memoryBytes)}
+                            {data.memory.totalBytes > 0 ? (
+                              <span className="ml-1.5 font-normal text-muted">
+                                ({Math.round(utilization(proc.memoryBytes, data.memory.totalBytes))}%)
+                              </span>
+                            ) : null}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </section>
+
+          <StorageCard
+            storage={data.storage}
+            diskTotalBytes={data.disk.totalBytes}
+            scanning={scanningStorage}
+            scanError={scanError}
+            onScan={() => void scanStorage()}
+          />
 
           <section className={CARD} aria-labelledby="checks-heading">
             <div className="flex flex-wrap items-baseline justify-between gap-2">

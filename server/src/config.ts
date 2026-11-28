@@ -116,6 +116,13 @@ const envSchema = z.object({
     .optional()
     .transform((value) => (value === '' || value === undefined ? '/config/oci_api_key.pem' : value))
     .refine((value) => !/[\r\n\0]/.test(value), 'must be a valid file path'),
+  // Optional read-only host root mount (e.g. /hostfs) for Settings > Server storage breakdown.
+  PYTHIA_HOST_ROOT: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value === '' ? undefined : value))
+    .refine((value) => value === undefined || !/[\r\n\0]/.test(value), 'must be a valid directory path'),
 })
 
 /** Empty counts as unset; a set value must have at least `min` characters. */
@@ -219,6 +226,8 @@ export interface Config {
   drive: DriveConfig | null
   /** Null when any required `PYTHIA_OCI_*` variable is unset. */
   oci: OciConfig | null
+  /** Read-only host root mount path for storage breakdown, or null when unset. */
+  hostRoot: string | null
   auth: AuthConfig
   ask: AskConfig
   /** `PYTHIA_SECRETS_KEY` as 32 bytes, or null when unset. */
@@ -299,6 +308,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
             region: data.PYTHIA_OCI_REGION,
             keyFile: data.PYTHIA_OCI_KEY_FILE,
           },
+    hostRoot: data.PYTHIA_HOST_ROOT ?? null,
     auth: {
       passwordHash: data.PYTHIA_PASSWORD_HASH ?? null,
       mcpToken: data.PYTHIA_MCP_TOKEN ?? null,

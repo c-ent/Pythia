@@ -19,6 +19,7 @@ describe('loadConfig', () => {
       githubToken: null,
       drive: null,
       oci: null,
+      hostRoot: null,
       auth: { passwordHash: null, mcpToken: null },
       ask: { geminiApiKey: null, geminiModel: 'gemini-3.5-flash-lite', ollamaChatModel: 'qwen3:4b' },
       secretsKey: null,
@@ -238,5 +239,10 @@ describe('loadConfig', () => {
     expect(message).toMatch(/PYTHIA_OCI_TENANCY/)
     expect(message).not.toContain('evil.example.com')
     expect(message).not.toContain('bad value with spaces')
+  })
+
+  it('reads PYTHIA_HOST_ROOT and treats empty as unset', () => {
+    expect(loadConfig({ ...base, PYTHIA_HOST_ROOT: '' }).hostRoot).toBeNull()
+    expect(loadConfig({ ...base, PYTHIA_HOST_ROOT: ' /hostfs ' }).hostRoot).toBe('/hostfs')
   })
 })

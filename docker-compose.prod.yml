@@ -27,6 +27,7 @@
 services:
   app:
     network_mode: host
+    pid: host
     environment:
       PYTHIA_DB_HOST: 127.0.0.1
       PYTHIA_DB_PORT: ${PYTHIA_DB_PORT:-5433}
@@ -38,6 +39,7 @@ services:
       PYTHIA_DRIVE_DIR: /data/gdrive
       PYTHIA_DRIVE_CONFIG: /config/gdrive.json
       PYTHIA_RCLONE_CONFIG: /rclone/rclone.conf
+      PYTHIA_HOST_ROOT: /hostfs
     volumes:
       - ${PYTHIA_HOST_VAULT_DIR:-./data/vault}:/vault:ro
       - ${PYTHIA_HOST_CONFIG_DIR:-./data/config}:/config:ro
@@ -46,6 +48,8 @@ services:
       - gdrive:/data/gdrive
       # Writable: rclone saves the refreshed Google token back into rclone.conf.
       - ${PYTHIA_RCLONE_CONFIG_DIR:-./data/rclone}:/rclone
+      # Read-only host root for Settings > Server storage breakdown (R21).
+      - /:/hostfs:ro
 
   rclone:
     image: rclone/rclone:1

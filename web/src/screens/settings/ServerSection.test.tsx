@@ -53,6 +53,34 @@ function serverDetails(oracle: OracleUsageSnapshot = OFF_ORACLE_USAGE) {
       sources: { state: 'ok', reason: null, states: [{ id: 'obsidian', state: 'healthy', reason: null }] },
       oracle: { state: oracle.state === 'off' ? 'off' : oracle.state === 'error' ? 'broken' : 'ok', reason: oracle.error },
     },
+    processes: {
+      scope: 'host',
+      totalCount: 42,
+      topCpu: [
+        { pid: 101, name: 'ollama', cpuPercent: 18.5, memoryBytes: 512 * 1024 * 1024 },
+        { pid: 102, name: 'postgres', cpuPercent: 2.0, memoryBytes: 128 * 1024 * 1024 },
+      ],
+      topMemory: [
+        { pid: 101, name: 'ollama', cpuPercent: 18.5, memoryBytes: 512 * 1024 * 1024 },
+        { pid: 102, name: 'postgres', cpuPercent: 2.0, memoryBytes: 128 * 1024 * 1024 },
+      ],
+    },
+    storage: {
+      status: 'ready',
+      scannedAt: '2026-11-28T00:02:00.000Z',
+      error: null,
+      hostRootMounted: true,
+      unreadableDirs: 3,
+      areas: [
+        { id: 'database', label: 'Postgres database', path: null, bytes: 97 * 1024 * 1024, note: '4 tables' },
+        { id: 'ollama', label: 'Ollama models', path: null, bytes: 274 * 1024 * 1024, note: '1 installed' },
+      ],
+      hostTopDirs: [{ path: '/var', bytes: 8 * 1024 ** 3 }],
+      largestDirs: [{ path: '/var/lib/docker/overlay2', bytes: 6 * 1024 ** 3 }],
+      largestFiles: [{ path: '/swapfile', bytes: 2 * 1024 ** 3 }],
+      databaseTables: [{ name: 'chunks', bytes: 80 * 1024 * 1024 }],
+      ollamaModels: [{ name: 'nomic-embed-text:latest', diskBytes: 274 * 1024 * 1024, memoryBytes: 274 * 1024 * 1024 }],
+    },
     oracle,
   }
 }
@@ -73,8 +101,9 @@ describe('ServerSection', () => {
     expect(screen.getByRole('meter', { name: 'CPU used' }).getAttribute('aria-valuenow')).toBe('25')
     expect(screen.getByRole('meter', { name: 'Memory used' }).getAttribute('aria-valuenow')).toBe('60')
     expect(screen.getByRole('meter', { name: 'Disk used' }).getAttribute('aria-valuenow')).toBe('60')
-    expect(screen.getByText(/Postgres database/)).toBeTruthy()
-    expect(screen.getByText(/Host uptime/)).toBeTruthy()
+    const resourcesCard = screen.getByRole('region', { name: 'Host resources' })
+    expect(within(resourcesCard).getByText(/Postgres database/)).toBeTruthy()
+    expect(within(resourcesCard).getByText(/Host uptime/)).toBeTruthy()
     const ollama = screen.getByText('Ollama').closest('li')!
     expect(within(ollama).getByText(/TimeoutError/)).toBeTruthy()
     expect(within(ollama).getByText(/Model not loaded/)).toBeTruthy()
@@ -176,5 +205,45 @@ describe('ServerSection', () => {
     vi.stubGlobal('fetch', vi.fn(async () => json(503, { error: { code: 'unavailable', message: 'unavailable' } })))
     render(<ServerSection />)
     expect((await screen.findByRole('alert')).textContent).toContain('Couldn’t load server details')
+  })
+
+  it('renders top CPU/memory processes, storage breakdown, and triggers manual storage scan', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/api/status/server/scan') && init?.method === 'POST') {
+        return json(200, {
+          status: 'ready',
+          scannedAt: '2026-11-28T00:05:00.000Z',
+          error: null,
+          hostRootMounted: true,
+          unreadableDirs: 0,
+          areas: [{ id: 'database', label: 'Postgres database', path: null, bytes: 100 * 1024 * 1024, note: '4 tables' }],
+          hostTopDirs: [{ path: '/var', bytes: 9 * 1024 ** 3 }],
+          largestDirs: [{ path: '/var/log', bytes: 1024 ** 3 }],
+          largestFiles: [{ path: '/var/log/journal.dat', bytes: 512 * 1024 ** 2 }],
+          databaseTables: [{ name: 'chunks', bytes: 80 * 1024 * 1024 }],
+          ollamaModels: [{ name: 'nomic-embed-text:latest', diskBytes: 274 * 1024 * 1024, memoryBytes: 0 }],
+        })
+      }
+      return json(200, serverDetails())
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<ServerSection />)
+    expect(await screen.findByText(/Sampling 42 host processes/)).toBeTruthy()
+    expect(screen.getAllByText('ollama').length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText(/18\.5%/)).toBeTruthy()
+
+    const storageCard = screen.getByRole('region', { name: 'Storage breakdown' })
+    expect(within(storageCard).getByText('/swapfile')).toBeTruthy()
+    expect(within(storageCard).getByText('/var/lib/docker/overlay2')).toBeTruthy()
+    expect(within(storageCard).getByText('chunks')).toBeTruthy()
+    expect(within(storageCard).getByText(/3 root-owned host folder\(s\)/)).toBeTruthy()
+
+    fireEvent.click(within(storageCard).getByRole('button', { name: 'Scan storage' }))
+    await waitFor(() => expect(within(storageCard).getByText('/var/log/journal.dat')).toBeTruthy())
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/status/server/scan',
+      expect.objectContaining({ method: 'POST' }),
+    )
   })
 })
