@@ -2,9 +2,20 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../../api/client'
 import { GEMINI_CHANGED, type GeminiStatus } from '../../api/gemini'
-import type { CountedLlmExclusion, LlmExclusion } from '../../api/settings'
+import { EMPTY_EXCLUSION_CATALOG, type CountedLlmExclusion, type LlmExclusion, type LlmExclusionCatalog } from '../../api/settings'
 import { checkExclusionPath, exclusionErrorMessage, normalizeTag, normalizeVaultPath } from '../exclusionPaths'
-import { buildRuleRows, checkKey, keyErrorMessage, keyStatusText, keyWarningText, testResultText } from './gemini'
+import {
+  buildDriveView,
+  buildKeepRow,
+  buildObsidianView,
+  buildRepoRows,
+  buildRuleRows,
+  checkKey,
+  keyErrorMessage,
+  keyStatusText,
+  keyWarningText,
+  testResultText,
+} from './gemini'
 import { GeminiSection } from './GeminiSection'
 
 const json = (status: number, body: unknown) =>
@@ -17,6 +28,7 @@ const STATUS_URL = '/api/settings/gemini'
 const KEY_URL = '/api/settings/gemini/key'
 const TEST_URL = '/api/settings/gemini/test'
 const RULES_URL = '/api/settings/llm-exclusions'
+const CATALOG_URL = '/api/settings/llm-exclusions/catalog'
 const REPOS_URL = '/api/repos'
 
 // Built by concatenation so no key-like literal is committed.
@@ -44,6 +56,7 @@ function stubServer({
   gemini = status(),
   rules = [] as LlmExclusion[],
   counts = {} as Record<string, number>,
+  catalog = EMPTY_EXCLUSION_CATALOG as LlmExclusionCatalog,
   repos = [] as { name: string; files: number }[] | null,
   routes = {} as Record<string, Handler>,
 } = {}) {
@@ -68,6 +81,7 @@ function stubServer({
     },
     [`POST ${TEST_URL}`]: () => json(200, { ok: true }),
     [`GET ${RULES_URL}`]: () => json(200, { exclusions: counted() }),
+    [`GET ${CATALOG_URL}`]: () => json(200, catalog),
     [`PUT ${RULES_URL}`]: (init) => {
       const body = JSON.parse(String(init?.body)) as { exclusions: LlmExclusion[] }
       puts.push(body.exclusions)
@@ -222,7 +236,24 @@ describe('GeminiSection: API key', () => {
 })
 
 describe('GeminiSection: rules', () => {
-  it('lists every rule kind with its count and Locked state, plus repos and Keep as Allowed', async () => {
+  const sampleCatalog: LlmExclusionCatalog = {
+    obsidian: {
+      folders: [
+        { path: 'Journal', documents: 64 },
+        { path: 'Health', documents: 4 },
+      ],
+      notes: ['Health/Doctor.md', 'Journal/Today.md'],
+      tags: [{ tag: 'private', documents: 9 }],
+    },
+    gdrive: {
+      totalDocuments: 3,
+      folders: [{ path: 'Finance', documents: 2 }],
+      files: ['Finance/Budget.xlsx', 'Finance/Summary.docx', 'Notes.pdf'],
+    },
+    keep: { documents: 126 },
+  }
+
+  it('groups rules into Obsidian, GitHub, Google Drive and Google Keep with locked counts', async () => {
     stubServer({
       rules: [
         { kind: 'folder', path: 'Journal' },
@@ -231,45 +262,60 @@ describe('GeminiSection: rules', () => {
         { kind: 'repo', path: 'secret-repo' },
       ],
       counts: { 'folder:Journal': 64, 'note:Health/Doctor.md': 1, 'tag:private': 9, 'repo:secret-repo': 40 },
+      catalog: sampleCatalog,
       repos: [
         { name: 'secret-repo', files: 40 },
         { name: 'open-repo', files: 12 },
       ],
     })
     render(<GeminiSection />)
-    const list = await within(rulesCard()).findByRole('list', { name: 'Rules' })
-    const items = within(list).getAllByRole('listitem')
-    expect(items.map((item) => item.textContent)).toEqual([
-      expect.stringContaining('Journal/'),
-      expect.stringContaining('Health/Doctor.md'),
-      expect.stringContaining('#private'),
+    const card = rulesCard()
+
+    const obsidianBtn = await within(card).findByRole('button', { name: /Obsidian/ })
+    const githubBtn = within(card).getByRole('button', { name: /GitHub/ })
+    const driveBtn = within(card).getByRole('button', { name: /Google Drive/ })
+    expect(obsidianBtn.getAttribute('aria-expanded')).toBe('false')
+    expect(obsidianBtn.textContent).toContain('3 locked')
+    expect(githubBtn.textContent).toContain('2 repos')
+    expect(githubBtn.textContent).toContain('1 locked')
+    expect(driveBtn.textContent).toContain('All allowed')
+    expect(checked('Google Keep')).toBe('Allowed')
+    expect(within(card).getByText('126 notes')).toBeTruthy()
+
+    // Expanding GitHub reveals the repository catalog.
+    fireEvent.click(githubBtn)
+    expect(githubBtn.getAttribute('aria-expanded')).toBe('true')
+    const repoList = within(card).getByRole('list', { name: 'GitHub repositories' })
+    expect(within(repoList).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
       expect.stringContaining('open-repo'),
       expect.stringContaining('secret-repo'),
-      expect.stringContaining('Google Keep'),
     ])
-    expect(items[0]!.textContent).toContain('64 notes')
-    expect(items[1]!.textContent).toContain('1 note')
-    expect(items[2]!.textContent).toContain('9 notes')
-    expect(items[3]!.textContent).toContain('12 files')
-    expect(items[4]!.textContent).toContain('40 files')
-    // The kind is named for screen readers, not only shown as an icon.
-    expect(items[2]!.textContent).toContain('Tag')
-    expect(checked('Journal/')).toBe('Locked')
-    expect(checked('#private')).toBe('Locked')
-    expect(checked('secret-repo')).toBe('Locked')
     expect(checked('open-repo')).toBe('Allowed')
-    expect(checked('Google Keep')).toBe('Allowed')
+    expect(checked('secret-repo')).toBe('Locked')
+
+    // Expanding Obsidian shows Folders, Tags and Notes tabs.
+    fireEvent.click(obsidianBtn)
+    expect(checked('Journal/')).toBe('Locked')
+    fireEvent.click(within(card).getByRole('tab', { name: /Tags/ }))
+    expect(checked('#private')).toBe('Locked')
+    fireEvent.click(within(card).getByRole('tab', { name: /Notes/ }))
+    expect(checked('Health/Doctor.md')).toBe('Locked')
+    expect(within(card).getByText('Inside Journal/')).toBeTruthy()
   })
 
-  it('locks a repo and Google Keep, sending the whole list', async () => {
-    const server = stubServer({ repos: [{ name: 'open-repo', files: 12 }], counts: { 'keep:keep': 126 } })
+  it('locks a repo from the GitHub catalog and Google Keep, sending the whole list', async () => {
+    const server = stubServer({
+      repos: [{ name: 'open-repo', files: 12 }],
+      catalog: sampleCatalog,
+      counts: { 'keep:keep': 126 },
+    })
     render(<GeminiSection />)
-    await within(rulesCard()).findByRole('list', { name: 'Rules' })
+    const card = rulesCard()
+    fireEvent.click(await within(card).findByRole('button', { name: /GitHub/ }))
     fireEvent.click(within(access('open-repo')).getByRole('radio', { name: 'Locked' }))
     await waitFor(() => expect(checked('open-repo')).toBe('Locked'))
     fireEvent.click(within(access('Google Keep')).getByRole('radio', { name: 'Locked' }))
     await waitFor(() => expect(checked('Google Keep')).toBe('Locked'))
-    expect(within(rulesCard()).getByText('126 notes')).toBeTruthy()
     expect(server.puts).toEqual([
       [{ kind: 'repo', path: 'open-repo' }],
       [
@@ -279,82 +325,90 @@ describe('GeminiSection: rules', () => {
     ])
   })
 
-  it('unlocks a folder and keeps it as an Allowed row that can be locked again', async () => {
+  it('expands Google Drive to show files inside folders and root files, and toggles Drive locks', async () => {
+    const server = stubServer({ catalog: sampleCatalog })
+    render(<GeminiSection />)
+    const card = rulesCard()
+    fireEvent.click(await within(card).findByRole('button', { name: /Google Drive/ }))
+    expect(within(card).getByText('Budget.xlsx')).toBeTruthy()
+    expect(within(card).getByText('Summary.docx')).toBeTruthy()
+    expect(within(card).getByText('Notes.pdf')).toBeTruthy()
+
+    fireEvent.click(within(access('Drive: Finance/')).getByRole('radio', { name: 'Locked' }))
+    await waitFor(() => expect(checked('Drive: Finance/')).toBe('Locked'))
+    fireEvent.click(within(access('All of Google Drive')).getByRole('radio', { name: 'Locked' }))
+    await waitFor(() => expect(checked('All of Google Drive')).toBe('Locked'))
+    expect(within(card).getByText('Covered by Drive lock')).toBeTruthy()
+    expect(server.puts).toEqual([
+      [{ kind: 'gdrive', path: 'Finance' }],
+      [
+        { kind: 'gdrive', path: 'Finance' },
+        { kind: 'gdrive', path: '/' },
+      ],
+    ])
+  })
+
+  it('unlocks a folder and keeps an unindexed rule as an Allowed row until removed', async () => {
     const server = stubServer({ rules: [{ kind: 'folder', path: 'Journal' }], counts: { 'folder:Journal': 64 } })
     render(<GeminiSection />)
-    await within(rulesCard()).findByText('Journal/')
+    const card = rulesCard()
+    fireEvent.click(await within(card).findByRole('button', { name: /Obsidian/ }))
+    await within(card).findByText('Journal/')
     fireEvent.click(within(access('Journal/')).getByRole('radio', { name: 'Allowed' }))
     await waitFor(() => expect(checked('Journal/')).toBe('Allowed'))
-    expect(within(rulesCard()).getByText('64 notes')).toBeTruthy()
+    expect(within(card).getByText('64 notes')).toBeTruthy()
     fireEvent.click(within(access('Journal/')).getByRole('radio', { name: 'Locked' }))
     await waitFor(() => expect(checked('Journal/')).toBe('Locked'))
-    expect(server.puts).toEqual([[], [{ kind: 'folder', path: 'Journal' }]])
+    fireEvent.click(within(card).getByRole('button', { name: 'Remove Journal/' }))
+    await waitFor(() => expect(within(card).queryByText('Journal/')).toBeNull())
+    expect(server.puts).toEqual([[], [{ kind: 'folder', path: 'Journal' }], []])
   })
 
-  it('removes a folder rule from the list', async () => {
-    const server = stubServer({ rules: [{ kind: 'folder', path: 'Journal' }, { kind: 'folder', path: 'Health' }] })
-    render(<GeminiSection />)
-    fireEvent.click(await within(rulesCard()).findByRole('button', { name: 'Remove Journal/' }))
-    await waitFor(() => expect(within(rulesCard()).queryByText('Journal/')).toBeNull())
-    expect(within(rulesCard()).getByText('Health/')).toBeTruthy()
-    expect(server.puts).toEqual([[{ kind: 'folder', path: 'Health' }]])
-    // Repos and Keep have no Remove: they stay as Allowed rows.
-    expect(within(rulesCard()).queryByRole('button', { name: 'Remove Google Keep' })).toBeNull()
-  })
-
-  it('adds a folder with the path cleaned, and clears the field', async () => {
+  it('adds Obsidian folder and tag rules manually with cleaned paths', async () => {
     const server = stubServer()
     render(<GeminiSection />)
     const card = rulesCard()
     await within(card).findByText(/Nothing is locked/)
+    fireEvent.click(within(card).getByRole('button', { name: /Obsidian/ }))
     fireEvent.change(within(card).getByLabelText('Path in the vault'), { target: { value: ' ./Work\\Clients/ ' } })
     fireEvent.click(within(card).getByRole('button', { name: 'Add rule' }))
     expect(await within(card).findByText('Work/Clients/')).toBeTruthy()
-    expect(server.puts).toEqual([[{ kind: 'folder', path: 'Work/Clients' }]])
     expect((within(card).getByLabelText('Path in the vault') as HTMLInputElement).value).toBe('')
-  })
 
-  it('adds a tag rule, written with or without #', async () => {
-    const server = stubServer()
-    render(<GeminiSection />)
-    const card = rulesCard()
-    await within(card).findByText(/Nothing is locked/)
     fireEvent.change(within(card).getByLabelText('Lock a'), { target: { value: 'tag' } })
     fireEvent.change(within(card).getByLabelText('Tag'), { target: { value: '#Private/' } })
     fireEvent.click(within(card).getByRole('button', { name: 'Add rule' }))
+    fireEvent.click(within(card).getByRole('tab', { name: /Tags/ }))
     expect(await within(card).findByText('#private')).toBeTruthy()
-    expect(server.puts).toEqual([[{ kind: 'tag', path: 'private' }]])
+    expect(server.puts).toEqual([
+      [{ kind: 'folder', path: 'Work/Clients' }],
+      [
+        { kind: 'folder', path: 'Work/Clients' },
+        { kind: 'tag', path: 'private' },
+      ],
+    ])
   })
 
-  it('adds a repo rule by name', async () => {
+  it('adds a repo rule by name when repo indexing is off and adds a Drive folder manually', async () => {
     const server = stubServer({ repos: null })
     render(<GeminiSection />)
     const card = rulesCard()
     await within(card).findByText(/Nothing is locked/)
-    fireEvent.change(within(card).getByLabelText('Lock a'), { target: { value: 'repo' } })
-    fireEvent.change(within(card).getByLabelText('Repo name'), { target: { value: ' old-repo ' } })
-    fireEvent.click(within(card).getByRole('button', { name: 'Add rule' }))
+    fireEvent.click(within(card).getByRole('button', { name: /GitHub/ }))
+    fireEvent.change(within(card).getByLabelText('Lock a repo by name'), { target: { value: ' old-repo ' } })
+    fireEvent.click(within(card).getByRole('button', { name: 'Add repo' }))
     await waitFor(() => expect(checked('old-repo')).toBe('Locked'))
-    expect(server.puts).toEqual([[{ kind: 'repo', path: 'old-repo' }]])
-  })
 
-  it('adds a Drive folder rule and the whole Drive, both removable', async () => {
-    const server = stubServer()
-    render(<GeminiSection />)
-    const card = rulesCard()
-    await within(card).findByText(/Nothing is locked/)
-    fireEvent.change(within(card).getByLabelText('Lock a'), { target: { value: 'gdrive' } })
-    fireEvent.change(within(card).getByLabelText('Folder in My Drive'), { target: { value: '/Clients/Acme/' } })
-    fireEvent.click(within(card).getByRole('button', { name: 'Add rule' }))
-    expect(await within(card).findByText('Drive: Clients/Acme/')).toBeTruthy()
-    expect(server.puts).toEqual([[{ kind: 'gdrive', path: 'Clients/Acme' }]])
-    fireEvent.change(within(card).getByLabelText('Lock a'), { target: { value: 'gdrive' } })
-    fireEvent.change(within(card).getByLabelText('Folder in My Drive'), { target: { value: '' } })
-    fireEvent.click(within(card).getByRole('button', { name: 'Add rule' }))
-    expect(await within(card).findByText('All of Google Drive')).toBeTruthy()
-    expect(server.puts[1]).toEqual([
-      { kind: 'gdrive', path: 'Clients/Acme' },
-      { kind: 'gdrive', path: '/' },
+    fireEvent.click(within(card).getByRole('button', { name: /Google Drive/ }))
+    fireEvent.change(within(card).getByLabelText('Add Drive folder'), { target: { value: '/Clients/Acme/' } })
+    fireEvent.click(within(card).getByRole('button', { name: 'Add folder' }))
+    expect(await within(card).findByText('Clients/Acme/')).toBeTruthy()
+    expect(server.puts).toEqual([
+      [{ kind: 'repo', path: 'old-repo' }],
+      [
+        { kind: 'repo', path: 'old-repo' },
+        { kind: 'gdrive', path: 'Clients/Acme' },
+      ],
     ])
   })
 
@@ -363,6 +417,7 @@ describe('GeminiSection: rules', () => {
     render(<GeminiSection />)
     const card = rulesCard()
     await within(card).findByText(/Nothing is locked/)
+    fireEvent.click(within(card).getByRole('button', { name: /Obsidian/ }))
     fireEvent.change(within(card).getByLabelText('Lock a'), { target: { value: 'note' } })
     fireEvent.change(within(card).getByLabelText('Path in the vault'), { target: { value: 'Health/Doctor' } })
     fireEvent.click(within(card).getByRole('button', { name: 'Add rule' }))
@@ -376,9 +431,11 @@ describe('GeminiSection: rules', () => {
       routes: { [`PUT ${RULES_URL}`]: () => failure(500, 'internal', 'Internal server error') },
     })
     render(<GeminiSection />)
-    fireEvent.click(await within(rulesCard()).findByRole('button', { name: 'Remove Journal/' }))
-    expect(await within(rulesCard()).findByText('Couldn’t save the change. Try again.')).toBeTruthy()
-    expect(within(rulesCard()).getByText('Journal/')).toBeTruthy()
+    const card = rulesCard()
+    fireEvent.click(await within(card).findByRole('button', { name: /Obsidian/ }))
+    fireEvent.click(within(card).getByRole('button', { name: 'Remove Journal/' }))
+    expect(await within(card).findByText('Couldn’t save the change. Try again.')).toBeTruthy()
+    expect(within(card).getByText('Journal/')).toBeTruthy()
     expect(checked('Journal/')).toBe('Locked')
   })
 
@@ -398,7 +455,8 @@ describe('GeminiSection: rules', () => {
     render(<GeminiSection />)
     expect(await within(rulesCard()).findByText('Couldn’t load the list. Try again.')).toBeTruthy()
     fireEvent.click(within(rulesCard()).getByRole('button', { name: 'Retry' }))
-    expect(await within(rulesCard()).findByText('Journal/')).toBeTruthy()
+    const obsidianBtn = await within(rulesCard()).findByRole('button', { name: /Obsidian/ })
+    expect(obsidianBtn.textContent).toContain('1 locked')
   })
 })
 
@@ -481,5 +539,66 @@ describe('Gemini access helpers', () => {
       ['repo', 'beta', false, 1],
       ['keep', 'keep', false, null],
     ])
+  })
+
+  it('builds separated Obsidian, GitHub, Drive and Keep views with parent coverage', () => {
+    const obsidian = buildObsidianView(
+      {
+        folders: [
+          { path: 'Work', documents: 3 },
+          { path: 'Work/Clients', documents: 1 },
+        ],
+        notes: ['Work/Clients/Acme.md', 'Home.md'],
+        tags: [
+          { tag: 'private', documents: 2 },
+          { tag: 'private/health', documents: 1 },
+        ],
+      },
+      [
+        { kind: 'folder', path: 'Work', documents: 3 },
+        { kind: 'tag', path: 'private', documents: 2 },
+      ],
+      [],
+    )
+    expect(obsidian.lockedCount).toBe(2)
+    expect(obsidian.folders[1]).toMatchObject({ path: 'Work/Clients', coveredByParent: 'Work', locked: false })
+    expect(obsidian.tags[1]).toMatchObject({ tag: 'private/health', coveredByParent: 'private', locked: false })
+    expect(obsidian.notes[1]).toMatchObject({ path: 'Work/Clients/Acme.md', coveredByFolder: 'Work', locked: false })
+
+    const repos = buildRepoRows(
+      [{ name: 'alpha', files: 5, chunks: 0, updatedAt: null }],
+      [{ kind: 'repo', path: 'removed-repo', documents: 2 }],
+      [],
+    )
+    expect(repos).toEqual([
+      { name: 'alpha', files: 5, locked: false, inIndex: true },
+      { name: 'removed-repo', files: 2, locked: true, inIndex: false },
+    ])
+
+    const drive = buildDriveView(
+      {
+        totalDocuments: 3,
+        folders: [
+          { path: 'Finance', documents: 2 },
+          { path: 'Finance/2026', documents: 1 },
+        ],
+        files: ['Finance/Summary.docx', 'Finance/2026/Budget.xlsx', 'Root.pdf'],
+      },
+      [{ kind: 'gdrive', path: 'Finance', documents: 2 }],
+      [],
+    )
+    expect(drive.folders[0]?.files.map((f) => f.name)).toEqual(['Summary.docx'])
+    expect(drive.folders[1]).toMatchObject({
+      path: 'Finance/2026',
+      coveredByParent: 'Finance',
+      files: [{ path: 'Finance/2026/Budget.xlsx', name: 'Budget.xlsx' }],
+    })
+    expect(drive.rootFiles).toEqual([{ path: 'Root.pdf', name: 'Root.pdf' }])
+
+    expect(buildKeepRow({ documents: 12 }, [])).toEqual({ locked: false, documents: 12 })
+    expect(buildKeepRow({ documents: 12 }, [{ kind: 'keep', path: 'keep', documents: 15 }])).toEqual({
+      locked: true,
+      documents: 15,
+    })
   })
 })

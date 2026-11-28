@@ -1,7 +1,12 @@
 import { ApiError } from '../../api/client'
 import type { GeminiStatus, GeminiTestResult } from '../../api/gemini'
 import type { RepoInfo } from '../../api/repos'
-import type { CountedLlmExclusion, LlmExclusion, LlmExclusionKind } from '../../api/settings'
+import type {
+  CountedLlmExclusion,
+  LlmExclusion,
+  LlmExclusionCatalog,
+  LlmExclusionKind,
+} from '../../api/settings'
 import { formatDate, plural } from '../../repos/format'
 import { DRIVE_ROOT_RULE_PATH, KEEP_RULE_PATH } from '../exclusionPaths'
 
@@ -88,6 +93,289 @@ export function countText(row: RuleRow): string | null {
 /** Folder, note, tag and Drive rules can be taken off the list; repos and Keep stay as allowed rows. */
 export const isRemovable = (row: RuleRow): boolean =>
   row.kind === 'folder' || row.kind === 'note' || row.kind === 'tag' || row.kind === 'gdrive'
+
+function compareIgnoreCase(a: string, b: string): number {
+  const left = a.toLowerCase()
+  const right = b.toLowerCase()
+  if (left !== right) return left < right ? -1 : 1
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
+function parentFolderCover(path: string, lockedFolders: readonly string[]): string | null {
+  const lower = path.toLowerCase()
+  for (const folder of lockedFolders) {
+    const prefix = `${folder.toLowerCase()}/`
+    if (lower.startsWith(prefix)) return folder
+  }
+  return null
+}
+
+function parentTagCover(tag: string, lockedTags: readonly string[]): string | null {
+  const lower = tag.toLowerCase()
+  for (const locked of lockedTags) {
+    const prefix = `${locked.toLowerCase()}/`
+    if (lower.startsWith(prefix)) return locked
+  }
+  return null
+}
+
+function directDirname(filePath: string): string {
+  const slash = filePath.lastIndexOf('/')
+  return slash === -1 ? '' : filePath.slice(0, slash)
+}
+
+function baseName(filePath: string): string {
+  const slash = filePath.lastIndexOf('/')
+  return slash === -1 ? filePath : filePath.slice(slash + 1)
+}
+
+export interface ObsidianFolderRow {
+  path: string
+  documents: number | null
+  locked: boolean
+  coveredByParent: string | null
+  inCatalog: boolean
+}
+
+export interface ObsidianTagRow {
+  tag: string
+  documents: number | null
+  locked: boolean
+  coveredByParent: string | null
+  inCatalog: boolean
+}
+
+export interface ObsidianNoteRow {
+  path: string
+  locked: boolean
+  coveredByFolder: string | null
+  inCatalog: boolean
+}
+
+export interface ObsidianCatalogView {
+  lockedCount: number
+  folders: ObsidianFolderRow[]
+  tags: ObsidianTagRow[]
+  notes: ObsidianNoteRow[]
+}
+
+export function buildObsidianView(
+  obsidian: LlmExclusionCatalog['obsidian'],
+  list: readonly CountedLlmExclusion[],
+  released: readonly CountedLlmExclusion[],
+): ObsidianCatalogView {
+  const lockedFolders = list.filter((r) => r.kind === 'folder')
+  const lockedTags = list.filter((r) => r.kind === 'tag')
+  const lockedNotes = list.filter((r) => r.kind === 'note')
+
+  const lockedFolderPaths = lockedFolders.map((r) => r.path)
+  const lockedTagNames = lockedTags.map((r) => r.path)
+
+  const folderMap = new Map<string, ObsidianFolderRow>()
+  for (const item of obsidian.folders) {
+    const rule = lockedFolders.find((r) => r.path.toLowerCase() === item.path.toLowerCase())
+    folderMap.set(item.path.toLowerCase(), {
+      path: rule?.path ?? item.path,
+      documents: rule?.documents ?? item.documents,
+      locked: rule !== undefined,
+      coveredByParent: parentFolderCover(item.path, lockedFolderPaths),
+      inCatalog: true,
+    })
+  }
+  for (const rule of [...released.filter((r) => r.kind === 'folder'), ...lockedFolders]) {
+    const key = rule.path.toLowerCase()
+    const isLocked = lockedFolders.some((r) => r.path.toLowerCase() === key)
+    if (!folderMap.has(key)) {
+      folderMap.set(key, {
+        path: rule.path,
+        documents: rule.documents,
+        locked: isLocked,
+        coveredByParent: parentFolderCover(rule.path, lockedFolderPaths),
+        inCatalog: false,
+      })
+    }
+  }
+
+  const tagMap = new Map<string, ObsidianTagRow>()
+  for (const item of obsidian.tags) {
+    const rule = lockedTags.find((r) => r.path.toLowerCase() === item.tag.toLowerCase())
+    tagMap.set(item.tag.toLowerCase(), {
+      tag: rule?.path ?? item.tag,
+      documents: rule?.documents ?? item.documents,
+      locked: rule !== undefined,
+      coveredByParent: parentTagCover(item.tag, lockedTagNames),
+      inCatalog: true,
+    })
+  }
+  for (const rule of [...released.filter((r) => r.kind === 'tag'), ...lockedTags]) {
+    const key = rule.path.toLowerCase()
+    const isLocked = lockedTags.some((r) => r.path.toLowerCase() === key)
+    if (!tagMap.has(key)) {
+      tagMap.set(key, {
+        tag: rule.path,
+        documents: rule.documents,
+        locked: isLocked,
+        coveredByParent: parentTagCover(rule.path, lockedTagNames),
+        inCatalog: false,
+      })
+    }
+  }
+
+  const noteMap = new Map<string, ObsidianNoteRow>()
+  for (const path of obsidian.notes) {
+    const rule = lockedNotes.find((r) => r.path.toLowerCase() === path.toLowerCase())
+    noteMap.set(path.toLowerCase(), {
+      path: rule?.path ?? path,
+      locked: rule !== undefined,
+      coveredByFolder: parentFolderCover(path, lockedFolderPaths),
+      inCatalog: true,
+    })
+  }
+  for (const rule of [...released.filter((r) => r.kind === 'note'), ...lockedNotes]) {
+    const key = rule.path.toLowerCase()
+    const isLocked = lockedNotes.some((r) => r.path.toLowerCase() === key)
+    if (!noteMap.has(key)) {
+      noteMap.set(key, {
+        path: rule.path,
+        locked: isLocked,
+        coveredByFolder: parentFolderCover(rule.path, lockedFolderPaths),
+        inCatalog: false,
+      })
+    }
+  }
+
+  return {
+    lockedCount: lockedFolders.length + lockedTags.length + lockedNotes.length,
+    folders: [...folderMap.values()].sort((a, b) => compareIgnoreCase(a.path, b.path)),
+    tags: [...tagMap.values()].sort((a, b) => compareIgnoreCase(a.tag, b.tag)),
+    notes: [...noteMap.values()].sort((a, b) => compareIgnoreCase(a.path, b.path)),
+  }
+}
+
+export interface RepoRuleRow {
+  name: string
+  files: number
+  locked: boolean
+  inIndex: boolean
+}
+
+export function buildRepoRows(
+  repos: readonly RepoInfo[] | null,
+  list: readonly CountedLlmExclusion[],
+  released: readonly CountedLlmExclusion[],
+): RepoRuleRow[] {
+  const lockedRepos = list.filter((r) => r.kind === 'repo')
+  const map = new Map<string, RepoRuleRow>()
+  for (const repo of repos ?? []) {
+    const rule = lockedRepos.find((r) => r.path.toLowerCase() === repo.name.toLowerCase())
+    map.set(repo.name.toLowerCase(), {
+      name: repo.name,
+      files: repo.files,
+      locked: rule !== undefined,
+      inIndex: true,
+    })
+  }
+  for (const rule of [...released.filter((r) => r.kind === 'repo'), ...lockedRepos]) {
+    const key = rule.path.toLowerCase()
+    const isLocked = lockedRepos.some((r) => r.path.toLowerCase() === key)
+    if (!map.has(key)) {
+      map.set(key, {
+        name: rule.path,
+        files: rule.documents,
+        locked: isLocked,
+        inIndex: false,
+      })
+    }
+  }
+  return [...map.values()].sort((a, b) => compareIgnoreCase(a.name, b.name))
+}
+
+export interface DriveFolderRow {
+  path: string
+  documents: number | null
+  files: { path: string; name: string }[]
+  locked: boolean
+  coveredByParent: string | null
+  inCatalog: boolean
+}
+
+export interface DriveCatalogView {
+  allLocked: boolean
+  allDocuments: number
+  lockedFolderCount: number
+  folders: DriveFolderRow[]
+  rootFiles: { path: string; name: string }[]
+}
+
+export function buildDriveView(
+  gdrive: LlmExclusionCatalog['gdrive'],
+  list: readonly CountedLlmExclusion[],
+  released: readonly CountedLlmExclusion[],
+): DriveCatalogView {
+  const driveRules = list.filter((r) => r.kind === 'gdrive')
+  const rootRule = driveRules.find((r) => r.path === DRIVE_ROOT_RULE_PATH)
+  const allLocked = rootRule !== undefined
+  const folderRules = driveRules.filter((r) => r.path !== DRIVE_ROOT_RULE_PATH)
+  const lockedFolderPaths = folderRules.map((r) => r.path)
+
+  const filesByDir = new Map<string, { path: string; name: string }[]>()
+  for (const filePath of gdrive.files) {
+    const dir = directDirname(filePath).toLowerCase()
+    const bucket = filesByDir.get(dir) ?? []
+    bucket.push({ path: filePath, name: baseName(filePath) })
+    filesByDir.set(dir, bucket)
+  }
+
+  const folderMap = new Map<string, DriveFolderRow>()
+  for (const item of gdrive.folders) {
+    const key = item.path.toLowerCase()
+    const rule = folderRules.find((r) => r.path.toLowerCase() === key)
+    folderMap.set(key, {
+      path: rule?.path ?? item.path,
+      documents: rule?.documents ?? item.documents,
+      files: filesByDir.get(key) ?? [],
+      locked: rule !== undefined,
+      coveredByParent: allLocked ? DRIVE_ROOT_RULE_PATH : parentFolderCover(item.path, lockedFolderPaths),
+      inCatalog: true,
+    })
+  }
+  for (const rule of [
+    ...released.filter((r) => r.kind === 'gdrive' && r.path !== DRIVE_ROOT_RULE_PATH),
+    ...folderRules,
+  ]) {
+    const key = rule.path.toLowerCase()
+    const isLocked = folderRules.some((r) => r.path.toLowerCase() === key)
+    if (!folderMap.has(key)) {
+      folderMap.set(key, {
+        path: rule.path,
+        documents: rule.documents,
+        files: filesByDir.get(key) ?? [],
+        locked: isLocked,
+        coveredByParent: allLocked ? DRIVE_ROOT_RULE_PATH : parentFolderCover(rule.path, lockedFolderPaths),
+        inCatalog: false,
+      })
+    }
+  }
+
+  return {
+    allLocked,
+    allDocuments: rootRule?.documents ?? gdrive.totalDocuments,
+    lockedFolderCount: folderRules.length,
+    folders: [...folderMap.values()].sort((a, b) => compareIgnoreCase(a.path, b.path)),
+    rootFiles: filesByDir.get('') ?? [],
+  }
+}
+
+export function buildKeepRow(
+  keep: LlmExclusionCatalog['keep'],
+  list: readonly CountedLlmExclusion[],
+): { locked: boolean; documents: number } {
+  const rule = list.find((r) => r.kind === 'keep')
+  return {
+    locked: rule !== undefined,
+    documents: rule?.documents ?? keep.documents,
+  }
+}
 
 /** Where the key in use comes from, in one line. */
 export function keyStatusText(status: GeminiStatus): string {

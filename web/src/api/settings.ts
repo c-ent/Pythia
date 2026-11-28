@@ -23,9 +23,47 @@ export interface CountedLlmExclusion extends LlmExclusion {
   documents: number
 }
 
+export interface CatalogFolder {
+  path: string
+  documents: number
+}
+
+export interface CatalogTag {
+  tag: string
+  documents: number
+}
+
+/** Browseable Obsidian, Drive and Keep items returned by `GET /api/settings/llm-exclusions/catalog`. */
+export interface LlmExclusionCatalog {
+  obsidian: {
+    folders: CatalogFolder[]
+    notes: string[]
+    tags: CatalogTag[]
+  }
+  gdrive: {
+    totalDocuments: number
+    folders: CatalogFolder[]
+    files: string[]
+  }
+  keep: {
+    documents: number
+  }
+}
+
+export const EMPTY_EXCLUSION_CATALOG: LlmExclusionCatalog = {
+  obsidian: { folders: [], notes: [], tags: [] },
+  gdrive: { totalDocuments: 0, folders: [], files: [] },
+  keep: { documents: 0 },
+}
+
 export async function getLlmExclusions(signal?: AbortSignal): Promise<CountedLlmExclusion[]> {
   const res = await apiFetch('/api/settings/llm-exclusions', { signal })
   return ((await res.json()) as { exclusions: CountedLlmExclusion[] }).exclusions
+}
+
+export async function getLlmExclusionCatalog(signal?: AbortSignal): Promise<LlmExclusionCatalog> {
+  const res = await apiFetch('/api/settings/llm-exclusions/catalog', { signal })
+  return (await res.json()) as LlmExclusionCatalog
 }
 
 /** Saves the whole list, replacing the stored one, and returns it as the server keeps it (deduplicated, sorted, counted). */
