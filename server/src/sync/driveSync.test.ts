@@ -5,8 +5,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChunkWrite, DocumentState, DocumentWrite, IndexStore } from '../db/indexStore.js'
 import { EMBED_DIMENSIONS, type Embedder } from '../embed/ollama.js'
 import type { OfficeConverter } from '../ingest/driveConvert.js'
+import { DRIVE_CONVERTED_EXTENSIONS } from '../ingest/driveConvert.js'
+import { DRIVE_DOCUMENT_EXTENSIONS } from '../ingest/driveExtract.js'
 import { createDriveIndexer } from '../ingest/driveIndexer.js'
-import { createRcloneRunner, DriveLoginError, DrivePullError, type RcloneRunner } from '../ingest/driveMirror.js'
+import {
+  createRcloneRunner,
+  DRIVE_DOCUMENT_FILTER,
+  DRIVE_PULL_FILTERS,
+  DriveLoginError,
+  DrivePullError,
+  rcloneArgs,
+  type RcloneRunner,
+} from '../ingest/driveMirror.js'
 import { startDriveScheduler } from '../ingest/driveScheduler.js'
 import { createDriveRound } from '../ingest/startDrive.js'
 import {
@@ -145,8 +155,8 @@ describe('Drive round (T61)', () => {
     expect(args.slice(0, 3)).toEqual(['sync', 'gdrive:', root])
     expect(args).toEqual(expect.arrayContaining(['--drive-scope', 'drive.readonly', '--drive-skip-shortcuts']))
     expect(args.join(' ')).not.toMatch(/shared-with-me|team-drive|shared-drive/)
-    const excludes = args.flatMap((arg, i) => (args[i - 1] === '--exclude' ? [arg] : []))
-    expect(excludes).toEqual(['/Archive \\[old\\]/**', '/Clients/Acme Corp/**'])
+    const filters = args.flatMap((arg, i) => (args[i - 1] === '--filter' ? [arg] : []))
+    expect(filters).toEqual(['- /Archive \\[old\\]/**', '- /Clients/Acme Corp/**', ...DRIVE_PULL_FILTERS])
     expect(args).toContain('--delete-excluded')
   })
 
@@ -199,10 +209,15 @@ describe('Drive round (T61)', () => {
     expect((await activity.list())[0]).toMatchObject({ kind: 'sync_error', message: 'Drive round failed: DriveConfigError' })
   })
 
-  it('runs with no exclude file configured', async () => {
+  it('runs with no exclude file configured and still restricts pulls to document formats', async () => {
     const { rclone, round } = setup({ exclude: null })
     await round()
-    expect(rclone.calls[0]).not.toContain('--exclude')
+    const filters = rclone.calls[0]!.flatMap((arg, i, all) => (all[i - 1] === '--filter' ? [arg] : []))
+    expect(filters).toEqual([...DRIVE_PULL_FILTERS])
+    expect(rcloneArgs({ remote: 'gdrive:', dest: '/data/gdrive', exclude: [] })).toContain(DRIVE_DOCUMENT_FILTER)
+    for (const ext of [...DRIVE_DOCUMENT_EXTENSIONS, ...DRIVE_CONVERTED_EXTENSIONS]) {
+      expect(DRIVE_DOCUMENT_FILTER).toContain(ext.slice(1))
+    }
   })
 
   it('records a drive_pulled event with counts only', async () => {

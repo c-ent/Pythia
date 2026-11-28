@@ -1,12 +1,15 @@
 import { spawn } from 'node:child_process'
+import { DRIVE_CONVERTED_EXTENSIONS } from './driveConvert.js'
+import { DRIVE_DOCUMENT_EXTENSIONS } from './driveExtract.js'
 
 /**
  * The one-way Drive pull (R19, T61): `rclone sync` of the owner's My Drive
  * into the mirror (`/data/gdrive`). Only My Drive: no `--drive-shared-with-me`,
  * no shared drive flags, and shortcuts (which can point at files shared with
  * the owner) are skipped. Google Docs, Sheets and Slides are exported as
- * `.docx`, `.xlsx` and `.pptx`. Folders on the exclude list are never pulled
- * and are deleted from the mirror if an earlier pull brought them in.
+ * `.docx`, `.xlsx` and `.pptx`. Folders on the exclude list and non-document
+ * files (videos, photos, archives, etc.) are never pulled and are deleted
+ * from the mirror if an earlier pull brought them in.
  *
  * rclone's output is never logged or returned: it can name files and, on a
  * login error, quote parts of the OAuth exchange. Callers get an error class
@@ -15,6 +18,22 @@ import { spawn } from 'node:child_process'
 
 export const DEFAULT_PULL_TIMEOUT_MS = 6 * 60 * 60_000
 export const DRIVE_EXPORT_FORMATS = 'docx,xlsx,pptx'
+
+const DOCUMENT_EXTENSION_ALTERNATION = [...DRIVE_DOCUMENT_EXTENSIONS, ...DRIVE_CONVERTED_EXTENSIONS]
+  .map((ext) => ext.replace(/^\./, ''))
+  .join('|')
+
+/**
+ * Rclone `--filter` rule matching only supported document extensions
+ * (case-insensitive) so media and archives stay out of the mirror.
+ */
+export const DRIVE_DOCUMENT_FILTER = `+ {{(?i).*\\.(${DOCUMENT_EXTENSION_ALTERNATION})$}}`
+
+/**
+ * Static `--filter` rules applied after folder excludes: drop dotfiles and
+ * dotfolders, keep supported document files, and reject everything else.
+ */
+export const DRIVE_PULL_FILTERS: readonly string[] = ['- .*/**', '- **/.*/**', '- .*', DRIVE_DOCUMENT_FILTER, '- *']
 
 export interface DrivePullOptions {
   /** rclone remote, e.g. `gdrive:` (My Drive root of the remote). */
@@ -67,7 +86,10 @@ export function rcloneArgs(options: DrivePullOptions): string[] {
     '--stats',
     '0',
   ]
-  for (const folder of options.exclude) args.push('--exclude', `/${escapeRcloneGlob(folder)}/**`)
+  // Order matters in rclone `--filter`: exclude folders first, skip dotfiles
+  // and dotfolders, include supported document files, then reject the rest.
+  for (const folder of options.exclude) args.push('--filter', `- /${escapeRcloneGlob(folder)}/**`)
+  for (const rule of DRIVE_PULL_FILTERS) args.push('--filter', rule)
   if (options.rcloneConfig != null) args.push('--config', options.rcloneConfig)
   return args
 }

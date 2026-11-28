@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { loadConfig } from '../config.js'
 import { DriveConfigError, loadDriveConfigFile, normalizeDriveFolder, parseDriveConfigFile } from './driveConfig.js'
-import { DrivePullError, escapeRcloneGlob, rcloneArgs } from './driveMirror.js'
+import { DRIVE_DOCUMENT_FILTER, DrivePullError, escapeRcloneGlob, rcloneArgs } from './driveMirror.js'
 
 describe('Drive exclude list (T61)', () => {
   it('normalizes folders, drops duplicates and sorts', () => {
@@ -63,7 +63,9 @@ describe('rclone arguments (T61)', () => {
   it('pulls one way with the read-only scope and the config path', () => {
     const args = rcloneArgs({ remote: 'gdrive:', dest: '/data/gdrive', exclude: ['Work'], rcloneConfig: '/rclone/rclone.conf' })
     expect(args.slice(0, 3)).toEqual(['sync', 'gdrive:', '/data/gdrive'])
-    expect(args).toEqual(expect.arrayContaining(['--drive-scope', 'drive.readonly', '--exclude', '/Work/**']))
+    expect(args).toEqual(
+      expect.arrayContaining(['--drive-scope', 'drive.readonly', '--filter', '- /Work/**', '--filter', DRIVE_DOCUMENT_FILTER, '--filter', '- *']),
+    )
     expect(args.slice(-2)).toEqual(['--config', '/rclone/rclone.conf'])
   })
 
