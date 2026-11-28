@@ -42,6 +42,7 @@ interface Setup {
   gemini?: () => Promise<boolean>
   devices?: () => Promise<number>
   repoRound?: StatusServiceOptions['repoRound']
+  health?: () => Promise<'ok' | 'warning' | 'broken'>
 }
 
 let clock = Date.UTC(2026, 10, 27, 1, 0, 0)
@@ -65,7 +66,7 @@ async function start(setup: Setup = {}) {
     now: () => clock,
     log: () => {},
   })
-  server = createServer(createApp({ search, ask, auth, status: { service, sync } }))
+  server = createServer(createApp({ search, ask, auth, status: { service, sync, ...(setup.health === undefined ? {} : { health: { health: setup.health } }) } }))
   await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve))
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   const get = (path: string) => fetch(`${base}/api${path}`, { headers: { cookie } })
@@ -99,6 +100,7 @@ interface StatusJson {
   sources: SourceJson[]
   repos: Array<{ name: string; state: string; reason: string | null; lastSyncAt: string | null; documents: number; chunks: number; syncing: boolean }>
   activity: Array<{ id: number; at: string; kind: string; source: string | null; count: number | null; message: string | null }>
+  health: 'ok' | 'warning' | 'broken'
 }
 
 const source = (status: StatusJson, id: string) => status.sources.find((entry) => entry.id === id)!
@@ -141,6 +143,7 @@ describe('GET /api/status', () => {
       devices: { active: 1 },
       documents: { obsidian: 10, keep: 7, repo: 7, chat: 0 },
       syncing: false,
+      health: 'ok',
       activity: [],
     })
     expect(status.sources.map((entry) => [entry.id, entry.kind, entry.state, entry.schedule])).toEqual([
@@ -246,6 +249,14 @@ describe('GET /api/status', () => {
     const result = await status()
     expect(source(result, 'obsidian')).toMatchObject({ state: 'error', reason: 'scan failed: FetchError' })
     expect(JSON.stringify(result)).not.toContain('diary')
+  })
+
+  it('forwards warning and broken health values from the health service', async () => {
+    let currentHealth: 'ok' | 'warning' | 'broken' = 'warning'
+    const { status } = await start({ health: async () => currentHealth })
+    expect((await status()).health).toBe('warning')
+    currentHealth = 'broken'
+    expect((await status()).health).toBe('broken')
   })
 })
 

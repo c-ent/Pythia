@@ -43,6 +43,9 @@ import { createPgActivityStore } from './db/activityStore.js'
 import { createActivityLog } from './sync/activity.js'
 import { createStatusService } from './sync/statusService.js'
 import { createSyncNow } from './sync/syncNow.js'
+import { createHostMetrics } from './health/hostMetrics.js'
+import { createConnectionChecks } from './health/connectionChecks.js'
+import { combineOverallHealth, createOciClient, createOracleUsage } from './health/oci/index.js'
 
 const config = loadConfig(process.env)
 // A dropped Postgres connection is logged and reconnected, never fatal (T53).
@@ -195,6 +198,29 @@ const related = createRelatedService({ store: createPgRelatedStore(pool) })
 const backlinks = createBacklinkService({ store: createPgBacklinkStore(pool) })
 const graph = createGraphService({ store: createPgGraphStore(pool) })
 const topicMap = createTopicMapService({ store: createPgTopicMapStore(pool), embedder: queryEmbedder })
+const hostMetrics = createHostMetrics(pool, {
+  appVersion: '0.0.0',
+  commit: process.env.PYTHIA_GIT_COMMIT ?? null,
+})
+const oci = createOciClient(config.oci)
+const oracleUsage = createOracleUsage(oci, config.oci?.tenancyId ?? null)
+const connectionChecks = createConnectionChecks({
+  pool,
+  ollamaUrl: config.ollamaUrl,
+  gemini,
+  githubToken: config.githubToken,
+  vaultPath: config.vaultPath,
+  status,
+  oci,
+})
+const health = {
+  health: async () => combineOverallHealth((await connectionChecks.read()).health, oracleUsage.snapshot()),
+}
+const serverHealth = {
+  read: () => hostMetrics.read(),
+  health: () => connectionChecks.read(),
+  oracle: () => oracleUsage.snapshot(),
+}
 const server = createServer(
   createApp({
     search,
@@ -207,11 +233,12 @@ const server = createServer(
     gemini,
     profile: createProfileService(createPgProfileStore(pool)),
     recent: createRecentQueryService(createPgRecentQueryStore(pool)),
-    status: { service: status, sync: syncNow },
+    status: { service: status, sync: syncNow, health },
     related,
     backlinks,
     graph,
     topicMap,
+    hostMetrics: serverHealth,
     ...(config.webDir === null ? {} : { webDir: config.webDir }),
   }),
 )
@@ -231,6 +258,8 @@ const shutdown = (): void => {
     await repos?.close()
     await drive?.close()
     await neighbours.idle()
+    oracleUsage.close()
+    hostMetrics.close()
     await pool.end()
     process.exit(0)
   })()

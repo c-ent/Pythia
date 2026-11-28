@@ -26,6 +26,7 @@ export function statusJson(status: ServerStatus) {
     devices: status.devices,
     documents: status.documents,
     syncing: status.syncing,
+    health: status.health,
     sources: status.sources.map((source) => ({ ...source, lastSyncAt: iso(source.lastSyncAt) })),
     repos: status.repos.map((repo) => ({ ...repo, lastSyncAt: iso(repo.lastSyncAt) })),
     activity: status.activity.map(activityJson),
@@ -38,7 +39,11 @@ export function statusJson(status: ServerStatus) {
  * Both POSTs answer 202 at once; the work runs in the background. Mounted
  * after `requireSession`; errors go to `jsonErrorHandler`.
  */
-export function createStatusRouter(status: StatusService, sync: SyncNowService): Router {
+export function createStatusRouter(
+  status: StatusService,
+  sync: SyncNowService,
+  health?: { health(): Promise<'ok' | 'warning' | 'broken'> },
+): Router {
   const router = express.Router()
   const noStore: express.RequestHandler = (_req, res, next) => {
     res.set('cache-control', 'no-store')
@@ -47,7 +52,9 @@ export function createStatusRouter(status: StatusService, sync: SyncNowService):
   router.use(['/status', '/activity', '/sync-now', '/repos/:name/sync'], noStore)
 
   router.get('/status', async (_req, res) => {
-    res.json(statusJson(await status.status()))
+    const body = statusJson(await status.status())
+    if (health !== undefined) body.health = await health.health()
+    res.json(body)
   })
 
   router.get('/activity', async (_req, res) => {

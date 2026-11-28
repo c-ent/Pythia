@@ -22,6 +22,8 @@ import type { BacklinkService } from './search/backlinkService.js'
 import type { GraphService } from './search/graphService.js'
 import type { RelatedService } from './search/relatedService.js'
 import type { TopicMapService } from './search/topicMapService.js'
+import type { ServerHealthService } from './routes/serverStatus.js'
+import { createServerStatusRouter } from './routes/serverStatus.js'
 import type { SearchService } from './search/searchService.js'
 import type { SettingsService } from './settings/settingsService.js'
 import type { SyncService } from './sync/syncService.js'
@@ -45,7 +47,7 @@ export interface AppDeps {
   /** Recent searches and questions (R14); `/api/recent-queries` exists only with it, and search and ask record into it. */
   recent?: RecentQueryService
   /** Status, activity, Sync now and repo re-sync (R18); those routes exist only with it. */
-  status?: { service: StatusService; sync: SyncNowService }
+  status?: { service: StatusService; sync: SyncNowService; health?: { health(): Promise<'ok' | 'warning' | 'broken'> } }
   /** Semantic neighbours (R20, T66); `/api/documents/:id/related` exists only with it. */
   related?: RelatedService
   /** Backlinks and outgoing note links (R20, T68c); `/api/documents/:id/backlinks` exists only with it. */
@@ -54,6 +56,8 @@ export interface AppDeps {
   graph?: GraphService
   /** Topic maps (R20, T73); `/api/topic-map` exists only with it. */
   topicMap?: TopicMapService
+  /** Host metrics and connection checks (R21, T77–T78); `/api/status/server` is session-only and is never mounted on `/mcp`. */
+  hostMetrics?: ServerHealthService
   /** Built PWA directory (T18); without it only the API, `/mcp` and `/healthz` are served. */
   webDir?: string
 }
@@ -75,7 +79,8 @@ export function createApp(deps: AppDeps): Express {
   if (deps.gemini !== undefined) app.use('/api', createGeminiSettingsRouter(deps.gemini))
   if (deps.profile !== undefined) app.use('/api', createProfileRouter(deps.profile))
   if (deps.recent !== undefined) app.use('/api', createRecentQueriesRouter(deps.recent))
-  if (deps.status !== undefined) app.use('/api', createStatusRouter(deps.status.service, deps.status.sync))
+  if (deps.status !== undefined) app.use('/api', createStatusRouter(deps.status.service, deps.status.sync, deps.status.health))
+  if (deps.hostMetrics !== undefined) app.use('/api', createServerStatusRouter(deps.hostMetrics))
   app.use(
     '/api',
     createApiRouter(

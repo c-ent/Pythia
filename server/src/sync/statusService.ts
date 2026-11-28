@@ -71,6 +71,7 @@ export interface ServerStatus {
   repos: RepoStatus[]
   /** A Sync now run or a scheduled repo round (startup or every 30 minutes) is in progress. */
   syncing: boolean
+  health: 'ok' | 'warning' | 'broken'
   /** The last 50 events, newest first. */
   activity: ActivityEvent[]
 }
@@ -263,6 +264,7 @@ export function createStatusService(options: StatusServiceOptions): StatusServic
         sources: [vault, github, keep, drive],
         repos,
         syncing: syncing.running || round.running || driveRunning,
+        health: 'ok',
         activity: events,
       }
     },
