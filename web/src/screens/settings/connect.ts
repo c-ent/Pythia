@@ -34,6 +34,9 @@ export const MCP_TOOLS: readonly { name: string; repos?: true }[] = [
   { name: 'search' },
   { name: 'get_document' },
   { name: 'recent_changes' },
+  { name: 'related_documents' },
+  { name: 'backlinks' },
+  { name: 'topic_map' },
   { name: 'list_repos', repos: true },
   { name: 'get_repo_overview', repos: true },
 ]

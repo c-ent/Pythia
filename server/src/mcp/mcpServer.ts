@@ -2,8 +2,19 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import express, { type Router } from 'express'
+import { z } from 'zod'
 import type { RepoInfo, RepoService } from '../search/repoService.js'
-import { documentLookupSchema, recentInputSchema, repoOverviewSchema, searchInputSchema } from '../search/schemas.js'
+import type { BacklinkService, BacklinksResponse } from '../search/backlinkService.js'
+import type { RelatedService, RelatedResponse } from '../search/relatedService.js'
+import type { TopicMapResponse, TopicMapService } from '../search/topicMapService.js'
+import {
+  backlinksInputSchema,
+  documentLookupSchema,
+  recentInputSchema,
+  repoOverviewSchema,
+  searchInputSchema,
+  topicMapInputSchema,
+} from '../search/schemas.js'
 import {
   AmbiguousDocumentError,
   SearchInputError,
@@ -76,11 +87,36 @@ const repoInfoView = (repo: RepoInfo) => ({
   updatedAt: repo.updatedAt?.toISOString() ?? null,
 })
 
+const withheldPassages = <T extends { allowLlm: boolean; passage: { text: string } | null }>(item: T) =>
+  item.allowLlm || item.passage === null
+    ? item
+    : { ...item, passage: { ...item.passage, text: WITHHELD_TEXT } }
+
+/** Labels can be derived from locked text, so replace labels on any containing branch. */
+function withholdTopicLabels(response: TopicMapResponse): TopicMapResponse {
+  const visit = (branches: TopicMapResponse['branches'], prefix: string): TopicMapResponse['branches'] =>
+    branches.map((branch, index) => {
+      const label = branch.documents.some((document) => !document.allowLlm)
+        ? `${prefix} ${index + 1}`
+        : branch.label
+      if (branch.branches === undefined) return { ...branch, label }
+      const branches = visit(branch.branches, label)
+      const hasLocked = branch.documents.some((document) => !document.allowLlm) || branch.branches.some((child) =>
+        child.documents.some((document) => !document.allowLlm),
+      )
+      return { ...branch, label: hasLocked ? `${prefix} ${index + 1}` : label, branches }
+    })
+  return { ...response, branches: visit(response.branches, 'Topic') }
+}
+
 /** One MCP server with Pythia's tools. Stateless: a new one serves each request. */
 export function buildMcpServer(
   search: SearchService,
   log: (line: string) => void = console.error,
   repos?: RepoService,
+  related?: RelatedService,
+  backlinks?: BacklinkService,
+  topicMap?: TopicMapService,
 ): McpServer {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION })
   const readOnly = { readOnlyHint: true, openWorldHint: false } as const
@@ -179,6 +215,66 @@ export function buildMcpServer(
     )
   }
 
+  if (related !== undefined) {
+    server.registerTool(
+      'related_documents',
+      {
+        title: 'Find related documents',
+        description: 'Find up to 8 semantically related map documents for an indexed document. Uses stored vectors and never calls an LLM. Locked passage text is withheld.',
+        inputSchema: {
+          documentId: z.number().int().min(1).describe('Positive document id from a Pythia search result'),
+          sources: searchInputSchema.shape.sources,
+          repo: searchInputSchema.shape.repo,
+          limit: z.number().int().min(1).max(8).optional(),
+        },
+        annotations: readOnly,
+      },
+      (input) =>
+        guard(async () => {
+          const response = await related.related(input)
+          if (response === null) return toolError(`No visible document with id ${input.documentId}`)
+          const safe: RelatedResponse = { ...response, related: response.related.map(withheldPassages) }
+          return text(safe)
+        }, log),
+    )
+  }
+
+  if (backlinks !== undefined) {
+    server.registerTool(
+      'backlinks',
+      {
+        title: 'Find backlinks',
+        description: 'List notes linking to an indexed document and its outgoing note links. Backlinks are limited to the same Obsidian vault or Keep source; locked passage text is withheld.',
+        inputSchema: {
+          documentId: z.number().int().min(1).describe('Positive document id from a Pythia search result'),
+          limit: backlinksInputSchema.shape.limit,
+        },
+        annotations: readOnly,
+      },
+      (input) =>
+        guard(async () => {
+          const response = await backlinks.backlinks(input)
+          if (response === null) return toolError(`No visible document with id ${input.documentId}`)
+          const safe: BacklinksResponse = { ...response, backlinks: response.backlinks.map(withheldPassages) }
+          return text(safe)
+        }, log),
+    )
+  }
+
+  if (topicMap !== undefined) {
+    server.registerTool(
+      'topic_map',
+      {
+        title: 'Build a topic map',
+        description: 'Hybrid-search map documents for a topic and group them by stored-vector similarity. Branches are labelled with keywords; labels for groups containing locked documents are replaced with generic labels, and document text is never returned.',
+        inputSchema: topicMapInputSchema,
+        annotations: readOnly,
+      },
+      (input) =>
+        guard(async () => text(withholdTopicLabels(await topicMap.map(input))), log),
+    )
+  }
+
   return server
 }
 
@@ -191,6 +287,9 @@ export function createMcpRouter(
   search: SearchService,
   log: (line: string) => void = console.error,
   repos?: RepoService,
+  related?: RelatedService,
+  backlinks?: BacklinkService,
+  topicMap?: TopicMapService,
 ): Router {
   const router = express.Router()
   router.use((_req, res, next) => {
@@ -199,7 +298,7 @@ export function createMcpRouter(
   })
 
   router.post('/', express.json({ limit: '64kb' }), async (req, res) => {
-    const server = buildMcpServer(search, log, repos)
+    const server = buildMcpServer(search, log, repos, related, backlinks, topicMap)
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
     res.on('close', () => {
       void transport.close()

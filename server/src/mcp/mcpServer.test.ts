@@ -19,6 +19,9 @@ import {
 } from '../search/searchService.js'
 import { WITHHELD_TEXT } from './mcpServer.js'
 import type { RepoInfo, RepoService } from '../search/repoService.js'
+import type { BacklinkService } from '../search/backlinkService.js'
+import type { RelatedService } from '../search/relatedService.js'
+import type { TopicMapService } from '../search/topicMapService.js'
 
 const mcpToken = 'test-mcp-token-' + 'x'.repeat(24)
 const SECRET_TEXT = 'private rent amount 1234'
@@ -122,12 +125,55 @@ const repos: RepoService = {
   },
 }
 
+const related: RelatedService = {
+  async related({ documentId }) {
+    if (documentId === 404) return null
+    return {
+      documentId,
+      inMap: true,
+      related: [
+        { documentId: 3, source: { kind: 'obsidian', name: 'vault' }, path: 'Public.md', title: 'Public', allowLlm: true, score: 0.9, band: 'strong', passage: { chunkId: 1, headingPath: 'Public', startLine: 1, endLine: 1, text: 'Public passage', truncated: false } },
+        { documentId: 4, source: { kind: 'obsidian', name: 'vault' }, path: 'Private.md', title: 'Private', allowLlm: false, score: 0.8, band: 'strong', passage: { chunkId: 2, headingPath: 'Private', startLine: 1, endLine: 1, text: SECRET_TEXT, truncated: false } },
+      ],
+    }
+  },
+}
+
+const backlinks: BacklinkService = {
+  async backlinks({ documentId }) {
+    if (documentId === 404) return null
+    return {
+      documentId,
+      supported: true,
+      backlinks: [{ id: 5, source: { kind: 'obsidian', name: 'vault' }, sourceLabel: 'Obsidian', title: 'Private backlink', allowLlm: false, count: 1, display: null, heading: null, passage: { headingPath: 'Private', text: SECRET_TEXT } }],
+      outgoing: [],
+    }
+  },
+}
+
+const topicMap: TopicMapService = {
+  async map({ topic }) {
+    return {
+      topic,
+      branches: [
+        {
+          label: SECRET_TEXT,
+          documents: [
+            { documentId: 3, source: { kind: 'obsidian', name: 'vault' }, path: 'Public.md', title: 'Public', allowLlm: true },
+            { documentId: 4, source: { kind: 'obsidian', name: 'vault' }, path: 'Private.md', title: 'Private', allowLlm: false },
+          ],
+        },
+      ],
+    }
+  },
+}
+
 let base = ''
 let close: () => Promise<void> = async () => {}
 const clients: Client[] = []
 
 beforeAll(async () => {
-  const server = createServer(createApp({ search, ask, auth, repos }))
+  const server = createServer(createApp({ search, ask, auth, repos, related, backlinks, topicMap }))
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   close = () => new Promise((resolve) => server.close(() => resolve()))
@@ -208,11 +254,14 @@ describe('MCP server at /mcp', () => {
     const client = await connect()
     const { tools } = await client.listTools()
     expect(tools.map((t) => t.name).sort()).toEqual([
+      'backlinks',
       'get_document',
       'get_repo_overview',
       'list_repos',
       'recent_changes',
+      'related_documents',
       'search',
+      'topic_map',
     ])
     for (const tool of tools) {
       expect(tool.annotations?.readOnlyHint).toBe(true)
@@ -220,6 +269,69 @@ describe('MCP server at /mcp', () => {
     }
     const searchTool = tools.find((t) => t.name === 'search')
     expect(searchTool?.inputSchema.required).toEqual(['query'])
+  })
+
+  it('hides optional tools when their services are not wired', async () => {
+    const server = createServer(createApp({ search, ask, auth }))
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address() as AddressInfo
+    const client = new Client({ name: 'pythia-test', version: '0.0.0' })
+    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${mcpToken}` } },
+    })
+    try {
+      await client.connect(transport)
+      const { tools } = await client.listTools()
+      expect(tools.map((tool) => tool.name)).not.toContain('related_documents')
+      expect(tools.map((tool) => tool.name)).not.toContain('backlinks')
+      expect(tools.map((tool) => tool.name)).not.toContain('topic_map')
+      for (const name of ['related_documents', 'backlinks', 'topic_map']) {
+        const result = await client.callTool({ name, arguments: { documentId: 7, topic: 'garden' } })
+        expect((result as CallToolResult).isError).toBe(true)
+        expect(errorText(result)).toMatch(/not found/)
+      }
+    } finally {
+      await client.close()
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    }
+  })
+
+  it('returns related documents with filters and withholds private passages', async () => {
+    const client = await connect()
+    const result = await client.callTool({ name: 'related_documents', arguments: { documentId: 7, sources: ['keep'], repo: 'notes', limit: 3 } })
+    const out = body(result) as { related: Array<{ allowLlm: boolean; passage: { text: string } }> }
+    expect((result as CallToolResult).isError).toBeFalsy()
+    expect(out.related[0]?.passage.text).toBe('Public passage')
+    expect(out.related[1]?.passage.text).toBe(WITHHELD_TEXT)
+    expect(JSON.stringify(result)).not.toContain(SECRET_TEXT)
+
+    const invalid = await client.callTool({ name: 'related_documents', arguments: { documentId: 7, limit: 9 } })
+    expect(errorText(invalid)).toMatch(/limit/)
+  })
+
+  it('returns backlinks and withholds private passages', async () => {
+    const client = await connect()
+    const result = await client.callTool({ name: 'backlinks', arguments: { documentId: 7, limit: 5 } })
+    expect((body(result) as { backlinks: Array<{ passage: { text: string } }> }).backlinks[0]?.passage.text).toBe(WITHHELD_TEXT)
+    expect(JSON.stringify(result)).not.toContain(SECRET_TEXT)
+    expect(errorText(await client.callTool({ name: 'backlinks', arguments: { documentId: 0 } }))).toMatch(/documentId/)
+  })
+
+  it('replaces topic-map labels for groups containing locked documents', async () => {
+    const client = await connect()
+    const result = await client.callTool({ name: 'topic_map', arguments: { topic: ' garden ' } })
+    expect(body(result)).toEqual({ topic: 'garden', branches: [{ label: 'Topic 1', documents: [
+      { documentId: 3, source: { kind: 'obsidian', name: 'vault' }, path: 'Public.md', title: 'Public', allowLlm: true },
+      { documentId: 4, source: { kind: 'obsidian', name: 'vault' }, path: 'Private.md', title: 'Private', allowLlm: false },
+    ] }] })
+    expect(JSON.stringify(result)).not.toContain(SECRET_TEXT)
+    expect(errorText(await client.callTool({ name: 'topic_map', arguments: { topic: ' ' } }))).toMatch(/topic/)
+  })
+
+  it('rejects related tool calls for missing documents', async () => {
+    const client = await connect()
+    expect(errorText(await client.callTool({ name: 'related_documents', arguments: { documentId: 404 } }))).toMatch(/No visible document/)
+    expect(errorText(await client.callTool({ name: 'backlinks', arguments: { documentId: 404 } }))).toMatch(/No visible document/)
   })
 
   it('search returns results and withholds allow_llm = false snippets', async () => {

@@ -125,7 +125,7 @@ describe('ConnectSection', () => {
     expect(screen.getByLabelText('Server URL')).toHaveProperty('value', `${window.location.origin}/mcp`)
     expect(screen.getByText(/PYTHIA_MCP_TOKEN in \.env/)).toBeTruthy()
     const tools = within(screen.getByRole('region', { name: 'Tools exposed' }))
-    for (const name of ['search', 'get_document', 'recent_changes', 'list_repos', 'get_repo_overview']) {
+    for (const name of ['search', 'get_document', 'recent_changes', 'related_documents', 'backlinks', 'topic_map', 'list_repos', 'get_repo_overview']) {
       expect(tools.getByText(name)).toBeTruthy()
     }
     // The snippet holds a placeholder, never a token.
