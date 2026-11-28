@@ -1,5 +1,5 @@
 import type { SearchableKind } from '../db/searchStore.js'
-import type { SyncRow, SyncStore } from '../db/syncStore.js'
+import type { SyncLink, SyncNeighbour, SyncRow, SyncStore } from '../db/syncStore.js'
 import { capText, DEFAULT_MAX_DOCUMENT_CHARS } from '../search/searchService.js'
 
 /**
@@ -31,6 +31,12 @@ export interface SyncedDocument {
   updatedAt: Date
   content: string
   truncated: boolean
+  /** Has a map vector (R20, T72): only map documents have neighbours and a local graph. */
+  inMap: boolean
+  /** Stored semantic neighbours, nearest first, at or above the Related cut-off. */
+  neighbours: SyncNeighbour[]
+  /** Link, tag, label and alias rows as stored; the device resolves them like the server. */
+  links: SyncLink[]
 }
 
 export interface SyncResponse {
@@ -74,6 +80,9 @@ export function createSyncService(options: SyncServiceOptions): SyncService {
       updatedAt: row.updatedAt,
       content: capped.text,
       truncated: capped.truncated,
+      inMap: row.inMap,
+      neighbours: row.neighbours,
+      links: row.links,
     }
   }
 

@@ -1,9 +1,14 @@
 import { ArrowLeft, HardDrive, LoaderCircle, Lock, RotateCw, TriangleAlert } from 'lucide-react'
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import type { DocumentView } from '../api/documents'
+import { BacklinksPanel } from '../document/BacklinksPanel'
 import { CopyPath, OpenInObsidian } from '../document/DocumentActions'
 import { canRetry, documentErrorMessage, truncationNote } from '../document/format'
 import { loadDocument } from '../document/loadDocument'
+import { hasNoteLinks, linkTargets } from '../document/noteLinks'
+import { RelatedPanel } from '../document/RelatedPanel'
+import { useBacklinks } from '../document/useBacklinks'
+import { LocalGraphPanel } from '../map/LocalGraphPanel'
 import { formatDate } from '../repos/format'
 import { goBack, pathFor } from '../router'
 import { SourceBadge } from '../search/SourceBadge'
@@ -49,6 +54,11 @@ export function DocumentScreen({ id }: { id: number }) {
     setAttempt((n) => n + 1)
   }
 
+  // Backlinks and the note's resolved links: notes only (Obsidian, Keep), once the document opened.
+  const backlinks = useBacklinks(id, state.status === 'done' && hasNoteLinks(state.doc.source.kind))
+  const outgoing = backlinks.state.status === 'done' ? backlinks.state.response.outgoing : null
+  const targets = useMemo(() => (outgoing === null ? undefined : linkTargets(outgoing)), [outgoing])
+
   return (
     <>
       <button
@@ -93,10 +103,13 @@ export function DocumentScreen({ id }: { id: number }) {
               </p>
             }
           >
-            <DocumentBody doc={state.doc} />
+            <DocumentBody doc={state.doc} targets={targets} />
           </Suspense>
         </article>
       )}
+      {state.status === 'done' ? <BacklinksPanel state={backlinks.state} retry={backlinks.retry} /> : null}
+      {state.status === 'done' ? <RelatedPanel id={id} /> : null}
+      {state.status === 'done' ? <LocalGraphPanel id={id} /> : null}
     </>
   )
 }

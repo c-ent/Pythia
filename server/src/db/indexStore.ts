@@ -1,4 +1,6 @@
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
+import type { LinkWrite } from '../ingest/links.js'
+import { refreshDocumentVector } from './documentVectorStore.js'
 
 /** Every kind except `work`, which default ingestion never creates (R2). */
 export type IngestSourceKind = 'obsidian' | 'keep' | 'repo' | 'chat' | 'gdrive'
@@ -15,6 +17,11 @@ export interface DocumentState {
   stale: boolean
   /** Obsidian note tags as last stored (R16 tag rules); empty for other sources. Absent means none. */
   tags?: string[]
+  /**
+   * `linksKey` (ingest/links.ts) of the stored link rows (R20); `NO_LINKS_KEY`
+   * when there are none. Absent when the store does not report it.
+   */
+  linksKey?: string
 }
 
 export interface DocumentWrite {
@@ -26,6 +33,8 @@ export interface DocumentWrite {
   mtime: Date | null
   /** Obsidian note tags, lower case, without `#`. Absent means none. */
   tags?: readonly string[]
+  /** Explicit links, tags, labels and aliases of an Obsidian or Keep note (R20). Absent means none. */
+  links?: readonly LinkWrite[]
 }
 
 export interface ChunkWrite {
@@ -41,8 +50,18 @@ export interface ChunkWrite {
 export interface IndexStore {
   /** States of a source's documents, keyed by path; only `paths` when given. */
   getDocumentStates(sourceId: number, embedModel: string, paths?: readonly string[]): Promise<Map<string, DocumentState>>
-  /** Upserts the document and replaces all of its chunks in one transaction. */
+  /**
+   * Upserts the document and replaces all of its chunks in one transaction,
+   * together with its map vector (`document_vectors`, R20) for map documents
+   * and its link rows (`links`, R20).
+   */
   replaceDocument(sourceId: number, doc: DocumentWrite, chunks: readonly ChunkWrite[], embedModel: string): Promise<void>
+  /**
+   * Replaces only the link rows of a stored document (R20), for a note whose
+   * text is unchanged but whose links were never stored (before T68). Never
+   * touches chunks; does nothing when the document is not stored.
+   */
+  replaceLinks(sourceId: number, path: string, links: readonly LinkWrite[]): Promise<void>
   /** Sets `allow_llm`, and the stored tags too when `tags` is given. Never touches chunks. */
   setAllowLlm(sourceId: number, path: string, allowLlm: boolean, tags?: readonly string[]): Promise<void>
   /** Deletes the documents (chunks cascade) and returns how many existed. */
@@ -53,6 +72,27 @@ export interface IndexStore {
 const stripNul = (text: string): string => text.replaceAll('\u0000', '')
 
 const toVectorLiteral = (vector: readonly number[]): string => `[${vector.join(',')}]`
+
+/** Replaces the link rows of one document, inside the caller's transaction. */
+async function writeLinks(client: PoolClient, documentId: string, links: readonly LinkWrite[]): Promise<void> {
+  await client.query('DELETE FROM links WHERE document_id = $1', [documentId])
+  if (links.length === 0) return
+  await client.query(
+    `INSERT INTO links (document_id, ordinal, kind, target, target_key, heading, display)
+     SELECT $1, t.ordinal, t.kind, t.target, t.target_key, t.heading, t.display
+     FROM unnest($2::int[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[])
+       AS t (ordinal, kind, target, target_key, heading, display)`,
+    [
+      documentId,
+      links.map((_, i) => i),
+      links.map((link) => link.kind),
+      links.map((link) => stripNul(link.target)),
+      links.map((link) => stripNul(link.targetKey)),
+      links.map((link) => (link.heading === null ? null : stripNul(link.heading))),
+      links.map((link) => (link.display === null ? null : stripNul(link.display))),
+    ],
+  )
+}
 
 /**
  * Finds the source by kind and name, creating it on first use and keeping
@@ -89,12 +129,17 @@ export function createPgIndexStore(pool: Pool): IndexStore {
         allow_llm: boolean
         stale: boolean
         tags: string[]
+        links: unknown[]
       }>(
         `SELECT d.path, d.content_hash, d.allow_llm, d.tags,
                 EXISTS (
                   SELECT 1 FROM chunks c
                   WHERE c.document_id = d.id AND c.embed_model IS DISTINCT FROM $2
-                ) AS stale
+                ) AS stale,
+                COALESCE((
+                  SELECT json_agg(json_build_array(l.kind, l.target, l.heading, l.display) ORDER BY l.ordinal)
+                  FROM links l WHERE l.document_id = d.id
+                ), '[]'::json) AS links
          FROM documents d
          WHERE d.source_id = $1 AND ($3::text[] IS NULL OR d.path = ANY ($3::text[]))`,
         [sourceId, embedModel, paths === undefined ? null : [...paths]],
@@ -102,7 +147,14 @@ export function createPgIndexStore(pool: Pool): IndexStore {
       return new Map(
         rows.map((row) => [
           row.path,
-          { contentHash: row.content_hash, allowLlm: row.allow_llm, stale: row.stale, tags: row.tags },
+          {
+            contentHash: row.content_hash,
+            allowLlm: row.allow_llm,
+            stale: row.stale,
+            tags: row.tags,
+            // Same form as linksKey() in ingest/links.ts.
+            linksKey: JSON.stringify(row.links),
+          },
         ]),
       )
     },
@@ -155,6 +207,35 @@ export function createPgIndexStore(pool: Pool): IndexStore {
                 embedModel,
               ],
             )
+          }
+          // The map vector and the link rows (R20) follow the chunks in the same transaction.
+          const source = await client.query<{ kind: string }>('SELECT kind FROM sources WHERE id = $1', [sourceId])
+          await refreshDocumentVector(client, documentId, source.rows[0]?.kind ?? '', doc.path)
+          await writeLinks(client, documentId, doc.links ?? [])
+          await client.query('COMMIT')
+        } catch (error) {
+          await client.query('ROLLBACK')
+          throw error
+        }
+      } finally {
+        client.release()
+      }
+    },
+
+    async replaceLinks(sourceId, path, links) {
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        try {
+          const { rows } = await client.query<{ id: string }>(
+            'SELECT id FROM documents WHERE source_id = $1 AND path = $2 FOR UPDATE',
+            [sourceId, path],
+          )
+          const documentId = rows[0]?.id
+          if (documentId !== undefined) {
+            await writeLinks(client, documentId, links)
+            // New link rows are a change the offline copy must get (R11, T72).
+            await client.query('UPDATE documents SET sync_seq = sync_seq WHERE id = $1', [documentId])
           }
           await client.query('COMMIT')
         } catch (error) {

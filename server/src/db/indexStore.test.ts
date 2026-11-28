@@ -65,7 +65,7 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('Postgres index store', () 
   it('writes a document with chunks and reads its state back', async () => {
     await store.replaceDocument(sourceId, doc('a.md', 'h1'), [chunk(0, 'alpha text'), chunk(1, 'beta text')], 'nomic-embed-text')
     const states = await store.getDocumentStates(sourceId, 'nomic-embed-text')
-    expect(states.get('a.md')).toEqual({ contentHash: 'h1', allowLlm: true, stale: false, tags: [] })
+    expect(states.get('a.md')).toEqual({ contentHash: 'h1', allowLlm: true, stale: false, tags: [], linksKey: '[]' })
 
     const { rows } = await pool.query<{ ordinal: number; embed_model: string; dims: number; start_line: number }>(
       `SELECT c.ordinal, c.embed_model, vector_dims(c.embedding) AS dims, c.start_line

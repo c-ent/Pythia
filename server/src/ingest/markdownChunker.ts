@@ -84,6 +84,11 @@ function splitFrontmatter(lines: string[]): { yaml: string | null; bodyStart: nu
   return { yaml: null, bodyStart: 0 }
 }
 
+/** The note's frontmatter YAML, read as `chunkMarkdown` does, or null when it has none. */
+export function noteFrontmatter(markdown: string): string | null {
+  return splitFrontmatter(markdown.replace(/^\uFEFF/, '').split(/\r?\n/)).yaml
+}
+
 /** True when frontmatter sets `llm: false` (also `no` / `off`, any case). */
 export function frontmatterDisablesLlm(yaml: string): boolean {
   try {

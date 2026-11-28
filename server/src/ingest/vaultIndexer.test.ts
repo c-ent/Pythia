@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChunkWrite, DocumentState, DocumentWrite, IndexStore } from '../db/indexStore.js'
 import { EMBED_DIMENSIONS, type Embedder } from '../embed/ollama.js'
 import type { SecretsDropEvent } from '../security/secrets.js'
+import { linksKey } from './links.js'
 import { createMemoryLlmExclusionStore, type LlmExclusion } from './llmExclusions.js'
 import { createVaultIndexer, isVaultNotePath, listVaultNotes, toVaultPath } from './vaultIndexer.js'
 
@@ -29,12 +30,17 @@ export function memoryStore() {
           allowLlm: stored.doc.allowLlm,
           stale: stored.chunks.length > 0 && stored.embedModel !== embedModel,
           ...(stored.doc.tags === undefined ? {} : { tags: [...stored.doc.tags] }),
+          linksKey: linksKey(stored.doc.links ?? []),
         })
       }
       return states
     },
     async replaceDocument(sourceId, doc, chunks, embedModel) {
       docs.set(key(sourceId, doc.path), { doc: { ...doc }, chunks: [...chunks], embedModel })
+    },
+    async replaceLinks(sourceId, relPath, links) {
+      const stored = docs.get(key(sourceId, relPath))
+      if (stored) stored.doc.links = [...links]
     },
     async setAllowLlm(sourceId, relPath, allowLlm, tags) {
       const stored = docs.get(key(sourceId, relPath))

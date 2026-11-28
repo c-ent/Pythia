@@ -6,8 +6,15 @@ import type { SyncDocumentRow, SyncRow, SyncStore } from '../db/syncStore.js'
  * sequence, tombstones on delete, `work` and disabled sources never sent,
  * repo files only for the requested repos. Used by tests.
  */
+
+type MapFields = 'inMap' | 'neighbours' | 'links'
+
+export type MemorySyncDocument = Omit<SyncDocumentRow, 'seq' | 'sourceKind' | MapFields> &
+  Partial<Pick<SyncDocumentRow, MapFields>> & { sourceKind: SearchableKind | 'work'; enabled?: boolean }
+
 export interface MemorySyncStore extends SyncStore {
-  put(doc: Omit<SyncDocumentRow, 'seq' | 'sourceKind'> & { sourceKind: SearchableKind | 'work'; enabled?: boolean }): number
+  /** Writes (or rewrites) a document with the next sequence value. Map fields default to none. */
+  put(doc: MemorySyncDocument): number
   remove(id: number): void
   setEnabled(kind: SearchableKind | 'work', name: string, enabled: boolean): void
 }
@@ -22,7 +29,14 @@ export function createMemorySyncStore(): MemorySyncStore {
   return {
     put(doc) {
       seq += 1
-      docs.set(doc.id, { ...doc, enabled: doc.enabled ?? true, seq })
+      docs.set(doc.id, {
+        ...doc,
+        inMap: doc.inMap ?? false,
+        neighbours: doc.neighbours ?? [],
+        links: doc.links ?? [],
+        enabled: doc.enabled ?? true,
+        seq,
+      })
       return seq
     },
     remove(id) {

@@ -1,5 +1,14 @@
 import { apiFetch } from '../api/client'
-import { SYNC_STATE_KEY, type CachedDocument, type CachedSourceKind, type OfflineDb, type SyncState } from './db'
+import {
+  SYNC_STATE_KEY,
+  type CachedDocument,
+  type CachedLink,
+  type CachedMapEntry,
+  type CachedNeighbour,
+  type CachedSourceKind,
+  type OfflineDb,
+  type SyncState,
+} from './db'
 
 /** Shape of `GET /api/sync` (server/src/sync/syncService.ts). */
 export interface SyncPage {
@@ -17,6 +26,10 @@ export interface SyncPage {
     updatedAt: string
     content: string
     truncated: boolean
+    /** Map rows (R20, T72); a server before T72 sends none, read as not in the map. */
+    inMap?: boolean
+    neighbours?: CachedNeighbour[]
+    links?: CachedLink[]
   }>
   deleted: number[]
 }
@@ -66,6 +79,18 @@ const toCached = (doc: SyncPage['documents'][number]): CachedDocument => ({
   truncated: doc.truncated,
 })
 
+const toMapEntry = (doc: SyncPage['documents'][number]): CachedMapEntry => ({
+  id: doc.id,
+  sourceKind: doc.source.kind,
+  sourceName: doc.source.name,
+  path: doc.path,
+  title: doc.title,
+  allowLlm: doc.allowLlm,
+  inMap: doc.inMap ?? false,
+  neighbours: Array.isArray(doc.neighbours) ? doc.neighbours : [],
+  links: Array.isArray(doc.links) ? doc.links : [],
+})
+
 export async function readSyncState(db: OfflineDb): Promise<SyncState | null> {
   return (await db.state.get(SYNC_STATE_KEY)) ?? null
 }
@@ -102,8 +127,9 @@ export async function syncOnce(db: OfflineDb, options: SyncOptions = {}): Promis
       // The server's sequence is behind ours: the database was restored or
       // rebuilt. Start over so nothing stale survives.
       result.reset = true
-      await db.transaction('rw', db.documents, db.state, async () => {
+      await db.transaction('rw', db.documents, db.map, db.state, async () => {
         await db.documents.clear()
+        await db.map.clear()
         await db.state.put({ key: SYNC_STATE_KEY, cursor: '0', repos, syncedAt: null })
       })
       wrote = true
@@ -112,7 +138,7 @@ export async function syncOnce(db: OfflineDb, options: SyncOptions = {}): Promis
     }
 
     const finished = !page.hasMore
-    await db.transaction('rw', db.documents, db.state, async () => {
+    await db.transaction('rw', db.documents, db.map, db.state, async () => {
       // Clear offline cache ran while this sync was between pages: writing
       // this page's cursor would skip the pages it removed. Stop; the next
       // sync starts from cursor 0.
@@ -121,8 +147,13 @@ export async function syncOnce(db: OfflineDb, options: SyncOptions = {}): Promis
         const present = await db.documents.bulkGet(page.deleted)
         result.removed += present.filter((doc) => doc !== undefined).length
         await db.documents.bulkDelete(page.deleted)
+        await db.map.bulkDelete(page.deleted)
       }
-      if (page.documents.length > 0) await db.documents.bulkPut(page.documents.map(toCached))
+      if (page.documents.length > 0) {
+        // A document and its map rows are written together, so they never disagree.
+        await db.documents.bulkPut(page.documents.map(toCached))
+        await db.map.bulkPut(page.documents.map(toMapEntry))
+      }
       result.updated += page.documents.length
       await db.state.put({
         key: SYNC_STATE_KEY,
@@ -147,8 +178,9 @@ export const CACHE_CLEARED = 'offline cache was cleared during sync'
  * from 0; a sync running at the time stops at its next page.
  */
 export async function clearOfflineCache(db: OfflineDb): Promise<void> {
-  await db.transaction('rw', db.documents, db.state, async () => {
+  await db.transaction('rw', db.documents, db.map, db.state, async () => {
     await db.documents.clear()
+    await db.map.clear()
     await db.state.clear()
   })
 }

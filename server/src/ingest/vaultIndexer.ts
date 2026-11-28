@@ -4,8 +4,9 @@ import path from 'node:path'
 import type { DocumentState, IndexStore } from '../db/indexStore.js'
 import type { Embedder } from '../embed/ollama.js'
 import { dropSecretChunks, isBlockedPath, logSecretsDrop, type SecretsDropLogger } from '../security/secrets.js'
+import { extractLinks, linksKey } from './links.js'
 import { isExcludedFromLlm, type LlmExclusion } from './llmExclusions.js'
-import { chunkMarkdown, noteLlmMeta } from './markdownChunker.js'
+import { chunkMarkdown, noteFrontmatter, noteLlmMeta, type MarkdownChunk } from './markdownChunker.js'
 
 /** Stored tags (absent before T40) against the note's tags; both sorted. */
 const sameTags = (stored: readonly string[] | undefined, current: readonly string[]): boolean =>
@@ -129,24 +130,36 @@ export function createVaultIndexer(options: VaultIndexerOptions): VaultIndexer {
     const absPath = notePath(relPath)
     const [bytes, info] = await Promise.all([readFile(absPath), stat(absPath)])
     const contentHash = sha256(bytes)
-    const note = chunkMarkdown(relPath, bytes.toString('utf8'))
+    const markdown = bytes.toString('utf8')
+    const note = chunkMarkdown(relPath, markdown)
     // Frontmatter `llm: false` and the exclusion list (paths and tags) each keep a note away on their own.
     const allowLlm = note.allowLlm && !isExcludedFromLlm(relPath, exclusions, note.tags)
+    // The embedded text includes the heading path, so scan that rather than the body alone.
+    const cleanChunks = (log: SecretsDropLogger): MarkdownChunk[] =>
+      dropSecretChunks(
+        relPath,
+        note.chunks.map((chunk) => ({ chunk, content: chunk.embedText })),
+        log,
+      ).map(({ chunk }) => chunk)
+    // Links (R20) come only from the chunks that will be stored, never from dropped text.
+    const linksOf = (chunks: readonly MarkdownChunk[]) =>
+      extractLinks({ yaml: noteFrontmatter(markdown), contents: chunks.map((chunk) => chunk.content) })
 
     if (state !== undefined && state.contentHash === contentHash && !state.stale) {
       // Same text, but the list may have changed, or the tags were never stored (before T40).
       if (state.allowLlm !== allowLlm || !sameTags(state.tags, note.tags)) {
         await store.setAllowLlm(sourceId, relPath, allowLlm, note.tags)
       }
+      // Links stored before T68 (none) or by an older parser are rewritten without re-embedding.
+      // The drop was logged when the note was indexed; it is not logged again on every scan.
+      if (state.linksKey !== undefined) {
+        const links = linksOf(cleanChunks(() => {}))
+        if (linksKey(links) !== state.linksKey) await store.replaceLinks(sourceId, relPath, links)
+      }
       return 'unchanged'
     }
 
-    // The embedded text includes the heading path, so scan that rather than the body alone.
-    const clean = dropSecretChunks(
-      relPath,
-      note.chunks.map((chunk) => ({ chunk, content: chunk.embedText })),
-      logSecrets,
-    ).map(({ chunk }) => chunk)
+    const clean = cleanChunks(logSecrets)
     // Embed before touching the database: if Ollama fails, the old chunks stay.
     const embeddings = clean.length > 0 ? await embedder.embedDocuments(clean.map((chunk) => chunk.embedText)) : []
 
@@ -160,6 +173,7 @@ export function createVaultIndexer(options: VaultIndexerOptions): VaultIndexer {
         allowLlm,
         mtime: info.mtime,
         tags: note.tags,
+        links: linksOf(clean),
       },
       clean.map((chunk, i) => ({
         ordinal: i,

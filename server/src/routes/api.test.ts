@@ -7,6 +7,9 @@ import { testAuth } from './testAuth.js'
 import { createMemorySyncStore } from '../sync/memorySyncStore.js'
 import { createSyncService } from '../sync/syncService.js'
 import type { RepoService } from '../search/repoService.js'
+import type { BacklinkService, BacklinksRequest } from '../search/backlinkService.js'
+import type { GraphRequest, GraphService, LocalGraphRequest } from '../search/graphService.js'
+import type { RelatedRequest, RelatedService } from '../search/relatedService.js'
 import {
   AmbiguousDocumentError,
   type DocumentView,
@@ -112,8 +115,96 @@ describe('REST API', () => {
     },
   }
 
+  const relatedCalls: RelatedRequest[] = []
+  const relatedService: RelatedService = {
+    async related(request) {
+      relatedCalls.push(request)
+      if (request.documentId === 13) throw new Error('relation "secret text" does not exist')
+      if (request.documentId === 9) return { documentId: 9, inMap: false, related: [] }
+      if (request.documentId !== 7) return null
+      return {
+        documentId: 7,
+        inMap: true,
+        related: [
+          {
+            documentId: 21,
+            source: { kind: 'keep', name: 'keep' },
+            path: 'Keep/Garden.json',
+            title: 'Garden',
+            allowLlm: true,
+            score: 0.83,
+            band: 'strong',
+            passage: { chunkId: 5, headingPath: 'Garden', startLine: null, endLine: null, text: 'Tomatoes need sun.', truncated: false },
+          },
+        ],
+      }
+    },
+  }
+
+  const backlinkCalls: BacklinksRequest[] = []
+  const backlinkService: BacklinkService = {
+    async backlinks(request) {
+      backlinkCalls.push(request)
+      if (request.documentId === 13) throw new Error('relation "secret text" does not exist')
+      if (request.documentId !== 7) return null
+      return {
+        documentId: 7,
+        supported: true,
+        backlinks: [
+          {
+            id: 22,
+            source: { kind: 'obsidian', name: 'vault' },
+            sourceLabel: 'Obsidian',
+            title: 'Bread log',
+            allowLlm: true,
+            count: 2,
+            display: null,
+            heading: null,
+            passage: { headingPath: 'Bread log', text: 'See [[Pythia]].' },
+          },
+        ],
+        outgoing: [{ target: 'Ghost', heading: null, display: null, documentId: null }],
+      }
+    },
+  }
+
+  const graphCalls: (LocalGraphRequest | GraphRequest)[] = []
+  const graphService: GraphService = {
+    async local(request) {
+      graphCalls.push(request)
+      if (request.documentId === 13) throw new Error('relation "secret text" does not exist')
+      if (request.documentId !== 7) return null
+      return {
+        documentId: 7,
+        inMap: true,
+        center: 'doc:7',
+        nodes: [
+          { id: 'doc:7', type: 'document', label: 'Pythia', documentId: 7, source: { kind: 'obsidian', name: 'vault' }, sourceLabel: 'Obsidian', path: 'Projects/Pythia.md', allowLlm: true, links: 1, depth: 0 },
+          { id: 'tag:ai', type: 'tag', label: 'ai', documentId: null, source: null, sourceLabel: null, path: null, allowLlm: null, links: 1, depth: 1 },
+        ],
+        edges: [{ source: 'doc:7', target: 'tag:ai', kind: 'tag', score: null }],
+        truncated: false,
+      }
+    },
+    async vault(request) {
+      graphCalls.push(request)
+      return { nodes: [], edges: [], truncated: false }
+    },
+  }
+
   beforeAll(async () => {
-    server = createServer(createApp({ search: service, ask: askService, auth, sync, repos }))
+    server = createServer(
+      createApp({
+        search: service,
+        ask: askService,
+        auth,
+        sync,
+        repos,
+        related: relatedService,
+        backlinks: backlinkService,
+        graph: graphService,
+      }),
+    )
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   })
@@ -197,6 +288,129 @@ describe('REST API', () => {
     const res = await fetch(`${base}/api/documents/8`)
     expect(res.status).toBe(404)
     expect(await res.json()).toEqual({ error: { code: 'not_found', message: 'Document not found' } })
+  })
+
+  it('lists related documents with no caching', async () => {
+    const res = await fetch(`${base}/api/documents/7/related`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(await res.json()).toMatchObject({
+      documentId: 7,
+      inMap: true,
+      related: [{ documentId: 21, source: { kind: 'keep' }, band: 'strong', passage: { text: 'Tomatoes need sun.' } }],
+    })
+    expect(relatedCalls.at(-1)).toEqual({ documentId: 7 })
+  })
+
+  it('passes related source, repo and limit filters', async () => {
+    const res = await fetch(`${base}/api/documents/7/related?sources=keep,%20gdrive&repo=pythia&limit=3`)
+    expect(res.status).toBe(200)
+    expect(relatedCalls.at(-1)).toEqual({ documentId: 7, sources: ['keep', 'gdrive'], repo: 'pythia', limit: 3 })
+  })
+
+  it('answers an empty list for a document outside the map', async () => {
+    const res = await fetch(`${base}/api/documents/9/related`)
+    expect(await res.json()).toEqual({ documentId: 9, inMap: false, related: [] })
+  })
+
+  it.each([
+    ['a bad id', '/api/documents/abc/related'],
+    ['the work kind', '/api/documents/7/related?sources=work'],
+    ['an unknown kind', '/api/documents/7/related?sources=keep,email'],
+    ['an empty sources list', '/api/documents/7/related?sources=,'],
+    ['a limit above 8', '/api/documents/7/related?limit=9'],
+    ['a limit of 0', '/api/documents/7/related?limit=0'],
+  ])('returns 400 for related with %s', async (_name, path) => {
+    const res = await fetch(`${base}${path}`)
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: { code: 'invalid_input' } })
+  })
+
+  it('returns 404 for related of a missing document and hides internal errors', async () => {
+    const missing = await fetch(`${base}/api/documents/8/related`)
+    expect(missing.status).toBe(404)
+    const broken = await fetch(`${base}/api/documents/13/related`)
+    expect(broken.status).toBe(500)
+    expect(await broken.text()).not.toContain('secret')
+  })
+
+  it('lists backlinks and outgoing links with no caching', async () => {
+    const res = await fetch(`${base}/api/documents/7/backlinks`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(await res.json()).toMatchObject({
+      documentId: 7,
+      supported: true,
+      backlinks: [{ id: 22, sourceLabel: 'Obsidian', count: 2, passage: { text: 'See [[Pythia]].' } }],
+      outgoing: [{ target: 'Ghost', documentId: null }],
+    })
+    expect(backlinkCalls.at(-1)).toEqual({ documentId: 7 })
+  })
+
+  it('passes the backlinks limit', async () => {
+    const res = await fetch(`${base}/api/documents/7/backlinks?limit=5`)
+    expect(res.status).toBe(200)
+    expect(backlinkCalls.at(-1)).toEqual({ documentId: 7, limit: 5 })
+  })
+
+  it.each([
+    ['a bad id', '/api/documents/abc/backlinks'],
+    ['a limit above 200', '/api/documents/7/backlinks?limit=201'],
+    ['a limit of 0', '/api/documents/7/backlinks?limit=0'],
+  ])('returns 400 for backlinks with %s', async (_name, path) => {
+    const res = await fetch(`${base}${path}`)
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: { code: 'invalid_input' } })
+  })
+
+  it('returns 404 for backlinks of a missing document and hides internal errors', async () => {
+    const missing = await fetch(`${base}/api/documents/8/backlinks`)
+    expect(missing.status).toBe(404)
+    const broken = await fetch(`${base}/api/documents/13/backlinks`)
+    expect(broken.status).toBe(500)
+    expect(await broken.text()).not.toContain('secret')
+  })
+
+  it('returns the local graph of a document with no caching', async () => {
+    const res = await fetch(`${base}/api/documents/7/graph`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(await res.json()).toMatchObject({
+      documentId: 7,
+      center: 'doc:7',
+      nodes: [{ id: 'doc:7', depth: 0 }, { id: 'tag:ai', type: 'tag' }],
+      edges: [{ source: 'doc:7', target: 'tag:ai', kind: 'tag' }],
+    })
+    expect(graphCalls.at(-1)).toEqual({ documentId: 7 })
+  })
+
+  it('passes graph source and repo filters', async () => {
+    await fetch(`${base}/api/documents/7/graph?sources=keep,obsidian&repo=pythia`)
+    expect(graphCalls.at(-1)).toEqual({ documentId: 7, sources: ['keep', 'obsidian'], repo: 'pythia' })
+    const res = await fetch(`${base}/api/graph?sources=keep`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(await res.json()).toEqual({ nodes: [], edges: [], truncated: false })
+    expect(graphCalls.at(-1)).toEqual({ sources: ['keep'] })
+  })
+
+  it.each([
+    ['a bad id', '/api/documents/abc/graph'],
+    ['the work kind', '/api/documents/7/graph?sources=work'],
+    ['the work kind on the whole-vault graph', '/api/graph?sources=work'],
+    ['an unknown kind', '/api/graph?sources=keep,email'],
+  ])('returns 400 for graphs with %s', async (_name, path) => {
+    const res = await fetch(`${base}${path}`)
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: { code: 'invalid_input' } })
+  })
+
+  it('returns 404 for the graph of a missing document and hides internal errors', async () => {
+    const missing = await fetch(`${base}/api/documents/8/graph`)
+    expect(missing.status).toBe(404)
+    const broken = await fetch(`${base}/api/documents/13/graph`)
+    expect(broken.status).toBe(500)
+    expect(await broken.text()).not.toContain('secret')
   })
 
   it('gets a document by source and path', async () => {

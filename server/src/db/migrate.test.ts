@@ -57,10 +57,13 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('runMigrations against Post
     expect(tables.rows.map((row) => row.table_name)).toEqual([
       'activity',
       'chunks',
+      'document_neighbours',
       'document_tombstones',
+      'document_vectors',
       'documents',
       'gemini_key',
       'gemini_usage',
+      'links',
       'llm_exclusions',
       'mcp_token',
       'profile',
@@ -80,6 +83,27 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('runMigrations against Post
        WHERE attrelid = 'chunks'::regclass AND attname = 'embedding'`,
     )
     expect(embedding.rows[0]?.type).toBe('vector(768)')
+
+    const docVector = await pool.query<{ type: string }>(
+      `SELECT format_type(atttypid, atttypmod) AS type FROM pg_attribute
+       WHERE attrelid = 'document_vectors'::regclass AND attname = 'embedding'`,
+    )
+    expect(docVector.rows[0]?.type).toBe('vector(768)')
+
+    // T66: neighbour lists, the vector index they are computed with, and the
+    // column that marks which documents changed since their list was made.
+    const vectorIndexes = await pool.query<{ indexname: string }>(
+      "SELECT indexname FROM pg_indexes WHERE tablename IN ('document_vectors', 'document_neighbours')",
+    )
+    expect(vectorIndexes.rows.map((row) => row.indexname)).toEqual(
+      expect.arrayContaining(['document_vectors_embedding_hnsw_idx', 'document_neighbours_neighbour_idx']),
+    )
+    const neighboursAt = await pool.query(
+      "SELECT 1 FROM information_schema.columns WHERE table_name = 'document_vectors' AND column_name = 'neighbours_at'",
+    )
+    expect(neighboursAt.rowCount).toBe(1)
+    const trigger = await pool.query("SELECT 1 FROM pg_trigger WHERE tgname = 'document_neighbours_deleted'")
+    expect(trigger.rowCount).toBe(1)
   })
 
   it('is a no-op when run again', async () => {
@@ -110,17 +134,17 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('runMigrations against Post
     expect(Number(left.rows[0]!.n)).toBe(0)
   })
 
-  it('rejects an unknown source kind', async () => {
-    await expect(pool.query("INSERT INTO sources (kind, name, root_path) VALUES ('email', 'x', '/x')")).rejects.toThrow(
-      /check constraint/,
-    )
-  })
-
   it('accepts the gdrive source kind', async () => {
     const source = await pool.query<{ id: string }>(
       "INSERT INTO sources (kind, name, root_path) VALUES ('gdrive', 'gdrive', '/data/gdrive') RETURNING id",
     )
     expect(source.rowCount).toBe(1)
     await pool.query('DELETE FROM sources WHERE id = $1', [source.rows[0]!.id])
+  })
+
+  it('rejects an unknown source kind', async () => {
+    await expect(pool.query("INSERT INTO sources (kind, name, root_path) VALUES ('email', 'x', '/x')")).rejects.toThrow(
+      /check constraint/,
+    )
   })
 })

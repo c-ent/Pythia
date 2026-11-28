@@ -17,6 +17,14 @@ import { createSearchService } from './search/searchService.js'
 import { createPgSyncStore } from './db/syncStore.js'
 import { createPgRepoStore } from './db/repoStore.js'
 import { createPgIndexStore, ensureSource } from './db/indexStore.js'
+import { backfillDocumentVectors } from './db/documentVectorStore.js'
+import { createPgRelatedStore, refreshNeighbours } from './db/neighbourStore.js'
+import { createNeighbourRefresher, refreshAfterRounds } from './search/neighbourRefresh.js'
+import { createRelatedService } from './search/relatedService.js'
+import { createPgBacklinkStore } from './db/linkStore.js'
+import { createBacklinkService } from './search/backlinkService.js'
+import { createPgGraphStore } from './db/graphStore.js'
+import { createGraphService } from './search/graphService.js'
 import { createPgStatusStore } from './db/statusStore.js'
 import { createPgLlmExclusionStore } from './db/llmExclusionStore.js'
 import { createPgProfileStore } from './db/profileStore.js'
@@ -37,6 +45,16 @@ import { createSyncNow } from './sync/syncNow.js'
 const config = loadConfig(process.env)
 // A dropped Postgres connection is logged and reconnected, never fatal (T53).
 const pool = createPool(config.db)
+
+// Map vectors (R20, T65) for documents indexed before `document_vectors`
+// existed, from their stored chunk embeddings: no Ollama call. New and
+// changed documents get theirs in IndexStore.replaceDocument.
+try {
+  const backfilled = await backfillDocumentVectors(pool)
+  if (backfilled > 0) console.log(`map: ${backfilled} document vectors backfilled`)
+} catch (error) {
+  console.error(`map: document vector backfill failed (${error instanceof Error ? error.name : 'unknown'})`)
+}
 
 // Every embed request goes through one gate, queries first (T51): a search
 // waits for the one index request already running at most, never for a queue
@@ -103,8 +121,13 @@ const repoService = createRepoService({ store: createPgRepoStore(pool) })
 
 // The Gemini exclusion list (R3, T24), edited under Settings. Empty by default.
 const llmExclusions = createPgLlmExclusionStore(pool)
+// Semantic neighbours (R20, T66): refreshed from stored vectors after every
+// index round (each round ends with an activity event), and once now for
+// documents indexed or backfilled before this start. Never waits on Ollama.
+const neighbours = createNeighbourRefresher(() => refreshNeighbours(pool))
+neighbours.request()
 // Sync activity (R18, T42): the last 50 events, counts and error classes only.
-const activity = createActivityLog(createPgActivityStore(pool))
+const activity = refreshAfterRounds(createActivityLog(createPgActivityStore(pool)), neighbours)
 
 let vault: RunningVault | undefined
 if (config.vault === null) {
@@ -179,6 +202,9 @@ const server = createServer(
     profile: createProfileService(createPgProfileStore(pool)),
     recent: createRecentQueryService(createPgRecentQueryStore(pool)),
     status: { service: status, sync: syncNow },
+    related: createRelatedService({ store: createPgRelatedStore(pool) }),
+    backlinks: createBacklinkService({ store: createPgBacklinkStore(pool) }),
+    graph: createGraphService({ store: createPgGraphStore(pool) }),
     ...(config.webDir === null ? {} : { webDir: config.webDir }),
   }),
 )
@@ -197,6 +223,7 @@ const shutdown = (): void => {
     await vault?.close()
     await repos?.close()
     await drive?.close()
+    await neighbours.idle()
     await pool.end()
     process.exit(0)
   })()

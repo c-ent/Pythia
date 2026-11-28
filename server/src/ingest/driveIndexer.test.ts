@@ -35,6 +35,7 @@ function memoryStore() {
     async replaceDocument(_sourceId, doc, chunks, embedModel) {
       docs.set(doc.path, { doc: { ...doc }, chunks: [...chunks], embedModel })
     },
+    async replaceLinks() {},
     async setAllowLlm(_sourceId, relPath, allowLlm) {
       const stored = docs.get(relPath)
       if (stored) stored.doc.allowLlm = allowLlm

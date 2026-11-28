@@ -100,6 +100,43 @@ describe('offline sync store', () => {
     expect(await readSyncState(db)).toEqual({ key: 'sync', cursor: '2', repos: [], syncedAt: '2026-11-26T01:00:00.000Z' })
   })
 
+  it('stores map rows with each document and drops them with it (T72)', async () => {
+    const server = fakeServer()
+    server.put(1, 'A.md', '# A [[B]]')
+    server.put(2, 'B.md', '# B')
+    const links = [{ kind: 'wikilink' as const, target: 'B', heading: null, display: null }]
+    const fetchPage = async (query: URLSearchParams): Promise<SyncPage> => {
+      const page = await server.fetchPage(query)
+      return {
+        ...page,
+        documents: page.documents.map((doc) =>
+          doc.id === 1 ? { ...doc, inMap: true, neighbours: [{ id: 2, score: 0.8 }], links } : doc,
+        ),
+      }
+    }
+    await syncOnce(db, { fetchPage, now })
+    expect(await db.map.get(1)).toEqual({
+      id: 1,
+      sourceKind: 'obsidian',
+      sourceName: 'vault',
+      path: 'A.md',
+      title: 'A.md',
+      allowLlm: true,
+      inMap: true,
+      neighbours: [{ id: 2, score: 0.8 }],
+      links,
+    })
+    // A server before T72 sends no map fields: read as not in the map.
+    expect(await db.map.get(2)).toMatchObject({ inMap: false, neighbours: [], links: [] })
+
+    server.remove(1)
+    await syncOnce(db, { fetchPage, now })
+    expect(await db.map.get(1)).toBeUndefined()
+
+    await clearOfflineCache(db)
+    expect(await db.map.count()).toBe(0)
+  })
+
   it('then asks only for changes after its cursor', async () => {
     const server = fakeServer()
     server.put(1, 'A.md', '# A')

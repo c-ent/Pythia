@@ -5,13 +5,19 @@ import { KeepDisabledError, type ImportService } from '../ingest/importService.j
 import { KeepTakeoutError } from '../ingest/keepTakeout.js'
 import { queryFilters, type RecentQueryService } from '../recent/recentQueryService.js'
 import type { RepoService } from '../search/repoService.js'
+import type { BacklinkService } from '../search/backlinkService.js'
+import type { GraphService } from '../search/graphService.js'
 import {
   askInputSchema,
+  backlinksInputSchema,
   documentLookupSchema,
+  graphInputSchema,
   recentInputSchema,
+  relatedInputSchema,
   repoOverviewSchema,
   searchInputSchema,
 } from '../search/schemas.js'
+import type { RelatedService } from '../search/relatedService.js'
 import { AmbiguousDocumentError, SearchInputError, type SearchService } from '../search/searchService.js'
 import { MAX_SYNC_LIMIT, type SyncService } from '../sync/syncService.js'
 
@@ -67,6 +73,9 @@ export function createApiRouter(
   repos?: RepoService,
   imports?: ImportService,
   recent?: RecentQueryService,
+  related?: RelatedService,
+  backlinks?: BacklinkService,
+  graph?: GraphService,
 ): Router {
   const router = express.Router()
   router.use((_req, res, next) => {
@@ -97,6 +106,44 @@ export function createApiRouter(
     if (doc === null) throw new HttpError(404, 'not_found', 'Document not found')
     res.json(doc)
   })
+
+  if (related !== undefined) {
+    // Semantic neighbours (R20, T66), read from stored vectors: no Ollama call.
+    router.get('/documents/:id/related', async (req, res) => {
+      const id = Number(parseInput(documentIdSchema, req.params.id))
+      const input = parseInput(relatedInputSchema, req.query)
+      const response = await related.related({ documentId: id, ...input })
+      if (response === null) throw new HttpError(404, 'not_found', 'Document not found')
+      res.json(response)
+    })
+  }
+
+  if (backlinks !== undefined) {
+    // Backlinks and the note's resolved outgoing links (R20, T68c), from `links`.
+    router.get('/documents/:id/backlinks', async (req, res) => {
+      const id = Number(parseInput(documentIdSchema, req.params.id))
+      const input = parseInput(backlinksInputSchema, req.query)
+      const response = await backlinks.backlinks({ documentId: id, ...input })
+      if (response === null) throw new HttpError(404, 'not_found', 'Document not found')
+      res.json(response)
+    })
+  }
+
+  if (graph !== undefined) {
+    // Graphs (R20, T70) from `links`, `document_neighbours` and `document_vectors`: no Ollama call.
+    router.get('/documents/:id/graph', async (req, res) => {
+      const id = Number(parseInput(documentIdSchema, req.params.id))
+      const input = parseInput(graphInputSchema, req.query)
+      const response = await graph.local({ documentId: id, ...input })
+      if (response === null) throw new HttpError(404, 'not_found', 'Document not found')
+      res.json(response)
+    })
+
+    router.get('/graph', async (req, res) => {
+      const input = parseInput(graphInputSchema, req.query)
+      res.json(await graph.vault(input))
+    })
+  }
 
   router.get('/documents', async (req, res) => {
     const input = parseInput(documentLookupSchema, req.query)

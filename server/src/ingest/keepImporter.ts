@@ -3,8 +3,9 @@ import type { DocumentState, IndexStore } from '../db/indexStore.js'
 import type { Embedder } from '../embed/ollama.js'
 import { dropSecretChunks, logSecretsDrop, type SecretsDropLogger } from '../security/secrets.js'
 import { keepNoteMarkdown, type KeepNote, type KeepSkipped, type KeepTakeout } from './keepTakeout.js'
+import { extractLinks, linksKey } from './links.js'
 import { isKeepLocked, type LlmExclusion } from './llmExclusions.js'
-import { chunkMarkdown } from './markdownChunker.js'
+import { chunkMarkdown, type MarkdownChunk } from './markdownChunker.js'
 
 export interface KeepImporterOptions {
   sourceId: number
@@ -59,17 +60,27 @@ export function createKeepImporter(options: KeepImporterOptions): KeepImporter {
   async function writeNote(note: KeepNote, state: DocumentState | undefined, allowLlm: boolean): Promise<boolean> {
     const markdown = keepNoteMarkdown(note)
     const contentHash = hashOf(note.title, markdown)
+    const chunked = chunkMarkdown(`${note.path}.md`, markdown, { title: note.title })
+    const cleanChunks = (log: SecretsDropLogger): MarkdownChunk[] =>
+      dropSecretChunks(
+        note.path,
+        chunked.chunks.map((chunk) => ({ chunk, content: chunk.embedText })),
+        log,
+      ).map(({ chunk }) => chunk)
+    // Keep labels and links in the stored text (R20); Keep notes have no frontmatter.
+    const linksOf = (chunks: readonly MarkdownChunk[]) =>
+      extractLinks({ yaml: null, contents: chunks.map((chunk) => chunk.content), labels: note.labels })
     if (state !== undefined && state.contentHash === contentHash && !state.stale) {
       // Bring the flag in line with the Keep lock (and notes stored before T26) without re-embedding.
       if (state.allowLlm !== allowLlm) await store.setAllowLlm(sourceId, note.path, allowLlm)
+      // Links stored before T68 (none) are written without re-embedding; the drop was logged at index time.
+      if (state.linksKey !== undefined) {
+        const links = linksOf(cleanChunks(() => {}))
+        if (linksKey(links) !== state.linksKey) await store.replaceLinks(sourceId, note.path, links)
+      }
       return false
     }
-    const chunked = chunkMarkdown(`${note.path}.md`, markdown, { title: note.title })
-    const clean = dropSecretChunks(
-      note.path,
-      chunked.chunks.map((chunk) => ({ chunk, content: chunk.embedText })),
-      logSecrets,
-    ).map(({ chunk }) => chunk)
+    const clean = cleanChunks(logSecrets)
     // Embed before the write, so an Ollama failure leaves the stored note as it was.
     const embeddings = clean.length > 0 ? await embedder.embedDocuments(clean.map((chunk) => chunk.embedText)) : []
     await store.replaceDocument(
@@ -81,6 +92,7 @@ export function createKeepImporter(options: KeepImporterOptions): KeepImporter {
         contentHash,
         allowLlm,
         mtime: note.editedAt,
+        links: linksOf(clean),
       },
       clean.map((chunk, i) => ({
         ordinal: i,

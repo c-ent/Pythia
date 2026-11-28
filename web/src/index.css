@@ -50,6 +50,18 @@
   --color-glow-lavender: #c4cbf2;
   --color-glow-offline: #1c2923;
 
+  /*
+   * Knowledge map node fills (R20): one per source, plus tags and ghosts
+   * (missing notes, grey). Fills only, never text; each is at least 3:1 on
+   * surface and canvas (tokens.test.ts). The graph canvas reads these variables.
+   */
+  --color-map-obsidian: #7c3aed;
+  --color-map-keep: #b45309;
+  --color-map-gdrive: #1d6fd6;
+  --color-map-repo: #0f7a5a;
+  --color-map-tag: #be185d;
+  --color-map-ghost: #85857f;
+
   --font-sans: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, 'Liberation Mono', monospace;
 
@@ -95,6 +107,13 @@
     --color-glow-green: rgb(207 233 184 / 0.15);
     --color-glow-lavender: rgb(196 203 242 / 0.15);
     --color-glow-offline: #1c2923;
+
+    --color-map-obsidian: #b794f6;
+    --color-map-keep: #f5b454;
+    --color-map-gdrive: #7ab4ff;
+    --color-map-repo: #5fd3a8;
+    --color-map-tag: #f48fb1;
+    --color-map-ghost: #72777f;
   }
 
   html,

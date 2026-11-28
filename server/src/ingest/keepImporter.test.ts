@@ -6,6 +6,7 @@ import type { SecretsDropEvent } from '../security/secrets.js'
 import { createImportService } from './importService.js'
 import { createKeepImporter } from './keepImporter.js'
 import { KeepTakeoutError, parseKeepTakeout } from './keepTakeout.js'
+import { linksKey } from './links.js'
 import type { LlmExclusion } from './llmExclusions.js'
 import { keepJson, takeoutZip } from './testKeepTakeout.js'
 
@@ -22,9 +23,14 @@ function memoryStore() {
           contentHash: stored.doc.contentHash,
           allowLlm: stored.doc.allowLlm,
           stale: stored.chunks.length > 0 && stored.embedModel !== embedModel,
+          linksKey: linksKey(stored.doc.links ?? []),
         })
       }
       return states
+    },
+    async replaceLinks(_sourceId, path, links) {
+      const stored = docs.get(path)
+      if (stored !== undefined) stored.doc.links = [...links]
     },
     async replaceDocument(_sourceId, doc, chunks, embedModel) {
       if (failWrites) throw new Error('db down')

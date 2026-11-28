@@ -75,6 +75,25 @@ describe.each([
   )
 })
 
+// Knowledge map node fills (non-text graphics: at least 3:1 on the cards and panel they sit on).
+const MAP_FILLS = ['map-obsidian', 'map-keep', 'map-gdrive', 'map-repo', 'map-tag', 'map-ghost']
+
+describe.each([
+  ['light', light],
+  ['dark', dark],
+] as const)('%s theme map fills', (_name, theme) => {
+  it.each(MAP_FILLS.flatMap((fill) => ['surface', 'canvas'].map((back) => [fill, back] as const)))(
+    '%s on %s is at least 3:1',
+    (fill, back) => {
+      const fg = theme.get(fill)
+      const bg = theme.get(back)
+      expect(fg, `--color-${fill}`).toBeDefined()
+      expect(bg, `--color-${back}`).toBeDefined()
+      expect(contrast(fg!, bg!)).toBeGreaterThanOrEqual(3)
+    },
+  )
+})
+
 describe('theme colors outside CSS', () => {
   it('the browser theme color is the nav token in each theme', () => {
     expect(THEME_COLOR.light).toBe(light.get('nav'))
