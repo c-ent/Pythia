@@ -15,7 +15,10 @@ describe('loadConfig', () => {
       embed: { batchSize: 32, timeoutMs: 120_000 },
       vault: null,
       repos: null,
+      vaultPath: null,
+      githubToken: null,
       drive: null,
+      oci: null,
       auth: { passwordHash: null, mcpToken: null },
       ask: { geminiApiKey: null, geminiModel: 'gemini-3.5-flash-lite', ollamaChatModel: 'qwen3:4b' },
       secretsKey: null,
@@ -192,5 +195,48 @@ describe('loadConfig', () => {
     expect(message).toMatch(/OLLAMA_URL/)
     expect(message).not.toContain(pw)
     expect(message).not.toContain('not a url')
+  })
+
+  it('requires all four OCI env vars, defaults keyFile to /config/oci_api_key.pem, and never echoes bad values', () => {
+    const tenancy = 'ocid1.tenancy.oc1..aaaaaaaaba3pv6wkcr4jqae5f15p2b2m2yt2j6rx32uzr4h25vqstifsfdsq'
+    const user = 'ocid1.user.oc1..aaaaaaaakj234567890abcdef'
+    const fingerprint = '12:34:56:78:90:ab:cd:ef:12:34:56:78:90:ab:cd:ef'
+    expect(loadConfig({ ...base, PYTHIA_OCI_TENANCY: tenancy, PYTHIA_OCI_USER: user }).oci).toBeNull()
+    expect(
+      loadConfig({
+        ...base,
+        PYTHIA_OCI_TENANCY: tenancy,
+        PYTHIA_OCI_USER: user,
+        PYTHIA_OCI_FINGERPRINT: fingerprint,
+        PYTHIA_OCI_REGION: 'ap-singapore-1',
+      }).oci,
+    ).toEqual({
+      tenancyId: tenancy,
+      userId: user,
+      fingerprint,
+      region: 'ap-singapore-1',
+      keyFile: '/config/oci_api_key.pem',
+    })
+    expect(
+      loadConfig({
+        ...base,
+        PYTHIA_OCI_TENANCY: tenancy,
+        PYTHIA_OCI_USER: user,
+        PYTHIA_OCI_FINGERPRINT: fingerprint,
+        PYTHIA_OCI_REGION: 'ap-singapore-1',
+        PYTHIA_OCI_KEY_FILE: '/custom/key.pem',
+      }).oci?.keyFile,
+    ).toBe('/custom/key.pem')
+
+    let message = ''
+    try {
+      loadConfig({ ...base, PYTHIA_OCI_REGION: 'evil.example.com', PYTHIA_OCI_TENANCY: 'bad value with spaces' })
+    } catch (error) {
+      message = String(error)
+    }
+    expect(message).toMatch(/PYTHIA_OCI_REGION/)
+    expect(message).toMatch(/PYTHIA_OCI_TENANCY/)
+    expect(message).not.toContain('evil.example.com')
+    expect(message).not.toContain('bad value with spaces')
   })
 })

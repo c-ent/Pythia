@@ -22,6 +22,8 @@
 #   PYTHIA_REPOS_CONFIG=/config/repos.json  (optional; put repos.json in ./data/config)
 #   PYTHIA_DRIVE_REMOTE=gdrive:  (optional, T61; a read-only Drive remote in rclone.conf,
 #     and ./data/config/gdrive.json holding { "exclude": [] })
+#   PYTHIA_OCI_TENANCY / PYTHIA_OCI_USER / PYTHIA_OCI_FINGERPRINT / PYTHIA_OCI_REGION
+#     (optional, T81; put the RSA private key PEM at ./data/config/oci_api_key.pem)
 services:
   app:
     network_mode: host

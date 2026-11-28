@@ -98,6 +98,24 @@ const envSchema = z.object({
     .trim()
     .optional()
     .transform((value) => (value === '' ? undefined : value)),
+  // Oracle Cloud (R21, T81). All four .env values are required to turn Oracle
+  // checks on; any missing value leaves Oracle `off`. Key file defaults to the
+  // existing /config mount.
+  PYTHIA_OCI_TENANCY: optionalOciIdentifier(10),
+  PYTHIA_OCI_USER: optionalOciIdentifier(10),
+  PYTHIA_OCI_FINGERPRINT: optionalOciIdentifier(10),
+  PYTHIA_OCI_REGION: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value === '' ? undefined : value))
+    .refine((value) => value === undefined || /^[a-z]{2,6}-[a-z0-9-]+-\d+$/.test(value), 'must be an OCI region like ap-singapore-1'),
+  PYTHIA_OCI_KEY_FILE: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value === '' || value === undefined ? '/config/oci_api_key.pem' : value))
+    .refine((value) => !/[\r\n\0]/.test(value), 'must be a valid file path'),
 })
 
 /** Empty counts as unset; a set value must have at least `min` characters. */
@@ -108,6 +126,19 @@ function optionalSecret(min: number) {
     .optional()
     .transform((value) => (value === '' ? undefined : value))
     .refine((value) => value === undefined || value.length >= min, `must be at least ${min} characters`)
+}
+
+/** Empty counts as unset; rejects whitespace, quotes, slashes and control characters without echoing the value. */
+function optionalOciIdentifier(min: number) {
+  return z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value === '' ? undefined : value))
+    .refine(
+      (value) => value === undefined || (value.length >= min && !/[\s"'\\/\0]/.test(value)),
+      `must be at least ${min} safe characters`,
+    )
 }
 
 export interface AuthConfig {
@@ -164,6 +195,14 @@ export interface EmbedConfig {
   timeoutMs: number
 }
 
+export interface OciConfig {
+  tenancyId: string
+  userId: string
+  fingerprint: string
+  region: string
+  keyFile: string
+}
+
 export interface Config {
   host: typeof HOST
   port: number
@@ -172,8 +211,14 @@ export interface Config {
   embed: EmbedConfig
   vault: VaultConfig | null
   repos: ReposConfig | null
+  /** Null when `PYTHIA_VAULT_PATH` is unset. */
+  vaultPath: string | null
+  /** Read-only GitHub API token for connection health checks. */
+  githubToken: string | null
   /** Null when PYTHIA_DRIVE_REMOTE is unset. */
   drive: DriveConfig | null
+  /** Null when any required `PYTHIA_OCI_*` variable is unset. */
+  oci: OciConfig | null
   auth: AuthConfig
   ask: AskConfig
   /** `PYTHIA_SECRETS_KEY` as 32 bytes, or null when unset. */
@@ -208,6 +253,8 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
       password: data.POSTGRES_PASSWORD,
     },
     ollamaUrl: data.OLLAMA_URL,
+    vaultPath: data.PYTHIA_VAULT_PATH ?? null,
+    githubToken: data.GITHUB_TOKEN ?? null,
     embed: {
       batchSize: data.PYTHIA_EMBED_BATCH_SIZE,
       timeoutMs: data.PYTHIA_EMBED_TIMEOUT_MS,
@@ -238,6 +285,19 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
             configFile: data.PYTHIA_DRIVE_CONFIG ?? null,
             pullIntervalMs: data.PYTHIA_DRIVE_PULL_MINUTES * 60_000,
             rcloneConfig: data.PYTHIA_RCLONE_CONFIG ?? null,
+          },
+    oci:
+      data.PYTHIA_OCI_TENANCY === undefined ||
+      data.PYTHIA_OCI_USER === undefined ||
+      data.PYTHIA_OCI_FINGERPRINT === undefined ||
+      data.PYTHIA_OCI_REGION === undefined
+        ? null
+        : {
+            tenancyId: data.PYTHIA_OCI_TENANCY,
+            userId: data.PYTHIA_OCI_USER,
+            fingerprint: data.PYTHIA_OCI_FINGERPRINT,
+            region: data.PYTHIA_OCI_REGION,
+            keyFile: data.PYTHIA_OCI_KEY_FILE,
           },
     auth: {
       passwordHash: data.PYTHIA_PASSWORD_HASH ?? null,
