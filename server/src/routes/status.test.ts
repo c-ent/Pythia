@@ -205,6 +205,22 @@ describe('GET /api/status', () => {
     expect(repo(await status(), 'pythia').state).toBe('healthy')
   })
 
+  it('classifies RepoSyncError failures into safe human-readable reasons without leaking remotes', async () => {
+    const { status, activity } = await start()
+    const recorder = createRepoActivity(activity, () => {})
+    const syncError = (msg: string) => Object.assign(new Error(msg), { name: 'RepoSyncError' })
+
+    recorder.failed('pythia', syncError('git rev-parse failed: fatal: Needed a single revision'))
+    recorder.failed('notes', syncError("git clone failed: fatal: repository 'https://secret@github.com/me/notes.git/' not found"))
+    await recorder.round({ synced: [], failed: [{ name: 'pythia' }, { name: 'notes' }] })
+
+    const result = await status()
+    expect(repo(result, 'pythia')).toMatchObject({ state: 'error', reason: 'empty repo (no commits)' })
+    expect(repo(result, 'notes')).toMatchObject({ state: 'error', reason: 'repo not found or inaccessible' })
+    expect(JSON.stringify(result)).not.toContain('secret@')
+    expect(JSON.stringify(result)).not.toContain('github.com')
+  })
+
   it('records blocked secrets as a count only, never the file or its text', async () => {
     const { status, store, activity } = await start()
     const vault = createVaultActivity(activity, () => {})

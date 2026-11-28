@@ -8,7 +8,7 @@ import { isRepoLocked, type LlmExclusionStore } from './llmExclusions.js'
 import { loadRepoConfigFile, type RepoSpec } from './repoConfig.js'
 import { createRepoDiscovery, listOwnedRepos, type RepoDiscover } from './repoDiscovery.js'
 import { indexRepoCommit, type RepoIndexResult } from './repoIndexer.js'
-import { mirrorPath } from './repoMirror.js'
+import { mirrorPath, RepoSyncError } from './repoMirror.js'
 import { startRepoScheduler, type RepoRoundResult, type RepoScheduler } from './repoScheduler.js'
 
 export interface RunningRepos {
@@ -35,12 +35,35 @@ const summarize = (result: RepoIndexResult) => ({
   summary: result.summary,
 })
 
+const REMOTE_URL = /(?:https?|ssh|file):\/\/[^\s'"<>]+|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^\s'"<>]+/gi
+const TOKEN_LIKE = /\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/g
+
+/**
+ * Redacts remote URLs, credentials and tokens so server logs explain why a
+ * repo sync failed without exposing URLs, tokens or file content.
+ */
+export function describeRepoFailure(error: unknown): string {
+  if (error instanceof RepoSyncError) {
+    return error.message
+      .replace(/\/\/[^/@\s]+@/g, '//***@')
+      .replace(REMOTE_URL, '<remote>')
+      .replace(TOKEN_LIKE, '<token>')
+      .slice(0, 300)
+  }
+  if (error instanceof Error) {
+    const name = error.name !== '' ? error.name : 'Error'
+    const code = 'code' in error && typeof error.code === 'string' && error.code !== '' ? ` (${error.code})` : ''
+    return `${name}${code}`
+  }
+  return 'unknown error'
+}
+
 /**
  * Loads the repo list, starts the fetch scheduler and indexes each fetched
  * commit. A bad config file or a failing repo is logged, never fatal: the
- * server keeps serving the existing index. Logs carry repo names and counts,
- * never URLs, tokens or file content; activity events (R18) carry repo names,
- * counts and an error class only.
+ * server keeps serving the existing index. Logs carry repo names, counts and
+ * redacted git error reasons, never URLs, tokens or file content; activity
+ * events (R18) carry repo names, counts and fixed safe reasons or error classes.
  */
 export async function startRepos(
   pool: Pool,
@@ -115,7 +138,10 @@ export async function startRepos(
       )
       console.log(`repo ${spec.name} indexed`, summarize(result))
     },
-    onFailed: (spec, error) => recorder.failed(spec.name, error),
+    onFailed(spec, error) {
+      console.error(`repo ${spec.name} sync failed: ${describeRepoFailure(error)}`)
+      recorder.failed(spec.name, error)
+    },
     async onRound(result) {
       console.log('repo fetch round', {
         synced: result.synced.length,

@@ -149,7 +149,7 @@ describe('SourcesScreen', () => {
     const repos = card('GitHub repos')
     expect(repos.getByText('2 repos · 120 files · every hour')).toBeTruthy()
     expect(repos.getByText('Error · 1 repo failing')).toBeTruthy()
-    expect(repos.getByText('1 repo failing: beta')).toBeTruthy()
+    expect(repos.getByText('1 repo failing: beta (fetch failed)')).toBeTruthy()
     expect(repos.getByRole('link', { name: 'Manage' }).getAttribute('href')).toBe('/repos')
 
     const notes = card('Google Keep')
@@ -166,6 +166,21 @@ describe('SourcesScreen', () => {
     expect(within(rows[1]!).getByText('Vault synced')).toBeTruthy()
     expect(rows[1]!.querySelector('time')?.getAttribute('dateTime')).toBe('2026-11-27T07:42:00.000Z')
     expect(syncAll().disabled).toBe(false)
+  })
+
+  it('lists multiple failing repos and omits empty reasons', async () => {
+    stubApi({
+      'GET /api/status': statusOf({
+        sources: [obsidian(), github({ reason: '2 repos failed' }), keep()],
+        repos: [
+          repo('alpha', { state: 'error', reason: 'empty repo (no commits)' }),
+          repo('beta', { state: 'error', reason: null }),
+        ],
+      }),
+    })
+    render(<SourcesScreen />)
+    const repos = await findCard('GitHub repos')
+    expect(repos.getByText('2 repos failing: alpha (empty repo (no commits)), beta')).toBeTruthy()
   })
 
   it('shows a Google Drive card and its pull in the activity when the server has Drive', async () => {

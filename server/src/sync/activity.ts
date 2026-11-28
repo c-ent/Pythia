@@ -124,6 +124,42 @@ export const syncErrorEvent = (source: string, context: string, error: unknown):
   message: errorReason(context, error),
 })
 
+const REPO_ERROR_PATTERNS: ReadonlyArray<[RegExp, string]> = [
+  [/needed a single revision|unknown revision|does not have any commits/i, 'empty repo (no commits)'],
+  [/remote branch .* not found|couldn't find remote ref/i, 'branch not found'],
+  [
+    /authentication failed|could not read username|permission denied|invalid username or token|\b(?:401|403)\b/i,
+    'authentication failed',
+  ],
+  [
+    /repository .* not found|does not appear to be a git repository|could not read from remote repository/i,
+    'repo not found or inaccessible',
+  ],
+  [/could not resolve host|failed to connect|timed out|etimedout|econnreset|\bssl\b|\btls\b/i, 'network error or timeout'],
+  [/cannot lock ref|\.lock\b|not a git repository|corrupt/i, 'mirror lock or git error'],
+]
+
+/**
+ * Maps a `RepoSyncError` to a fixed safe phrase so UI status and activity show
+ * why a repo failed without quoting remote URLs, credentials or local paths.
+ */
+export function repoErrorReason(error: unknown): string {
+  if (error instanceof Error && error.name === 'RepoSyncError') {
+    for (const [pattern, label] of REPO_ERROR_PATTERNS) {
+      if (pattern.test(error.message)) return label
+    }
+    const cmd = /^git ([a-z-]+) failed:/i.exec(error.message)
+    if (cmd?.[1] !== undefined) return `git ${cmd[1]} failed`
+  }
+  return errorReason('fetch failed', error)
+}
+
+export const repoErrorEvent = (source: string, error: unknown): NewActivity => ({
+  kind: 'sync_error',
+  source,
+  message: repoErrorReason(error),
+})
+
 /**
  * The events for one vault scan or watcher batch. A batch that changed
  * nothing records nothing (`always` is for full scans), so the watcher does
@@ -229,7 +265,7 @@ export function createRepoActivity(activity: ActivityLog | undefined, log?: Secr
   const tally = createSecretsTally(log)
   const errors = new Map<string, unknown>()
   const failure = (name: string): NewActivity => {
-    const event = syncErrorEvent(name, 'fetch failed', errors.get(name))
+    const event = repoErrorEvent(name, errors.get(name))
     errors.delete(name)
     return event
   }

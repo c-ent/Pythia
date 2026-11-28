@@ -180,7 +180,10 @@ function SourceCard({ source, status }: { source: SourceHealth; status: ServerSt
         <p className="mt-0.5 text-sm text-muted">{sourceDetail(source, status.repos.length)}</p>
         {failing.length === 0 ? null : (
           <p className="mt-1 text-sm text-danger">
-            {plural(failing.length, 'repo')} failing: {failing.map((repo) => repo.name).join(', ')}
+            {plural(failing.length, 'repo')} failing:{' '}
+            {failing
+              .map((repo) => (repo.reason === null || repo.reason === '' ? repo.name : `${repo.name} (${repo.reason})`))
+              .join(', ')}
           </p>
         )}
       </div>
