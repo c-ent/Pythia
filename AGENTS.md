@@ -44,7 +44,7 @@ One task per session. A session starts with a clean context and ends when its ta
 1. Read `docs/agent/progress.md`. If it names a current task, continue that task. If not, take the first `Todo` row in `docs/agent/roadmap.md` whose dependencies are `Done`, and write it into `progress.md` as the current task.
 2. Build only that task. Its requirement is in `docs/agent/spec.md` under the id the row names.
 3. Verify it: run the row's Verify check, then the build, typecheck and tests. Add or update a test for the behaviour the task changes.
-4. Write it down: set the row to `Done`, add one line to `docs/agent/completed.md`, update `spec.md` or `architecture.md` if behaviour or structure changed, and clear the current task in `progress.md` with anything the next session needs to know.
+4. Write it down: delete the row from `roadmap.md`, add one line to `docs/agent/completed.md`, update `spec.md` or `architecture.md` if behaviour or structure changed, and clear the current task in `progress.md` with anything the next session needs to know (delete old session notes, git keeps them; keep `progress.md` and `roadmap.md` near 5 KB each).
 5. End the session there. The next task starts in a new session, not in this one.
 
 - A task that cannot pass its Verify check is not done. Set the row to `Blocked`, write the reason in `progress.md`, and end the session.
