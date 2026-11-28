@@ -79,6 +79,7 @@ describe('AtlasCanvas', () => {
     const zoomIn = screen.getByRole('button', { name: 'Zoom in' })
     const zoomOut = screen.getByRole('button', { name: 'Zoom out' })
     const reset = screen.getByRole('button', { name: 'Reset view' })
+    const enterFullscreen = screen.getByRole('button', { name: 'Full screen' })
 
     const callsBefore = ctx.fillRect.mock.calls.length
     fireEvent.click(zoomIn)
@@ -91,5 +92,17 @@ describe('AtlasCanvas', () => {
     fireEvent.keyDown(canvas, { key: '0' })
 
     expect(ctx.fillRect.mock.calls.length).toBeGreaterThan(callsBefore)
+
+    // Enter full screen and exit via button or Escape.
+    fireEvent.click(enterFullscreen)
+    const exitFullscreen = screen.getByRole('button', { name: 'Exit full screen' })
+    expect(exitFullscreen.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(exitFullscreen)
+    expect(screen.queryByRole('button', { name: 'Exit full screen' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
+    expect(screen.getByRole('button', { name: 'Exit full screen' })).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('button', { name: 'Exit full screen' })).toBeNull()
   })
 })

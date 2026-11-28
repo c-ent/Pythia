@@ -1,6 +1,11 @@
 import type { Pool } from 'pg'
 import type { SearchFilters, SearchableKind } from './searchStore.js'
 
+/** Lowest query-to-chunk cosine similarity for semantic topic map candidates. */
+export const TOPIC_MAP_MIN_SIMILARITY = 0.54
+/** Lowest cosine similarity for FTS hits when drilling down inside a parent context. */
+export const TOPIC_MAP_CONTEXT_MIN_SIMILARITY = 0.48
+
 /** The map-safe documents retrieved for one topic, with stored vectors for grouping. */
 export interface TopicMapCandidate {
   documentId: number
@@ -16,11 +21,17 @@ export interface TopicMapCandidate {
 
 export interface TopicMapSearchParams {
   query: string
+  /** Optional FTS query when different from `query` (e.g. `OR` across branch keywords). */
+  ftsQuery?: string
   embedding: readonly number[]
   embedModel: string
   filters: SearchFilters
   candidates: number
   limit: number
+  /** Maximum cosine distance (`1 - similarity`) for semantic candidates. */
+  maxDistance?: number
+  /** Optional cosine distance gate applied to FTS hits when scoping to a parent context. */
+  ftsMaxDistance?: number
 }
 
 /** Read-only hybrid retrieval of map documents; source/repo filters are inside both rankings. */
@@ -28,52 +39,66 @@ export interface TopicMapStore {
   search(params: TopicMapSearchParams): Promise<TopicMapCandidate[]>
 }
 
+// Each CTE deduplicates to the single best chunk per document so long documents
+// (like books or large manuals) cannot consume dozens of candidate slots or
+// multiply their RRF score by chunk count.
 const TOPIC_MAP_SQL = `
 WITH q AS (SELECT websearch_to_tsquery('english', $1) AS tsq),
 fts AS (
-  SELECT c.id, row_number() OVER (ORDER BY score DESC, id) AS rank
+  SELECT document_id, row_number() OVER (ORDER BY best_score DESC, document_id) AS rank
   FROM (
-    SELECT c.id, ts_rank_cd(c.fts, q.tsq) AS score
+    SELECT c.document_id, max(ts_rank_cd(c.fts, q.tsq)) AS best_score
     FROM chunks c
     JOIN documents d ON d.id = c.document_id
     JOIN document_vectors dv ON dv.document_id = d.id
     JOIN sources s ON s.id = d.source_id
     CROSS JOIN q
     WHERE c.fts @@ q.tsq AND c.embedding IS NOT NULL AND c.embed_model = $7
+      AND ($10::float8 IS NULL OR (c.embedding <=> $2::vector) <= $10::float8)
       AND s.enabled AND s.kind <> 'work'
       AND ($3::text[] IS NULL OR s.kind = ANY ($3::text[]))
       AND ($4::text IS NULL OR (s.kind = 'repo' AND s.name = $4::text))
-    ORDER BY score DESC, c.id
-    LIMIT $5
-  ) c
+    GROUP BY c.document_id
+  ) docs
+  ORDER BY best_score DESC, document_id
+  LIMIT $5
+),
+semantic_chunks AS (
+  -- Bare distance in ORDER BY lets the HNSW index serve the scan in order.
+  SELECT c.document_id, c.embedding <=> $2::vector AS distance
+  FROM chunks c
+  JOIN documents d ON d.id = c.document_id
+  JOIN document_vectors dv ON dv.document_id = d.id
+  JOIN sources s ON s.id = d.source_id
+  WHERE c.embedding IS NOT NULL AND c.embed_model = $7
+    AND ($8::float8 IS NULL OR (c.embedding <=> $2::vector) <= $8::float8)
+    AND s.enabled AND s.kind <> 'work'
+    AND ($3::text[] IS NULL OR s.kind = ANY ($3::text[]))
+    AND ($4::text IS NULL OR (s.kind = 'repo' AND s.name = $4::text))
+  ORDER BY c.embedding <=> $2::vector
+  LIMIT $9
 ),
 semantic AS (
-  SELECT c.id, row_number() OVER (ORDER BY distance, id) AS rank
+  SELECT document_id, row_number() OVER (ORDER BY best_distance, document_id) AS rank
   FROM (
-    SELECT c.id, c.embedding <=> $2::vector AS distance
-    FROM chunks c
-    JOIN documents d ON d.id = c.document_id
-    JOIN document_vectors dv ON dv.document_id = d.id
-    JOIN sources s ON s.id = d.source_id
-    WHERE c.embedding IS NOT NULL AND c.embed_model = $7
-      AND s.enabled AND s.kind <> 'work'
-      AND ($3::text[] IS NULL OR s.kind = ANY ($3::text[]))
-      AND ($4::text IS NULL OR (s.kind = 'repo' AND s.name = $4::text))
-    ORDER BY c.embedding <=> $2::vector
-    LIMIT $5
-  ) c
+    SELECT document_id, min(distance) AS best_distance
+    FROM semantic_chunks
+    GROUP BY document_id
+  ) docs
+  ORDER BY best_distance, document_id
+  LIMIT $5
 ),
 fused AS (
-  SELECT c.document_id,
-         sum(1.0 / (60 + ranked.rank)) AS score
+  SELECT ranked.document_id,
+         (coalesce(max(1.0 / (60 + ranked.rank)) FILTER (WHERE ranked.src = 'fts'), 0) +
+          coalesce(max(1.0 / (60 + ranked.rank)) FILTER (WHERE ranked.src = 'semantic'), 0)) AS score
   FROM (
-    SELECT id, rank FROM fts
+    SELECT document_id, rank, 'fts' AS src FROM fts
     UNION ALL
-    SELECT id, rank FROM semantic
+    SELECT document_id, rank, 'semantic' AS src FROM semantic
   ) ranked
-  JOIN chunks c ON c.id = ranked.id
-  GROUP BY c.document_id
-  ORDER BY score DESC, c.document_id
+  GROUP BY ranked.document_id
+  ORDER BY score DESC, ranked.document_id
   LIMIT $6
 )
 SELECT d.id AS document_id, s.kind, s.name AS source_name, d.path, d.title, d.allow_llm,
@@ -107,36 +132,57 @@ const toVector = (text: string): number[] => {
 export function createPgTopicMapStore(pool: Pool): TopicMapStore {
   return {
     async search(params) {
-      const { rows } = await pool.query<{
-        document_id: string
-        kind: SearchableKind
-        source_name: string
-        path: string
-        title: string
-        allow_llm: boolean
-        embedding: string
-        heading_paths: string[]
-        text: string
-      }>(TOPIC_MAP_SQL, [
-        params.query,
-        `[${params.embedding.join(',')}]`,
-        params.filters.sources === undefined ? null : [...params.filters.sources],
-        params.filters.repo ?? null,
-        params.candidates,
-        params.limit,
-        params.embedModel,
-      ])
-      return rows.map((row) => ({
-        documentId: Number(row.document_id),
-        sourceKind: row.kind,
-        sourceName: row.source_name,
-        path: row.path,
-        title: row.title,
-        allowLlm: row.allow_llm,
-        embedding: toVector(row.embedding),
-        headingPaths: row.heading_paths,
-        text: row.text,
-      }))
+      const maxDistance = params.maxDistance ?? 1 - TOPIC_MAP_MIN_SIMILARITY
+      const chunkScanLimit = Math.max(params.candidates * 4, 200)
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        try {
+          await client.query(
+            `SELECT set_config('hnsw.ef_search', $1, true), set_config('hnsw.iterative_scan', 'strict_order', true)`,
+            [String(Math.min(1000, Math.max(100, chunkScanLimit)))],
+          )
+          const { rows } = await client.query<{
+            document_id: string
+            kind: SearchableKind
+            source_name: string
+            path: string
+            title: string
+            allow_llm: boolean
+            embedding: string
+            heading_paths: string[]
+            text: string
+          }>(TOPIC_MAP_SQL, [
+            params.ftsQuery ?? params.query,
+            `[${params.embedding.join(',')}]`,
+            params.filters.sources === undefined ? null : [...params.filters.sources],
+            params.filters.repo ?? null,
+            params.candidates,
+            params.limit,
+            params.embedModel,
+            maxDistance,
+            chunkScanLimit,
+            params.ftsMaxDistance ?? null,
+          ])
+          await client.query('COMMIT')
+          return rows.map((row) => ({
+            documentId: Number(row.document_id),
+            sourceKind: row.kind,
+            sourceName: row.source_name,
+            path: row.path,
+            title: row.title,
+            allowLlm: row.allow_llm,
+            embedding: toVector(row.embedding),
+            headingPaths: row.heading_paths,
+            text: row.text,
+          }))
+        } catch (error) {
+          await client.query('ROLLBACK')
+          throw error
+        }
+      } finally {
+        client.release()
+      }
     },
   }
 }

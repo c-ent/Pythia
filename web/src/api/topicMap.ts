@@ -29,6 +29,7 @@ export interface TopicMapResponse {
 
 export interface TopicMapParams {
   topic: string
+  context?: string
   sources?: SourceKind[]
   repo?: string
 }

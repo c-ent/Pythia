@@ -86,6 +86,13 @@ describe('MapScreen', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Deep work/ }))
     await screen.findByRole('region', { name: /Map for Deep work/ })
     expect((screen.getByLabelText('Topic') as HTMLInputElement).value).toBe('Deep work')
+    expect(screen.getByText('Inside focus')).toBeTruthy()
+    expect(calls.at(-1)).toMatchObject({ url: '/api/topic-map', body: { topic: 'Deep work', context: 'focus' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /Back to focus/ }))
+    await screen.findByRole('region', { name: /Map for focus/ })
+    expect(calls.at(-1)).toMatchObject({ url: '/api/topic-map', body: { topic: 'focus' } })
+    expect((calls.at(-1)?.body as { context?: string }).context).toBeUndefined()
 
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
     fireEvent.click(screen.getByRole('button', { name: 'Whole vault' }))
@@ -108,6 +115,7 @@ describe('MapScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Build map' }))
 
     await screen.findByRole('img', { name: /3D topic map for job/ })
+    expect(screen.getByRole('button', { name: 'Full screen' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Zoom in' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Zoom out' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Reset view' })).toBeTruthy()

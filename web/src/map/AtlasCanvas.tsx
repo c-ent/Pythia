@@ -1,7 +1,7 @@
-import { Lock, Maximize2, Minus, Plus } from 'lucide-react'
+import { Lock, Maximize2, Minimize2, Minus, Plus, RotateCcw } from 'lucide-react'
 import type { KeyboardEvent, PointerEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { documentPath, navigate } from '../router'
+import { documentPath, navigate, repoPath } from '../router'
 import {
   clamp,
   DEFAULT_CAMERA,
@@ -141,6 +141,7 @@ export function AtlasCanvas({
   const hoveredIdRef = useRef<string | null>(null)
   const [preview, setPreview] = useState<PreviewState | null>(null)
   const [dragging, setDragging] = useState(false)
+  const [fullscreen, setFullscreen] = useState(false)
 
   const adjacency = useMemo(() => {
     const map = new Map<string, Set<string>>()
@@ -437,6 +438,33 @@ export function AtlasCanvas({
     }
   }, [scheduleDraw])
 
+  useEffect(() => {
+    if (!fullscreen) return
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (event: globalThis.KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setFullscreen(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    const id = window.requestAnimationFrame(() => {
+      const wrapper = wrapperRef.current
+      if (wrapper === null) return
+      const rect = wrapper.getBoundingClientRect()
+      if (rect.width > 0 && rect.height > 0) {
+        sizeRef.current = { width: rect.width, height: rect.height }
+        scheduleDraw()
+      }
+    })
+    return () => {
+      document.body.style.overflow = prevOverflow
+      window.removeEventListener('keydown', onKey)
+      window.cancelAnimationFrame(id)
+    }
+  }, [fullscreen, scheduleDraw])
+
   // Non-passive wheel listener so scrolling over the canvas zooms without scrolling the page.
   useEffect(() => {
     const canvas = canvasRef.current
@@ -571,7 +599,10 @@ export function AtlasCanvas({
     if (hit !== null) {
       const { width, height } = sizeRef.current
       setPreview({ node: hit.node, x: hit.sx, y: hit.sy, width, height })
-      canvas.style.cursor = hit.node.documentId !== null || (hit.node.branchQuery && onSelectBranch) ? 'pointer' : 'grab'
+      canvas.style.cursor =
+        hit.node.documentId !== null || hit.node.kind === 'repo' || (hit.node.branchQuery && onSelectBranch)
+          ? 'pointer'
+          : 'grab'
     } else {
       setPreview(null)
       canvas.style.cursor = 'grab'
@@ -598,6 +629,8 @@ export function AtlasCanvas({
       }
       if (hit.node.documentId !== null) {
         navigate(documentPath(hit.node.documentId))
+      } else if (hit.node.kind === 'repo') {
+        navigate(repoPath(hit.node.label))
       } else if (hit.node.branchQuery && onSelectBranch) {
         onSelectBranch(hit.node.branchQuery)
       } else {
@@ -649,7 +682,11 @@ export function AtlasCanvas({
   return (
     <div
       ref={wrapperRef}
-      className={`relative mt-4 w-full overflow-hidden rounded-control border border-nav-line bg-nav ${heightClassName}`}
+      className={
+        fullscreen
+          ? 'fixed inset-0 z-50 m-0 h-dvh w-dvw overflow-hidden bg-nav'
+          : `relative mt-4 w-full overflow-hidden rounded-control border border-nav-line bg-nav ${heightClassName}`
+      }
     >
       <canvas
         ref={canvasRef}
@@ -667,7 +704,7 @@ export function AtlasCanvas({
       />
 
       {/* Top-left Atlas HUD header */}
-      <div className="pointer-events-none absolute top-3 left-3.5 flex max-w-[65%] items-center gap-2.5">
+      <div className="pointer-events-none absolute top-3 left-3.5 flex max-w-[60%] items-center gap-2.5">
         <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-accent shadow-[0_0_8px_var(--color-accent)]" />
         <p className="truncate font-mono text-xs tracking-wider text-nav-ink uppercase">
           {title}
@@ -675,12 +712,30 @@ export function AtlasCanvas({
         </p>
       </div>
 
-      {/* Top-right interaction hint and zoom/reset buttons */}
+      {/* Top-right interaction hint, fullscreen toggle and zoom/reset buttons */}
       <div className="absolute top-2.5 right-2.5 flex items-start gap-2.5">
-        <p className="pointer-events-none hidden pt-2 font-mono text-[11px] tracking-wider text-nav-muted sm:block">
-          DRAG - rotate &nbsp; SCROLL - zoom
+        <p className="pointer-events-none hidden pt-2 font-mono text-[11px] tracking-wider text-nav-muted md:block">
+          DRAG - rotate &nbsp; SCROLL - zoom{fullscreen ? '   ESC - exit' : ''}
         </p>
+        {fullscreen ? (
+          <button
+            type="button"
+            aria-label="Exit full screen"
+            aria-pressed={true}
+            title="Exit full screen (Esc)"
+            onClick={() => setFullscreen(false)}
+            className="inline-flex min-h-11 items-center gap-2 rounded-control border border-nav-line bg-nav/85 px-3.5 text-xs font-medium text-nav-ink backdrop-blur-sm transition-colors hover:bg-nav-raised"
+          >
+            <Minimize2 aria-hidden="true" className="size-4" />
+            <span>Exit full screen</span>
+          </button>
+        ) : null}
         <div className="flex flex-col gap-1.5">
+          {fullscreen ? null : (
+            <ZoomButton label="Full screen" pressed={false} onClick={() => setFullscreen(true)}>
+              <Maximize2 aria-hidden="true" className="size-4" />
+            </ZoomButton>
+          )}
           <ZoomButton label="Zoom in" onClick={() => zoomBy(ZOOM_STEP)}>
             <Plus aria-hidden="true" className="size-4" />
           </ZoomButton>
@@ -688,7 +743,7 @@ export function AtlasCanvas({
             <Minus aria-hidden="true" className="size-4" />
           </ZoomButton>
           <ZoomButton label="Reset view" onClick={resetView}>
-            <Maximize2 aria-hidden="true" className="size-4" />
+            <RotateCcw aria-hidden="true" className="size-4" />
           </ZoomButton>
         </div>
       </div>
@@ -703,11 +758,12 @@ export function AtlasCanvas({
   )
 }
 
-function ZoomButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
+function ZoomButton({ label, pressed, onClick, children }: { label: string; pressed?: boolean; onClick: () => void; children: ReactNode }) {
   return (
     <button
       type="button"
       aria-label={label}
+      aria-pressed={pressed}
       title={label}
       onClick={onClick}
       className="inline-flex size-11 items-center justify-center rounded-control border border-nav-line bg-nav/85 text-nav-ink backdrop-blur-sm transition-colors hover:bg-nav-raised"
@@ -748,7 +804,7 @@ function NodePreview({
         {node.kind === 'branch' || node.kind === 'subbranch' || node.kind === 'center'
           ? `${node.links} ${node.links === 1 ? 'document' : 'documents'}`
           : `${node.links} ${node.links === 1 ? 'link' : 'links'}`}
-        {node.documentId !== null ? ' · Click to open' : node.branchQuery && canExploreBranch ? ' · Click to explore' : ''}
+        {node.documentId !== null || node.kind === 'repo' ? ' · Click to open' : node.branchQuery && canExploreBranch ? ' · Click to explore' : ''}
       </p>
     </div>
   )

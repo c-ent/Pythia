@@ -1,4 +1,4 @@
-import { Copy, LoaderCircle, Map, RotateCw, TriangleAlert } from 'lucide-react'
+import { ArrowLeft, Copy, LoaderCircle, Map, RotateCw, TriangleAlert } from 'lucide-react'
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { buildTopicMap, type TopicMapResponse } from '../api/topicMap'
@@ -20,10 +20,17 @@ type LoadState = { status: 'idle' } | { status: 'loading' } | { status: 'done'; 
 const BUTTON = 'inline-flex min-h-11 items-center gap-2 rounded-control border border-line bg-surface px-4 text-sm font-medium text-ink transition-colors hover:bg-raised disabled:opacity-50'
 type MapView = 'topic' | 'vault'
 
+function drillContext(trail: readonly string[]): string | undefined {
+  if (trail.length === 0) return undefined
+  if (trail.length <= 2) return trail.join(' · ')
+  return `${trail[0]} · ${trail[trail.length - 1]}`
+}
+
 export function MapScreen() {
   const online = useOnline()
   const narrow = useMediaQuery('(max-width: 639px)')
   const [topic, setTopic] = useState('')
+  const [trail, setTrail] = useState<string[]>([])
   const [sources, setSources] = useState<SourceKind[]>([])
   const [repo, setRepo] = useState('')
   const [result, setResult] = useState<{ key: string; status: 'done'; response: TopicMapResponse } | { key: string; status: 'error'; message: string } | null>(null)
@@ -34,20 +41,29 @@ export function MapScreen() {
   const [view, setView] = useState<MapView>('topic')
 
   const trimmedTopic = topic.trim()
+  const contextText = drillContext(trail)
   const activeKey = attempt > 0 && online && trimmedTopic !== ''
-    ? `${attempt}:${trimmedTopic}:${sources.join(',')}:${repo.trim()}`
+    ? `${attempt}:${trimmedTopic}:${contextText ?? ''}:${sources.join(',')}:${repo.trim()}`
     : null
 
   useEffect(() => {
     if (activeKey === null) return
     const controller = new AbortController()
-    buildTopicMap({ topic: trimmedTopic, ...(sources.length ? { sources } : {}), ...(repo.trim() ? { repo: repo.trim() } : {}) }, controller.signal)
+    buildTopicMap(
+      {
+        topic: trimmedTopic,
+        ...(contextText ? { context: contextText } : {}),
+        ...(sources.length ? { sources } : {}),
+        ...(repo.trim() ? { repo: repo.trim() } : {}),
+      },
+      controller.signal,
+    )
       .then((response) => { if (!controller.signal.aborted) setResult({ key: activeKey, status: 'done', response }) })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) setResult({ key: activeKey, status: 'error', message: error instanceof Error ? error.message : 'The topic map could not be built.' })
       })
     return () => controller.abort()
-  }, [activeKey, repo, sources, trimmedTopic])
+  }, [activeKey, contextText, repo, sources, trimmedTopic])
 
   const state: LoadState = useMemo(
     () => activeKey !== null
@@ -60,47 +76,73 @@ export function MapScreen() {
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
     if (!online || trimmedTopic === '') return
+    setTrail([])
     setAttempt((n) => n + 1)
   }
   const copyOutline = async (): Promise<void> => {
     if (state.status === 'done') await copy(topicMapOutline(state.response))
   }
   const chooseBranch = (label: string): void => {
+    const parent = state.status === 'done' ? state.response.topic : trimmedTopic
+    if (parent !== '' && parent !== label) setTrail((prev) => [...prev, parent])
     setTopic(label)
+    setAttempt((n) => n + 1)
+  }
+  const stepBack = (): void => {
+    const previous = trail.at(-1)
+    if (previous === undefined) return
+    setTrail((prev) => prev.slice(0, -1))
+    setTopic(previous)
     setAttempt((n) => n + 1)
   }
 
   return (
-    <section aria-labelledby="map-title" className="space-y-6">
-      <header>
-        <div className="flex items-center gap-2 text-sm font-medium text-accent-ink"><Map aria-hidden="true" className="size-4" /> Knowledge map</div>
-        <h1 id="map-title" className="mt-2 text-2xl font-semibold tracking-tight md:text-3xl">Explore your knowledge</h1>
-        <p className="mt-1 max-w-prose text-sm text-muted">Explore a topic or see how notes, tags and repositories connect across your index.</p>
+    <section aria-labelledby="map-title" className="space-y-4">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-medium text-accent-ink"><Map aria-hidden="true" className="size-4" /> Knowledge map</div>
+          <h1 id="map-title" className="mt-1.5 text-2xl font-semibold tracking-tight md:text-3xl">Explore your knowledge</h1>
+          <p className="mt-1 max-w-prose text-sm text-muted">Explore a topic or see how notes, tags and repositories connect across your index.</p>
+        </div>
+        <div role="group" aria-label="Map view" className="inline-flex rounded-control bg-raised p-1">
+          <button type="button" aria-pressed={view === 'topic'} onClick={() => setView('topic')} className={`inline-flex min-h-11 items-center rounded-[0.5rem] px-4 text-sm ${view === 'topic' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'}`}>Topic map</button>
+          <button type="button" aria-pressed={view === 'vault'} onClick={() => setView('vault')} className={`inline-flex min-h-11 items-center rounded-[0.5rem] px-4 text-sm ${view === 'vault' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'}`}>Whole vault</button>
+        </div>
       </header>
-      <div role="group" aria-label="Map view" className="inline-flex rounded-control bg-raised p-1">
-        <button type="button" aria-pressed={view === 'topic'} onClick={() => setView('topic')} className={`inline-flex min-h-11 items-center rounded-[0.5rem] px-4 text-sm ${view === 'topic' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'}`}>Topic map</button>
-        <button type="button" aria-pressed={view === 'vault'} onClick={() => setView('vault')} className={`inline-flex min-h-11 items-center rounded-[0.5rem] px-4 text-sm ${view === 'vault' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'}`}>Whole vault</button>
-      </div>
       {view === 'vault' ? <>
-        <div className="rounded-card border border-line bg-surface p-4 md:p-5">
-          <div><p className="text-sm font-medium">Filter the graph</p><p className="mt-1 text-xs text-muted">Choose sources and optionally narrow the view to one repository.</p></div>
-          <div className="mt-3"><SourceChips value={sources} onChange={setSources} /></div>
-          <label htmlFor="repo-filter" className="mt-4 block text-sm font-medium">Repository <span className="font-normal text-muted">(optional)</span></label>
-          <input id="repo-filter" value={repo} onChange={(event) => setRepo(event.target.value)} maxLength={200} placeholder="Filter to a repo name" className="mt-2 min-h-11 w-full rounded-control border border-line bg-canvas px-3 text-base text-ink placeholder:text-muted sm:max-w-sm" />
+        <div className="rounded-card border border-line bg-surface p-4 md:px-5 md:py-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">Filter the graph</p>
+              <div className="mt-2"><SourceChips value={sources} onChange={setSources} /></div>
+            </div>
+            <div className="w-full lg:max-w-xs">
+              <label htmlFor="repo-filter" className="block text-sm font-medium">Repository <span className="font-normal text-muted">(optional)</span></label>
+              <input id="repo-filter" value={repo} onChange={(event) => setRepo(event.target.value)} maxLength={200} placeholder="Filter to a repo name" className="mt-1.5 min-h-11 w-full rounded-control border border-line bg-canvas px-3 text-base text-ink placeholder:text-muted" />
+            </div>
+          </div>
         </div>
         <VaultGraphPanel sources={sources} repo={repo} />
       </> : <>
-      <form onSubmit={submit} className="rounded-card border border-line bg-surface p-4 md:p-5">
-        <label htmlFor="topic" className="block text-sm font-medium">Topic</label>
-        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-          <input id="topic" value={topic} onChange={(event) => setTopic(event.target.value)} maxLength={1000} placeholder="What do you want to explore?" className="min-h-11 min-w-0 flex-1 rounded-control border border-line bg-canvas px-3 text-base text-ink placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent-ink" />
-          <button type="submit" disabled={!online || !topic.trim() || state.status === 'loading'} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-control bg-strong px-5 text-sm font-medium text-on-strong disabled:opacity-50">
-            {state.status === 'loading' ? <LoaderCircle aria-hidden="true" className="size-4 animate-spin" /> : null} Build map
-          </button>
+      <form onSubmit={submit} className="rounded-card border border-line bg-surface p-4 md:px-5 md:py-4">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-end">
+          <div className="min-w-0 flex-1">
+            <label htmlFor="topic" className="block text-sm font-medium">Topic</label>
+            <div className="mt-1.5 flex flex-col gap-2 sm:flex-row">
+              <input id="topic" value={topic} onChange={(event) => setTopic(event.target.value)} maxLength={1000} placeholder="What do you want to explore?" className="min-h-11 min-w-0 flex-1 rounded-control border border-line bg-canvas px-3 text-base text-ink placeholder:text-muted focus-visible:outline-2 focus-visible:outline-accent-ink" />
+              <button type="submit" disabled={!online || !topic.trim() || state.status === 'loading'} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-control bg-strong px-5 text-sm font-medium text-on-strong disabled:opacity-50">
+                {state.status === 'loading' ? <LoaderCircle aria-hidden="true" className="size-4 animate-spin" /> : null} Build map
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div><SourceChips value={sources} onChange={setSources} /></div>
+            <div className="w-full sm:w-56">
+              <label htmlFor="repo-filter" className="block text-sm font-medium">Repository <span className="font-normal text-muted">(optional)</span></label>
+              <input id="repo-filter" value={repo} onChange={(event) => setRepo(event.target.value)} maxLength={200} placeholder="Filter to a repo name" className="mt-1.5 min-h-11 w-full rounded-control border border-line bg-canvas px-3 text-base text-ink placeholder:text-muted" />
+            </div>
+          </div>
         </div>
-        <div className="mt-4"><SourceChips value={sources} onChange={setSources} /></div>
-        <label htmlFor="repo-filter" className="mt-4 block text-sm font-medium">Repository <span className="font-normal text-muted">(optional)</span></label>
-        <input id="repo-filter" value={repo} onChange={(event) => setRepo(event.target.value)} maxLength={200} placeholder="Filter to a repo name" className="mt-2 min-h-11 w-full rounded-control border border-line bg-canvas px-3 text-base text-ink placeholder:text-muted sm:max-w-sm" />
         {!online ? <p className="mt-3 text-sm text-warning">Topic maps need the server. Reconnect to build a map.</p> : null}
       </form>
 
@@ -110,8 +152,14 @@ export function MapScreen() {
       {state.status === 'done' ? (
         <section aria-label={`Map for ${state.response.topic}`} className="rounded-card border border-line bg-surface p-4 md:p-5">
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
-            <div><p className="text-xs font-medium uppercase tracking-wide text-muted">Topic map</p><h2 className="mt-1 text-xl font-semibold">{state.response.topic}</h2><p className="mt-1 text-sm text-muted">{documents.length} documents · {branches.length} branches</p></div>
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-muted">Topic map</p>
+              <h2 className="mt-1 text-xl font-semibold">{state.response.topic}</h2>
+              {trail.length > 0 ? <p className="mt-0.5 text-xs text-muted">Inside {trail.join(' › ')}</p> : null}
+              <p className="mt-1 text-sm text-muted">{documents.length} documents · {branches.length} branches</p>
+            </div>
             <div className="flex flex-wrap gap-2">
+              {trail.length > 0 ? <button type="button" onClick={stepBack} className={BUTTON}><ArrowLeft aria-hidden="true" className="size-4" />Back to {trail.at(-1)}</button> : null}
               <button type="button" onClick={() => void copyOutline()} className={BUTTON}><Copy aria-hidden="true" className="size-4" />{copied === 'copied' ? 'Copied' : copied === 'failed' ? 'Copy failed' : 'Copy as Markdown'}</button>
               {documents.length > 0 ? <button type="button" aria-pressed={listView} onClick={() => setViewOverride({ narrow, listView: !listView })} className={BUTTON}>{listView ? 'Show map' : 'Show list'}</button> : null}
             </div>

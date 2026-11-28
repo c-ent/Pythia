@@ -1,4 +1,9 @@
-import type { TopicMapStore, TopicMapCandidate } from '../db/topicMapStore.js'
+import {
+  TOPIC_MAP_CONTEXT_MIN_SIMILARITY,
+  TOPIC_MAP_MIN_SIMILARITY,
+  type TopicMapCandidate,
+  type TopicMapStore,
+} from '../db/topicMapStore.js'
 import type { SearchableKind } from '../db/searchStore.js'
 import type { Embedder } from '../embed/ollama.js'
 import type { SourceRef } from './searchService.js'
@@ -11,6 +16,8 @@ export const MAX_TOPIC_BRANCH_DOCUMENTS = 8
 
 export interface TopicMapRequest {
   topic: string
+  /** Optional parent topic / trail when drilling into a branch so searches stay on-topic. */
+  context?: string
   sources?: readonly SearchableKind[]
   repo?: string
 }
@@ -50,33 +57,93 @@ export interface TopicMapServiceOptions {
 }
 
 const STOP_WORDS = new Set(
-  `a an and are as at be been being by can could did do does for from had has have how i in into is it its may more most of on or our should that the their then there these they this those to was we were what when where which who why will with would you your about after all also any because before between both but each few first other same such than through under use using`.split(' '),
+  (
+    'a able about above across add added adding after again against all almost alone along already also although always among an and another any anyone anything anywhere are around as at away ' +
+    'back be became because become becomes been before behind being below between beyond big both but by ' +
+    'call called came can cannot come comes coming could ' +
+    'day days did different do does doing done down during ' +
+    'each either else end enough even ever every everyone everything example ' +
+    'far feel few file files find first for found from full ' +
+    'gave get gets getting give given gives go going good got great ' +
+    'had has have having he help her here hers herself high him himself his how however ' +
+    'if important in include includes including inside instead into is it its itself ' +
+    'just keep kind know known knows ' +
+    'large last later least less let like likely little long look looking looks ' +
+    'made make makes making many may maybe me mean means might more most mostly much must my myself ' +
+    'name near need needed needs never new next no none nor not note notes nothing now number ' +
+    'of off often old on once one only open or order other others our ours ourselves out over own ' +
+    'part parts people perhaps place point possible put ' +
+    'quite rather read readme real really right ' +
+    'said same saw say says second see seem seems seen set several she should show shows since small so some something sometimes soon start still such sure ' +
+    'take taken takes taking tell than that the their theirs them themselves then there these they thing things think this those though thought three through thus time times to today together too took toward tried try trying turn two ' +
+    'under until up upon us use used uses using usually ' +
+    'various very want wants was way ways we well went were what when where whether which while who why will with within without word words work working works would ' +
+    'year years yet you your yours yourself'
+  ).split(' '),
 )
 const WORD = /[\p{L}\p{N}][\p{L}\p{N}_'-]*/gu
+const STARTS_WITH_LETTER = /^\p{L}/u
 
 function terms(text: string): string[] {
   return (text.toLocaleLowerCase().match(WORD) ?? [])
     .map((word) => word.replace(/^['_-]+|['_-]+$/g, ''))
-    .filter((word) => word.length > 2 && !STOP_WORDS.has(word) && !/^\d+$/.test(word))
+    .filter((word) => word.length > 2 && STARTS_WITH_LETTER.test(word) && !STOP_WORDS.has(word))
 }
 
-/** Stable keyword labels: title and headings contribute more than body text. */
-function labelFor(documents: readonly TopicMapCandidate[], fallback: string): string {
-  const counts = new Map<string, number>()
-  for (const document of documents) {
-    const weighted = [
-      ...terms(document.title),
-      ...terms(document.title),
-      ...document.headingPaths.flatMap(terms),
-      ...document.text.slice(0, 12_000).split(/\s+/).flatMap((word) => terms(word)),
-    ]
-    for (const word of new Set(weighted)) counts.set(word, (counts.get(word) ?? 0) + 1)
+function commonPrefixLength(a: string, b: string): number {
+  const limit = Math.min(a.length, b.length)
+  let i = 0
+  while (i < limit && a[i] === b[i]) i++
+  return i
+}
+
+function sharesStem(a: string, b: string): boolean {
+  if (a === b) return true
+  const minLen = Math.min(a.length, b.length)
+  if (minLen >= 4 && (a.startsWith(b) || b.startsWith(a))) return true
+  return minLen >= 6 && commonPrefixLength(a, b) >= 5
+}
+
+function documentTermWeights(document: TopicMapCandidate): Map<string, number> {
+  const weights = new Map<string, number>()
+  const addField = (words: readonly string[], weight: number): void => {
+    for (const word of new Set(words)) {
+      weights.set(word, (weights.get(word) ?? 0) + weight)
+    }
   }
-  const top = [...counts]
+  addField(terms(document.title), 4)
+  addField(document.headingPaths.flatMap(terms), 2.5)
+  addField(terms(document.text.slice(0, 12_000)), 1)
+  return weights
+}
+
+interface LabelContext {
+  corpusDocFreq: ReadonlyMap<string, number>
+  totalDocs: number
+  queryTerms: ReadonlySet<string>
+}
+
+/** Stable keyword labels: title and headings outweigh body text, weighted by branch distinctiveness. */
+function labelFor(documents: readonly TopicMapCandidate[], fallback: string, ctx: LabelContext): string {
+  const scores = new Map<string, number>()
+  for (const document of documents) {
+    for (const [word, weight] of documentTermWeights(document)) {
+      const df = ctx.corpusDocFreq.get(word) ?? 1
+      const idf = 1 + Math.log((ctx.totalDocs + 1) / df)
+      const queryScale = ctx.queryTerms.has(word) ? 0.35 : 1
+      scores.set(word, (scores.get(word) ?? 0) + weight * idf * queryScale)
+    }
+  }
+  const ranked = [...scores]
     .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
-    .slice(0, 2)
     .map(([word]) => word)
-  return top.length === 0 ? fallback : top.join(' · ')
+  const chosen: string[] = []
+  for (const word of ranked) {
+    if (chosen.some((existing) => sharesStem(existing, word))) continue
+    chosen.push(word)
+    if (chosen.length === 2) break
+  }
+  return chosen.length === 0 ? fallback : chosen.join(' · ')
 }
 
 const cosine = (a: readonly number[], b: readonly number[]): number => {
@@ -153,8 +220,8 @@ const toLeaf = (doc: TopicMapCandidate): TopicMapLeaf => ({
   allowLlm: doc.allowLlm,
 })
 
-function makeBranch(documents: readonly TopicMapCandidate[], index: number): TopicMapBranch {
-  const label = labelFor(documents, `Topic ${index + 1}`)
+function makeBranch(documents: readonly TopicMapCandidate[], index: number, ctx: LabelContext): TopicMapBranch {
+  const label = labelFor(documents, `Topic ${index + 1}`, ctx)
   if (documents.length <= MAX_TOPIC_BRANCH_DOCUMENTS) {
     return { label, documents: documents.map(toLeaf) }
   }
@@ -164,30 +231,59 @@ function makeBranch(documents: readonly TopicMapCandidate[], index: number): Top
     const parts: TopicMapCandidate[][] = []
     for (let i = 0; i < ordered.length; i += MAX_TOPIC_BRANCH_DOCUMENTS) parts.push(ordered.slice(i, i + MAX_TOPIC_BRANCH_DOCUMENTS))
     return parts.map((part, partIndex) => ({
-      label: labelFor(part, `${label} ${groupIndex + 1}.${partIndex + 1}`),
+      label: labelFor(part, `${label} ${groupIndex + 1}.${partIndex + 1}`, ctx),
       documents: part.map(toLeaf),
     }))
   })
   return { label, documents: [], branches: children }
 }
 
+const cleanQueryText = (value: string): string => value.replace(/\s*·\s*/g, ' ').replace(/\s+/g, ' ').trim()
+
 export function createTopicMapService(options: TopicMapServiceOptions): TopicMapService {
   return {
     async map(request) {
       const topic = request.topic.trim()
       if (topic.length === 0) throw new Error('topic must not be empty')
-      const embedding = await options.embedder.embedQuery(topic)
+      const cleanTopic = cleanQueryText(topic)
+      const cleanContext = request.context ? cleanQueryText(request.context) : ''
+      const embedText = cleanContext ? `${cleanContext}: ${cleanTopic}` : cleanTopic
+      const ftsQuery = /\s*·\s*/.test(topic)
+        ? topic
+            .split(/\s*·\s*/)
+            .map((part) => part.trim())
+            .filter(Boolean)
+            .join(' OR ')
+        : topic
+
+      const embedding = await options.embedder.embedQuery(embedText)
       const documents = await options.store.search({
-        query: topic,
+        query: embedText,
+        ftsQuery,
         embedding,
         embedModel: options.embedder.model,
         filters: { sources: request.sources, repo: request.repo },
         candidates: TOPIC_MAP_CANDIDATES,
         limit: TOPIC_MAP_LIMIT,
+        maxDistance: 1 - TOPIC_MAP_MIN_SIMILARITY,
+        ...(cleanContext ? { ftsMaxDistance: 1 - TOPIC_MAP_CONTEXT_MIN_SIMILARITY } : {}),
       })
+
+      const corpusDocFreq = new Map<string, number>()
+      for (const document of documents) {
+        for (const word of documentTermWeights(document).keys()) {
+          corpusDocFreq.set(word, (corpusDocFreq.get(word) ?? 0) + 1)
+        }
+      }
+      const labelContext: LabelContext = {
+        corpusDocFreq,
+        totalDocs: documents.length,
+        queryTerms: new Set(terms(embedText)),
+      }
+
       const branchCount = Math.min(MAX_TOPIC_BRANCHES, Math.max(MIN_TOPIC_BRANCHES, Math.ceil(documents.length / 6)))
       const groups = cluster(documents, branchCount)
-      return { topic, branches: groups.map(makeBranch) }
+      return { topic, branches: groups.map((group, index) => makeBranch(group, index, labelContext)) }
     },
   }
 }

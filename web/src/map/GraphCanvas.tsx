@@ -14,11 +14,13 @@ export function GraphCanvas({
   center,
   title = 'Knowledge Atlas',
   subtitle,
+  heightClassName = 'h-88 md:h-112',
 }: {
   graph: Pick<GraphResponse, 'nodes' | 'edges'>
   center?: string
   title?: string
   subtitle?: string
+  heightClassName?: string
 }) {
   const atlas = useMemo(() => buildNetworkAtlasGraph(graph, center), [graph, center])
 
@@ -30,7 +32,7 @@ export function GraphCanvas({
       title={title}
       subtitle={subtitle ?? `${graph.nodes.length} items · ${graph.edges.length} connections`}
       ariaLabel={`Graph with ${graph.nodes.length} items. The list view has the same items.`}
-      heightClassName="h-88 md:h-112"
+      heightClassName={heightClassName}
     />
   )
 }

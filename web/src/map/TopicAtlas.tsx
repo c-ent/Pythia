@@ -29,6 +29,7 @@ export function TopicAtlas({
       subtitle={`${docCount} ${docCount === 1 ? 'document' : 'documents'} · ${branches.length} ${branches.length === 1 ? 'branch' : 'branches'}`}
       ariaLabel={`3D topic map for ${topic} with ${branches.length} branches and ${docCount} documents. The list view has the same outline.`}
       onSelectBranch={onBranch}
+      heightClassName="h-[62dvh] min-h-104 md:h-[68dvh]"
     />
   )
 }

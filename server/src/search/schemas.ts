@@ -11,6 +11,8 @@ import { MAX_SEARCH_LIMIT } from './searchService.js'
 export const MAX_QUERY_CHARS = 1000
 export const MAX_RECENT_DAYS = 365
 export const MAX_RECENT_LIMIT = 200
+export const DEFAULT_LIST_DOCUMENTS_LIMIT = 2000
+export const MAX_LIST_DOCUMENTS_LIMIT = 5000
 
 export const sourceKindSchema = z.enum(SEARCHABLE_KINDS)
 
@@ -45,6 +47,7 @@ export const repoOverviewSchema = z.object({
  */
 export const topicMapInputSchema = z.object({
   topic: z.string().trim().min(1, 'topic must not be empty').max(MAX_QUERY_CHARS),
+  context: z.string().trim().min(1).max(MAX_QUERY_CHARS).optional(),
   sources: z.array(sourceKindSchema).min(1).max(SEARCHABLE_KINDS.length).optional(),
   repo: z.string().trim().min(1).max(200).optional(),
 })
@@ -75,4 +78,10 @@ export const recentInputSchema = z.object({
   days: z.coerce.number().int().min(1).max(MAX_RECENT_DAYS).default(7),
   source: sourceKindSchema.optional(),
   limit: z.coerce.number().int().min(1).max(MAX_RECENT_LIMIT).default(50),
+})
+
+export const listDocumentsInputSchema = z.object({
+  source: sourceKindSchema,
+  name: z.string().trim().min(1).max(200).optional(),
+  limit: z.coerce.number().int().min(1).max(MAX_LIST_DOCUMENTS_LIMIT).default(DEFAULT_LIST_DOCUMENTS_LIMIT),
 })
