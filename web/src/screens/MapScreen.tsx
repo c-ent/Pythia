@@ -23,43 +23,49 @@ export function MapScreen() {
   const [topic, setTopic] = useState('')
   const [sources, setSources] = useState<SourceKind[]>([])
   const [repo, setRepo] = useState('')
-  const [state, setState] = useState<LoadState>({ status: 'idle' })
-  const [listView, setListView] = useState(narrow)
-  const [branchTopic, setBranchTopic] = useState<string | null>(null)
+  const [result, setResult] = useState<{ key: string; status: 'done'; response: TopicMapResponse } | { key: string; status: 'error'; message: string } | null>(null)
+  const [viewOverride, setViewOverride] = useState<{ narrow: boolean; listView: boolean } | null>(null)
+  const listView = viewOverride !== null && viewOverride.narrow === narrow ? viewOverride.listView : narrow
   const [attempt, setAttempt] = useState(0)
   const [copied, copy] = useClipboard()
   const [view, setView] = useState<MapView>('topic')
 
-  useEffect(() => setListView(narrow), [narrow])
+  const trimmedTopic = topic.trim()
+  const activeKey = attempt > 0 && online && trimmedTopic !== ''
+    ? `${attempt}:${trimmedTopic}:${sources.join(',')}:${repo.trim()}`
+    : null
+
   useEffect(() => {
-    if (branchTopic === null) return
-    setTopic(branchTopic)
-    setBranchTopic(null)
-    setAttempt((n) => n + 1)
-  }, [branchTopic])
-  useEffect(() => {
-    if (attempt === 0 || !online || topic.trim() === '') return
+    if (activeKey === null) return
     const controller = new AbortController()
-    setState({ status: 'loading' })
-    buildTopicMap({ topic: topic.trim(), ...(sources.length ? { sources } : {}), ...(repo.trim() ? { repo: repo.trim() } : {}) }, controller.signal)
-      .then((response) => { if (!controller.signal.aborted) setState({ status: 'done', response }) })
+    buildTopicMap({ topic: trimmedTopic, ...(sources.length ? { sources } : {}), ...(repo.trim() ? { repo: repo.trim() } : {}) }, controller.signal)
+      .then((response) => { if (!controller.signal.aborted) setResult({ key: activeKey, status: 'done', response }) })
       .catch((error: unknown) => {
-        if (!controller.signal.aborted) setState({ status: 'error', message: error instanceof Error ? error.message : 'The topic map could not be built.' })
+        if (!controller.signal.aborted) setResult({ key: activeKey, status: 'error', message: error instanceof Error ? error.message : 'The topic map could not be built.' })
       })
     return () => controller.abort()
-  }, [attempt, online, repo, sources, topic])
+  }, [activeKey, repo, sources, trimmedTopic])
 
+  const state: LoadState = useMemo(
+    () => activeKey !== null
+      ? (result !== null && result.key === activeKey ? result : { status: 'loading' })
+      : (result ?? { status: 'idle' }),
+    [activeKey, result],
+  )
   const branches = useMemo(() => state.status === 'done' ? safeTopicBranches(state.response.branches) : [], [state])
   const documents = useMemo(() => topicMapDocuments(branches), [branches])
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
-    if (!online || topic.trim() === '') return
+    if (!online || trimmedTopic === '') return
     setAttempt((n) => n + 1)
   }
   const copyOutline = async (): Promise<void> => {
     if (state.status === 'done') await copy(topicMapOutline(state.response))
   }
-  const chooseBranch = (label: string): void => setBranchTopic(label)
+  const chooseBranch = (label: string): void => {
+    setTopic(label)
+    setAttempt((n) => n + 1)
+  }
 
   return (
     <section aria-labelledby="map-title" className="space-y-6">
@@ -104,7 +110,7 @@ export function MapScreen() {
             <div><p className="text-xs font-medium uppercase tracking-wide text-muted">Topic map</p><h2 className="mt-1 text-xl font-semibold">{state.response.topic}</h2><p className="mt-1 text-sm text-muted">{documents.length} documents · {branches.length} branches</p></div>
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={() => void copyOutline()} className={BUTTON}><Copy aria-hidden="true" className="size-4" />{copied === 'copied' ? 'Copied' : copied === 'failed' ? 'Copy failed' : 'Copy as Markdown'}</button>
-              {narrow ? <button type="button" aria-pressed={listView} onClick={() => setListView((value) => !value)} className={BUTTON}>{listView ? 'Show map' : 'Show list'}</button> : null}
+              {narrow ? <button type="button" aria-pressed={listView} onClick={() => setViewOverride({ narrow, listView: !listView })} className={BUTTON}>{listView ? 'Show map' : 'Show list'}</button> : null}
             </div>
           </header>
           {documents.length === 0 ? <p className="py-10 text-center text-sm text-muted">No matching map documents were found. Try another topic or filter.</p> : listView ? <TopicList branches={branches} onBranch={chooseBranch} /> : <RadialMap topic={state.response.topic} branches={branches} onBranch={chooseBranch} />}

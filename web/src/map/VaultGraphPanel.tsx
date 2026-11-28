@@ -16,26 +16,27 @@ type State = { status: 'loading' } | { status: 'done'; graph: GraphResponse } | 
 export function VaultGraphPanel({ sources, repo }: { sources: SourceKind[]; repo: string }) {
   const online = useOnline()
   const narrow = useMediaQuery(NARROW_QUERY)
-  const [listView, setListView] = useState(narrow)
+  const [viewOverride, setViewOverride] = useState<{ narrow: boolean; listView: boolean } | null>(null)
+  const listView = viewOverride !== null && viewOverride.narrow === narrow ? viewOverride.listView : narrow
   const [attempt, setAttempt] = useState(0)
-  const [state, setState] = useState<State>({ status: 'loading' })
-  useEffect(() => setListView(narrow), [narrow])
+  const requestKey = `${attempt}:${sources.join(',')}:${repo.trim()}`
+  const [result, setResult] = useState<{ key: string; status: 'done'; graph: GraphResponse } | { key: string; status: 'error'; message: string } | null>(null)
   useEffect(() => {
+    if (!online) return
     const controller = new AbortController()
-    if (!online) { setState({ status: 'offline' }); return () => controller.abort() }
-    setState({ status: 'loading' })
     getVaultGraph({ ...(sources.length ? { sources } : {}), ...(repo.trim() ? { repo: repo.trim() } : {}) }, controller.signal)
-      .then((graph) => { if (!controller.signal.aborted) setState({ status: 'done', graph }) })
-      .catch((error: unknown) => { if (!controller.signal.aborted) setState({ status: 'error', message: error instanceof Error ? error.message : 'The whole-vault graph could not be loaded.' }) })
+      .then((graph) => { if (!controller.signal.aborted) setResult({ key: requestKey, status: 'done', graph }) })
+      .catch((error: unknown) => { if (!controller.signal.aborted) setResult({ key: requestKey, status: 'error', message: error instanceof Error ? error.message : 'The whole-vault graph could not be loaded.' }) })
     return () => controller.abort()
-  }, [attempt, online, repo, sources])
+  }, [online, repo, requestKey, sources])
 
+  const state: State = !online ? { status: 'offline' } : result !== null && result.key === requestKey ? result : { status: 'loading' }
   const graph = state.status === 'done' && isGraphResponse(state.graph) ? state.graph : null
   const tones = useMemo(() => graph ? tonesIn(graph) : [], [graph])
   return <section aria-label="Whole-vault graph" className="mt-5 rounded-card border border-line bg-surface p-4 md:p-5">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
       <div><p className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted"><Network aria-hidden="true" className="size-4" />Whole-vault graph</p><p className="mt-1 text-sm text-muted">{graph ? `${graph.nodes.length} items · ${graph.edges.length} connections` : 'Notes, tags and repositories connected across your index.'}</p></div>
-      {narrow && graph ? <button type="button" aria-pressed={listView} onClick={() => setListView((value) => !value)} className="inline-flex min-h-11 items-center rounded-control border border-line bg-surface px-4 text-sm text-ink hover:bg-raised">{listView ? 'Show graph' : 'Show list'}</button> : null}
+      {narrow && graph ? <button type="button" aria-pressed={listView} onClick={() => setViewOverride({ narrow, listView: !listView })} className="inline-flex min-h-11 items-center rounded-control border border-line bg-surface px-4 text-sm text-ink hover:bg-raised">{listView ? 'Show graph' : 'Show list'}</button> : null}
     </header>
     {state.status === 'loading' ? <p role="status" className="flex h-44 items-center justify-center gap-2 text-sm text-muted"><LoaderCircle aria-hidden="true" className="size-4 animate-spin" />Loading whole-vault graph…</p> : null}
     {state.status === 'offline' ? <p className="py-8 text-center text-sm text-warning">The whole-vault graph needs the server.</p> : null}

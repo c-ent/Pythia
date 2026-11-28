@@ -66,4 +66,28 @@ describe('MapScreen', () => {
     expect(await screen.findByTestId('vault-canvas')).toBeTruthy()
     expect(calls.some((call) => call.url.startsWith('/api/graph'))).toBe(true)
   })
+
+  it('rebuilds the map when a branch is chosen and shows the offline note for the vault graph', async () => {
+    const calls = stubFetch()
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      const body = init.body ? JSON.parse(String(init.body)) as { topic?: string } : null
+      calls.push({ url, body })
+      if (url.startsWith('/api/graph')) return json(200, vaultGraph)
+      return json(200, {
+        topic: body?.topic ?? 'focus',
+        branches: [{ label: 'Deep work', documents: [{ documentId: 1, title: 'Note', path: 'Note.md', source: { kind: 'obsidian' }, allowLlm: true }] }],
+      })
+    }))
+    render(<MapScreen />)
+    setNarrow(true)
+    fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'focus' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Build map' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Deep work/ }))
+    await screen.findByRole('region', { name: /Map for Deep work/ })
+    expect((screen.getByLabelText('Topic') as HTMLInputElement).value).toBe('Deep work')
+
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    fireEvent.click(screen.getByRole('button', { name: 'Whole vault' }))
+    expect(screen.getByText('The whole-vault graph needs the server.')).toBeTruthy()
+  })
 })
