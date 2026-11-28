@@ -10,6 +10,7 @@ import type { RepoService } from '../search/repoService.js'
 import type { BacklinkService, BacklinksRequest } from '../search/backlinkService.js'
 import type { GraphRequest, GraphService, LocalGraphRequest } from '../search/graphService.js'
 import type { RelatedRequest, RelatedService } from '../search/relatedService.js'
+import type { TopicMapRequest, TopicMapService } from '../search/topicMapService.js'
 import {
   AmbiguousDocumentError,
   type DocumentView,
@@ -169,6 +170,16 @@ describe('REST API', () => {
   }
 
   const graphCalls: (LocalGraphRequest | GraphRequest)[] = []
+  const topicMapCalls: TopicMapRequest[] = []
+  const topicMapService: TopicMapService = {
+    async map(request) {
+      topicMapCalls.push(request)
+      return {
+        topic: request.topic,
+        branches: [{ label: 'soil · garden', documents: [{ documentId: 7, source: view.source, path: view.path, title: view.title, allowLlm: true }] }],
+      }
+    },
+  }
   const graphService: GraphService = {
     async local(request) {
       graphCalls.push(request)
@@ -203,6 +214,7 @@ describe('REST API', () => {
         related: relatedService,
         backlinks: backlinkService,
         graph: graphService,
+        topicMap: topicMapService,
       }),
     )
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -260,6 +272,23 @@ describe('REST API', () => {
     expect(res.headers.get('cache-control')).toBe('no-store')
     expect(await res.json()).toMatchObject({ answer: 'Yes [1].', engine: 'ollama' })
     expect(asks.at(-1)).toEqual({ question: 'what are my goals?', sources: ['obsidian'], limit: 4 })
+  })
+
+  it('builds a topic map from validated input', async () => {
+    const res = await post('/api/topic-map', JSON.stringify({ topic: ' gardens ', sources: ['keep'], repo: 'notes' }))
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(await res.json()).toMatchObject({ topic: 'gardens', branches: [{ label: 'soil · garden' }] })
+    expect(topicMapCalls.at(-1)).toEqual({ topic: 'gardens', sources: ['keep'], repo: 'notes' })
+  })
+
+  it.each([
+    ['empty topic', { topic: '  ' }],
+    ['unknown source', { topic: 'x', sources: ['work'] }],
+  ])('rejects topic map input with %s', async (_name, body) => {
+    const res = await post('/api/topic-map', JSON.stringify(body))
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({ error: { code: 'invalid_input' } })
   })
 
   it.each([

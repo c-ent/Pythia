@@ -43,6 +43,12 @@ export const repoOverviewSchema = z.object({
  * comma-separated list of kinds (`?sources=keep,gdrive`), like the other GET
  * filters; `limit` is at most the 8 stored neighbours.
  */
+export const topicMapInputSchema = z.object({
+  topic: z.string().trim().min(1, 'topic must not be empty').max(MAX_QUERY_CHARS),
+  sources: z.array(sourceKindSchema).min(1).max(SEARCHABLE_KINDS.length).optional(),
+  repo: z.string().trim().min(1).max(200).optional(),
+})
+
 export const relatedInputSchema = z.object({
   sources: z
     .string()

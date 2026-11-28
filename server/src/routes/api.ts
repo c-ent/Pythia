@@ -16,8 +16,10 @@ import {
   relatedInputSchema,
   repoOverviewSchema,
   searchInputSchema,
+  topicMapInputSchema,
 } from '../search/schemas.js'
 import type { RelatedService } from '../search/relatedService.js'
+import type { TopicMapService } from '../search/topicMapService.js'
 import { AmbiguousDocumentError, SearchInputError, type SearchService } from '../search/searchService.js'
 import { MAX_SYNC_LIMIT, type SyncService } from '../sync/syncService.js'
 
@@ -76,6 +78,7 @@ export function createApiRouter(
   related?: RelatedService,
   backlinks?: BacklinkService,
   graph?: GraphService,
+  topicMap?: TopicMapService,
 ): Router {
   const router = express.Router()
   router.use((_req, res, next) => {
@@ -99,6 +102,13 @@ export function createApiRouter(
     await recent?.record('ask', input.question, queryFilters(input))
     res.json(response)
   })
+
+  if (topicMap !== undefined) {
+    router.post('/topic-map', async (req, res) => {
+      const input = parseInput(topicMapInputSchema, req.body)
+      res.json(await topicMap.map(input))
+    })
+  }
 
   router.get('/documents/:id', async (req, res) => {
     const id = Number(parseInput(documentIdSchema, req.params.id))

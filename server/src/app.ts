@@ -21,6 +21,7 @@ import type { RepoService } from './search/repoService.js'
 import type { BacklinkService } from './search/backlinkService.js'
 import type { GraphService } from './search/graphService.js'
 import type { RelatedService } from './search/relatedService.js'
+import type { TopicMapService } from './search/topicMapService.js'
 import type { SearchService } from './search/searchService.js'
 import type { SettingsService } from './settings/settingsService.js'
 import type { SyncService } from './sync/syncService.js'
@@ -51,6 +52,8 @@ export interface AppDeps {
   backlinks?: BacklinkService
   /** Local and whole-vault graphs (R20, T70); `/api/documents/:id/graph` and `/api/graph` exist only with it. */
   graph?: GraphService
+  /** Topic maps (R20, T73); `/api/topic-map` exists only with it. */
+  topicMap?: TopicMapService
   /** Built PWA directory (T18); without it only the API, `/mcp` and `/healthz` are served. */
   webDir?: string
 }
@@ -73,7 +76,21 @@ export function createApp(deps: AppDeps): Express {
   if (deps.profile !== undefined) app.use('/api', createProfileRouter(deps.profile))
   if (deps.recent !== undefined) app.use('/api', createRecentQueriesRouter(deps.recent))
   if (deps.status !== undefined) app.use('/api', createStatusRouter(deps.status.service, deps.status.sync))
-  app.use('/api', createApiRouter(deps.search, deps.ask, deps.sync, deps.repos, deps.imports, deps.recent, deps.related, deps.backlinks, deps.graph))
+  app.use(
+    '/api',
+    createApiRouter(
+      deps.search,
+      deps.ask,
+      deps.sync,
+      deps.repos,
+      deps.imports,
+      deps.recent,
+      deps.related,
+      deps.backlinks,
+      deps.graph,
+      deps.topicMap,
+    ),
+  )
   // The MCP server (R7) is tailnet only (T48): Funnel traffic gets 403 before the
   // token check. It has its own bearer token, separate from login (rotated under Settings, T37).
   app.use('/mcp', requireTailnet(), requireBearer(deps.auth.mcp), createMcpRouter(deps.search, console.error, deps.repos))

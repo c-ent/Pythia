@@ -24,7 +24,9 @@ import { createRelatedService } from './search/relatedService.js'
 import { createPgBacklinkStore } from './db/linkStore.js'
 import { createBacklinkService } from './search/backlinkService.js'
 import { createPgGraphStore } from './db/graphStore.js'
+import { createPgTopicMapStore } from './db/topicMapStore.js'
 import { createGraphService } from './search/graphService.js'
+import { createTopicMapService } from './search/topicMapService.js'
 import { createPgStatusStore } from './db/statusStore.js'
 import { createPgLlmExclusionStore } from './db/llmExclusionStore.js'
 import { createPgProfileStore } from './db/profileStore.js'
@@ -189,6 +191,10 @@ const status = createStatusService({
   ...(drive?.state === undefined ? {} : { driveRound: drive.state }),
 })
 console.log(config.webDir === null ? 'PYTHIA_WEB_DIR is not set; serving the API only' : `web: ${config.webDir}`)
+const related = createRelatedService({ store: createPgRelatedStore(pool) })
+const backlinks = createBacklinkService({ store: createPgBacklinkStore(pool) })
+const graph = createGraphService({ store: createPgGraphStore(pool) })
+const topicMap = createTopicMapService({ store: createPgTopicMapStore(pool), embedder: queryEmbedder })
 const server = createServer(
   createApp({
     search,
@@ -202,9 +208,10 @@ const server = createServer(
     profile: createProfileService(createPgProfileStore(pool)),
     recent: createRecentQueryService(createPgRecentQueryStore(pool)),
     status: { service: status, sync: syncNow },
-    related: createRelatedService({ store: createPgRelatedStore(pool) }),
-    backlinks: createBacklinkService({ store: createPgBacklinkStore(pool) }),
-    graph: createGraphService({ store: createPgGraphStore(pool) }),
+    related,
+    backlinks,
+    graph,
+    topicMap,
     ...(config.webDir === null ? {} : { webDir: config.webDir }),
   }),
 )
