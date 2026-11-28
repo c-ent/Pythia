@@ -53,6 +53,9 @@ services:
 
   rclone:
     image: rclone/rclone:1
+    # Match the app container's `node` user (1000:1000) so OAuth token
+    # refreshes in rclone.conf do not lock out the app container's Drive pull.
+    user: "1000:1000"
     environment:
       SOURCE: ${PYTHIA_RCLONE_SOURCE:?set PYTHIA_RCLONE_SOURCE, e.g. dropbox:Apps/remotely-save/<vault>}
       INTERVAL: ${PYTHIA_RCLONE_INTERVAL_SECONDS:-300}
