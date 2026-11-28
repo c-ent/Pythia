@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
-  HEADLINE_START as S,
-  HEADLINE_STOP as E,
   type ChunkHit,
   type HybridSearchParams,
   type SearchStore,
   type StoredDocument,
 } from '../db/searchStore.js'
 import { EMBED_DIMENSIONS, OllamaError, type Embedder } from '../embed/ollama.js'
-import { capText, createSearchService, parseHeadline, SearchInputError, AmbiguousDocumentError } from './searchService.js'
+import { capText, createSearchService, SearchInputError, AmbiguousDocumentError } from './searchService.js'
 
 const hit = (over: Partial<ChunkHit> = {}): ChunkHit => ({
   chunkId: 1,
@@ -24,7 +22,7 @@ const hit = (over: Partial<ChunkHit> = {}): ChunkHit => ({
   score: 0.03,
   ftsRank: 1,
   vectorRank: 2,
-  headline: `the ${S}goal${E} here`,
+  snippet: { text: 'the goal here', highlights: [[4, 8]] },
   ...over,
 })
 
@@ -76,21 +74,6 @@ const embedder = (fail = false): Embedder => ({
     if (fail) throw new OllamaError('Ollama request failed', { status: 503, retryable: true })
     return Array.from({ length: EMBED_DIMENSIONS }, () => 0.1)
   },
-})
-
-describe('parseHeadline', () => {
-  it('returns plain text and match offsets', () => {
-    expect(parseHeadline(`a ${S}bb${E} c ${S}d${E}`)).toEqual({ text: 'a bb c d', highlights: [[2, 4], [7, 8]] })
-  })
-
-  it('drops empty and unclosed markers safely', () => {
-    expect(parseHeadline(`${S}${E}x ${S}yz`)).toEqual({ text: 'x yz', highlights: [[2, 4]] })
-  })
-
-  it('counts offsets in UTF-16 units', () => {
-    const { text, highlights } = parseHeadline(`😀 ${S}ok${E}`)
-    expect(text.slice(highlights[0][0], highlights[0][1])).toBe('ok')
-  })
 })
 
 describe('capText', () => {

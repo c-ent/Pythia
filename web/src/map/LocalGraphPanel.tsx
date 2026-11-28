@@ -1,25 +1,13 @@
 import { LoaderCircle, Lock, Network, RotateCw } from 'lucide-react'
-import { lazy, Suspense, useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { ApiError } from '../api/client'
 import { getLocalGraph, type LocalGraphResponse } from '../api/graph'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useOnline } from '../hooks/useOnline'
 import { offlineLocalGraph } from '../offline/offlineMap'
 import { documentPath, followLink, repoPath } from '../router'
-import {
-  DEFAULT_GRAPH_DISPLAY,
-  DEFAULT_GRAPH_FILTERS,
-  DEFAULT_GRAPH_FORCES,
-  filterGraph,
-  type GraphDisplaySettings,
-  type GraphFilters,
-  type GraphForceSettings,
-} from './graphControls'
-import { GraphControlPanels } from './GraphControlPanels'
-import { connectedCount, isLocalGraphResponse, listGroups, TONE_LABELS, TONE_SWATCH, tonesIn, type ListEntry } from './graphModel'
-
-// Cytoscape is large; it loads only when the graph view is shown, in its own chunk.
-const GraphCanvas = lazy(() => import('./GraphCanvas').then((module) => ({ default: module.GraphCanvas })))
+import { connectedCount, isLocalGraphResponse, listGroups, TONE_LABELS, TONE_SWATCH, type ListEntry } from './graphModel'
+import { GraphDimensionToggle, NetworkGraphView } from './NetworkGraphView'
 
 /** From this width the graph is the default view; below it (iPhone, iPad split view) the list is (R20). */
 export const GRAPH_DEFAULT_QUERY = '(min-width: 640px)'
@@ -57,15 +45,10 @@ export function LocalGraphPanel({ id }: { id: number }) {
   // Bumped by Retry; each value loads the graph again.
   const [attempt, setAttempt] = useState(0)
   const [dimension, setDimension] = useState<'2d' | '3d'>('3d')
-  const [filters, setFilters] = useState<GraphFilters>(DEFAULT_GRAPH_FILTERS)
-  const [display, setDisplay] = useState<GraphDisplaySettings>(DEFAULT_GRAPH_DISPLAY)
-  const [forces, setForces] = useState<GraphForceSettings>(DEFAULT_GRAPH_FORCES)
-  const [layoutVersion, setLayoutVersion] = useState(0)
 
   useEffect(() => {
     const controller = new AbortController()
     if (!online) {
-      // Offline: built on the device from the synced map rows (T72).
       offlineLocalGraph(id)
         .then((graph) => {
           if (!controller.signal.aborted) setState(graph === null ? { status: 'offline' } : { status: 'done', graph })
@@ -93,10 +76,6 @@ export function LocalGraphPanel({ id }: { id: number }) {
   }
 
   const graph = state.status === 'done' && state.graph.inMap && connectedCount(state.graph) > 0 ? state.graph : null
-  const filteredGraph = useMemo(
-    () => (graph ? filterGraph(graph, filters, graph.center) : null),
-    [filters, graph],
-  )
 
   let body
   if (state.status === 'offline') body = <PanelNote>The graph needs a connection.</PanelNote>
@@ -128,7 +107,7 @@ export function LocalGraphPanel({ id }: { id: number }) {
         text are left out), so it has no graph.
       </PanelNote>
     )
-  else if (graph === null || filteredGraph === null)
+  else if (graph === null)
     body = (
       <PanelNote>
         Nothing is connected to this document yet: no links, tags or related documents. A document indexed a moment ago gets
@@ -138,36 +117,19 @@ export function LocalGraphPanel({ id }: { id: number }) {
   else
     body = (
       <>
-        <GraphControlPanels
-          filters={filters}
-          onFiltersChange={setFilters}
-          display={display}
-          onDisplayChange={setDisplay}
-          forces={forces}
-          onForcesChange={setForces}
-          onAnimate={() => setLayoutVersion((n) => n + 1)}
+        <NetworkGraphView
+          graph={graph}
+          center={graph.center}
+          view={view}
+          dimension={dimension}
+          canvasTitle={dimension === '2d' ? 'Local Network' : 'Local Atlas'}
+          canvasSubtitle={(filtered) => `${connectedCount(filtered)} connected`}
           showExistingToggle={true}
-          showDisplayAndForces={view === 'graph'}
+          emptyFilteredMessage="No connected items match these filters."
+          legendLabel="Colours"
+          hasItems={(filtered) => connectedCount(filtered) > 0}
+          renderList={(filtered) => <GraphList graph={filtered} />}
         />
-        {connectedCount(filteredGraph) === 0 ? (
-          <PanelNote>No connected items match these filters.</PanelNote>
-        ) : view === 'graph' ? (
-          <Suspense fallback={<p role="status" className="flex h-88 items-center justify-center gap-2 text-sm text-muted md:h-112"><LoaderCircle aria-hidden="true" className="size-4 animate-spin" />Drawing the graph…</p>}>
-            <GraphCanvas
-              graph={filteredGraph}
-              center={filteredGraph.center}
-              title={dimension === '2d' ? 'Local Network' : 'Local Atlas'}
-              subtitle={`${connectedCount(filteredGraph)} connected`}
-              dimension={dimension}
-              display={display}
-              forces={forces}
-              layoutVersion={layoutVersion}
-            />
-          </Suspense>
-        ) : (
-          <GraphList graph={filteredGraph} />
-        )}
-        <Legend graph={filteredGraph} />
         {graph.truncated ? (
           <p className="mt-2 text-xs text-muted">Only the best connected items are shown; this document has more.</p>
         ) : null}
@@ -186,30 +148,7 @@ export function LocalGraphPanel({ id }: { id: number }) {
         </h2>
         {graph === null ? null : (
           <div className="flex flex-wrap items-center gap-2">
-            {view === 'graph' ? (
-              <div role="group" aria-label="Graph dimension" className="inline-flex rounded-control bg-raised p-1">
-                <button
-                  type="button"
-                  aria-pressed={dimension === '2d'}
-                  onClick={() => setDimension('2d')}
-                  className={`inline-flex min-h-11 items-center justify-center rounded-[0.5rem] px-3 text-sm transition-colors ${
-                    dimension === '2d' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'
-                  }`}
-                >
-                  2D
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={dimension === '3d'}
-                  onClick={() => setDimension('3d')}
-                  className={`inline-flex min-h-11 items-center justify-center rounded-[0.5rem] px-3 text-sm transition-colors ${
-                    dimension === '3d' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'
-                  }`}
-                >
-                  3D
-                </button>
-              </div>
-            ) : null}
+            {view === 'graph' ? <GraphDimensionToggle dimension={dimension} onChange={setDimension} /> : null}
             <div role="group" aria-label="Graph view" className="inline-flex rounded-control bg-raised p-1">
               <ViewButton current={view} value="graph" onPick={setChosen}>
                 Graph
@@ -254,19 +193,6 @@ function ViewButton({
 
 function PanelNote({ children }: { children: string }) {
   return <p className="text-sm text-muted">{children}</p>
-}
-
-function Legend({ graph }: { graph: LocalGraphResponse }) {
-  return (
-    <ul aria-label="Colours" className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
-      {tonesIn(graph).map((tone) => (
-        <li key={tone} className="inline-flex items-center gap-1.5">
-          <span aria-hidden="true" className={`size-2.5 rounded-full ${TONE_SWATCH[tone]}`} />
-          {TONE_LABELS[tone]}
-        </li>
-      ))}
-    </ul>
-  )
 }
 
 function GraphList({ graph }: { graph: LocalGraphResponse }) {

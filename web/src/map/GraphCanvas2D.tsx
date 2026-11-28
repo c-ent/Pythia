@@ -1,5 +1,5 @@
-import { Lock, Maximize2, Minimize2, Minus, Plus, RotateCcw } from 'lucide-react'
-import type { KeyboardEvent, PointerEvent, ReactNode, WheelEvent } from 'react'
+import { Lock } from 'lucide-react'
+import type { KeyboardEvent, PointerEvent, WheelEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GraphNode, GraphResponse } from '../api/graph'
 import { documentPath, navigate, repoPath } from '../router'
@@ -11,6 +11,7 @@ import {
   type GraphForceSettings,
 } from './graphControls'
 import { nodeTone, TONE_LABELS, type NodeTone } from './graphModel'
+import { GraphViewportChrome } from './GraphViewportChrome'
 
 const ZOOM_STEP = 1.25
 const MIN_ZOOM = 0.25
@@ -320,13 +321,17 @@ export function GraphCanvas2D({
   }
 
   return (
-    <div
-      ref={wrapperRef}
-      className={
-        fullscreen
-          ? 'fixed inset-0 z-50 m-0 h-dvh w-dvw overflow-hidden bg-nav'
-          : `relative w-full overflow-hidden rounded-control border border-nav-line bg-nav ${heightClassName}`
-      }
+    <GraphViewportChrome
+      wrapperRef={wrapperRef}
+      fullscreen={fullscreen}
+      onFullscreenChange={setFullscreen}
+      title={title}
+      subtitle={subtitle}
+      interactionHint="DRAG - pan   SCROLL - zoom"
+      heightClassName={heightClassName}
+      onZoomIn={() => zoomBy(ZOOM_STEP)}
+      onZoomOut={() => zoomBy(1 / ZOOM_STEP)}
+      onResetView={resetView}
     >
       <canvas
         ref={canvasRef}
@@ -343,47 +348,6 @@ export function GraphCanvas2D({
         className={`block h-full w-full touch-none select-none focus-visible:outline-2 focus-visible:outline-accent ${dragging ? 'cursor-grabbing' : hovered ? 'cursor-pointer' : 'cursor-grab'}`}
       />
 
-      <div className="pointer-events-none absolute top-3 left-3.5 flex max-w-[60%] items-center gap-2.5">
-        <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-accent shadow-[0_0_8px_var(--color-accent)]" />
-        <p className="truncate font-mono text-xs tracking-wider text-nav-ink uppercase">
-          {title}
-          {subtitle ? <span className="ml-2 font-normal text-nav-muted normal-case">{subtitle}</span> : null}
-        </p>
-      </div>
-
-      <div className="absolute top-2.5 right-2.5 flex items-start gap-2.5">
-        <p className="pointer-events-none hidden pt-2 font-mono text-[11px] tracking-wider text-nav-muted md:block">
-          DRAG - pan &nbsp; SCROLL - zoom{fullscreen ? '   ESC - exit' : ''}
-        </p>
-        <div className="flex flex-col items-end gap-1.5">
-          {fullscreen ? (
-            <button
-              type="button"
-              aria-label="Exit full screen"
-              aria-pressed={true}
-              onClick={() => setFullscreen(false)}
-              className="inline-flex min-h-11 items-center gap-1.5 rounded-control border border-nav-line bg-nav/85 px-3 text-xs font-medium text-nav-ink backdrop-blur-sm transition-colors hover:bg-nav-raised"
-            >
-              <Minimize2 aria-hidden="true" className="size-4" />
-              <span>Exit</span>
-            </button>
-          ) : (
-            <CanvasButton label="Full screen" pressed={false} onClick={() => setFullscreen(true)}>
-              <Maximize2 aria-hidden="true" className="size-4" />
-            </CanvasButton>
-          )}
-          <CanvasButton label="Zoom in" onClick={() => zoomBy(ZOOM_STEP)}>
-            <Plus aria-hidden="true" className="size-4" />
-          </CanvasButton>
-          <CanvasButton label="Zoom out" onClick={() => zoomBy(1 / ZOOM_STEP)}>
-            <Minus aria-hidden="true" className="size-4" />
-          </CanvasButton>
-          <CanvasButton label="Reset view" onClick={resetView}>
-            <RotateCcw aria-hidden="true" className="size-4" />
-          </CanvasButton>
-        </div>
-      </div>
-
       {hovered !== null ? (
         <div className="pointer-events-none absolute bottom-3 left-3.5 max-w-sm rounded-control border border-nav-line bg-nav/90 px-3 py-2 text-xs text-nav-ink backdrop-blur-sm">
           <p className="truncate font-medium">{hovered.node.type === 'tag' ? `#${hovered.node.label}` : hovered.node.label}</p>
@@ -396,21 +360,6 @@ export function GraphCanvas2D({
           </p>
         </div>
       ) : null}
-    </div>
-  )
-}
-
-function CanvasButton({ label, pressed, onClick, children }: { label: string; pressed?: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      aria-pressed={pressed}
-      title={label}
-      onClick={onClick}
-      className="inline-flex size-11 items-center justify-center rounded-control border border-nav-line bg-nav/85 text-nav-ink backdrop-blur-sm transition-colors hover:bg-nav-raised"
-    >
-      {children}
-    </button>
+    </GraphViewportChrome>
   )
 }

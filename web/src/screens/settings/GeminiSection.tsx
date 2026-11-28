@@ -51,11 +51,14 @@ import {
   buildObsidianView,
   buildRepoRows,
   checkKey,
+  isAccessWeaker,
   keyErrorMessage,
   keyStatusText,
   keyWarningText,
+  ruleAccess,
   sameRule,
   testResultText,
+  type DriveFolderNode,
   type RuleAccess,
 } from './gemini'
 
@@ -368,13 +371,15 @@ function RulesCard({ online }: { online: boolean }) {
     }
   }
 
-  const setAccess = (kind: LlmExclusionKind, path: string, access: RuleAccess): void => {
+  const setAccess = (kind: LlmExclusionKind, path: string, access: RuleAccess, inheritedAccess: RuleAccess = 'allowed'): void => {
+    if (isAccessWeaker(access, inheritedAccess)) return
     const target: LlmExclusion = access === 'all' ? { kind, path, scope: 'all' } : { kind, path }
     const current = list.find((rule) => sameRule(rule, target))
-    const currentAccess: RuleAccess = current === undefined ? 'allowed' : current.scope === 'all' ? 'all' : 'llm'
-    if (access === currentAccess) return
+    const currentOwnAccess = ruleAccess(current)
+    if (access === inheritedAccess && current === undefined) return
+    if (access !== inheritedAccess && access === currentOwnAccess) return
     const without = list.filter((rule) => !sameRule(rule, target))
-    void save(access === 'allowed' ? without : [...without, target])
+    void save(access === inheritedAccess ? without : [...without, target])
   }
 
   const removeRule = (kind: LlmExclusionKind, path: string): void => {
@@ -427,7 +432,7 @@ function RulesCard({ online }: { online: boolean }) {
               view={obsidian}
               list={list}
               saving={saving}
-              onAccess={(kind, path, access) => setAccess(kind, path, access)}
+              onAccess={(kind, path, access, inheritedAccess) => setAccess(kind, path, access, inheritedAccess)}
               onRemove={(kind, path) => removeRule(kind, path)}
               onAdd={(item) => save([...list, item])}
             />
@@ -444,7 +449,7 @@ function RulesCard({ online }: { online: boolean }) {
               view={drive}
               list={list}
               saving={saving}
-              onAccess={(path, access) => setAccess('gdrive', path, access)}
+              onAccess={(path, access, inheritedAccess) => setAccess('gdrive', path, access, inheritedAccess)}
               onRemove={(path) => removeRule('gdrive', path)}
               onAdd={(item) => save([...list, item])}
             />
@@ -528,7 +533,7 @@ function ObsidianSection({
   view: ReturnType<typeof buildObsidianView>
   list: readonly LlmExclusion[]
   saving: boolean
-  onAccess: (kind: 'folder' | 'note' | 'tag', path: string, access: RuleAccess) => void
+  onAccess: (kind: 'folder' | 'note' | 'tag', path: string, access: RuleAccess, inheritedAccess: RuleAccess) => void
   onRemove: (kind: 'folder' | 'note' | 'tag', path: string) => void
   onAdd: (item: LlmExclusion) => Promise<boolean>
 }) {
@@ -596,8 +601,9 @@ function ObsidianSection({
                 count={folder.documents === null ? null : plural(folder.documents, 'note')}
                 badge={folder.coveredByParent === null ? null : `Inside ${folder.coveredByParent}/`}
                 access={folder.access}
+                inheritedAccess={folder.inheritedAccess}
                 saving={saving}
-                onAccess={(access) => onAccess('folder', folder.path, access)}
+                onAccess={(access) => onAccess('folder', folder.path, access, folder.inheritedAccess)}
                 onRemove={folder.inCatalog ? undefined : () => onRemove('folder', folder.path)}
               />
             ))}
@@ -619,8 +625,9 @@ function ObsidianSection({
                 count={item.documents === null ? null : plural(item.documents, 'note')}
                 badge={item.coveredByParent === null ? null : `Covered by #${item.coveredByParent}`}
                 access={item.access}
+                inheritedAccess={item.inheritedAccess}
                 saving={saving}
-                onAccess={(access) => onAccess('tag', item.tag, access)}
+                onAccess={(access) => onAccess('tag', item.tag, access, item.inheritedAccess)}
                 onRemove={item.inCatalog ? undefined : () => onRemove('tag', item.tag)}
               />
             ))}
@@ -641,8 +648,9 @@ function ObsidianSection({
               count={null}
               badge={note.coveredByFolder === null ? null : `Inside ${note.coveredByFolder}/`}
               access={note.access}
+              inheritedAccess={note.inheritedAccess}
               saving={saving}
-              onAccess={(access) => onAccess('note', note.path, access)}
+              onAccess={(access) => onAccess('note', note.path, access, note.inheritedAccess)}
               onRemove={note.inCatalog ? undefined : () => onRemove('note', note.path)}
             />
           ))}
@@ -721,6 +729,21 @@ function GitHubSection({
   )
 }
 
+function filterDriveTree(nodes: readonly DriveFolderNode[], needle: string): DriveFolderNode[] {
+  if (needle === '') return [...nodes]
+  const out: DriveFolderNode[] = []
+  for (const node of nodes) {
+    const children = filterDriveTree(node.children, needle)
+    const selfMatches =
+      node.folder.path.toLowerCase().includes(needle) ||
+      node.folder.files.some((file) => file.name.toLowerCase().includes(needle))
+    if (selfMatches || children.length > 0) {
+      out.push({ ...node, children })
+    }
+  }
+  return out
+}
+
 function DriveSection({
   view,
   list,
@@ -732,7 +755,7 @@ function DriveSection({
   view: ReturnType<typeof buildDriveView>
   list: readonly LlmExclusion[]
   saving: boolean
-  onAccess: (path: string, access: RuleAccess) => void
+  onAccess: (path: string, access: RuleAccess, inheritedAccess: RuleAccess) => void
   onRemove: (path: string) => void
   onAdd: (item: LlmExclusion) => Promise<boolean>
 }) {
@@ -740,12 +763,7 @@ function DriveSection({
   const needle = query.trim().toLowerCase()
   const lockedCount = (view.allLocked ? 1 : 0) + view.lockedFolderCount
 
-  const matchingFolders = view.folders.filter(
-    (folder) =>
-      needle === '' ||
-      folder.path.toLowerCase().includes(needle) ||
-      folder.files.some((file) => file.name.toLowerCase().includes(needle)),
-  )
+  const matchingTree = filterDriveTree(view.folderTree, needle)
   const matchingRootFiles = view.rootFiles.filter(
     (file) => needle === '' || file.name.toLowerCase().includes(needle),
   )
@@ -766,7 +784,7 @@ function DriveSection({
           badge={null}
           access={view.allAccess}
           saving={saving}
-          onAccess={(access) => onAccess(DRIVE_ROOT_RULE_PATH, access)}
+          onAccess={(access) => onAccess(DRIVE_ROOT_RULE_PATH, access, 'allowed')}
         />
       </ul>
       <p className="mt-1 text-xs text-muted">
@@ -784,16 +802,16 @@ function DriveSection({
         </div>
       ) : null}
 
-      {matchingFolders.length > 0 ? (
+      {matchingTree.length > 0 ? (
         <ul className="mt-2" aria-label="Google Drive folders">
-          {matchingFolders.map((folder) => (
+          {matchingTree.map((node) => (
             <DriveFolderItem
-              key={folder.path}
-              folder={folder}
+              key={node.folder.path}
+              node={node}
               needle={needle}
               saving={saving}
-              onAccess={(access) => onAccess(folder.path, access)}
-              onRemove={folder.inCatalog ? undefined : () => onRemove(folder.path)}
+              onAccess={onAccess}
+              onRemove={onRemove}
             />
           ))}
         </ul>
@@ -829,19 +847,22 @@ function DriveSection({
 }
 
 function DriveFolderItem({
-  folder,
+  node,
   needle,
   saving,
   onAccess,
   onRemove,
 }: {
-  folder: ReturnType<typeof buildDriveView>['folders'][number]
+  node: DriveFolderNode
   needle: string
   saving: boolean
-  onAccess: (access: RuleAccess) => void
-  onRemove?: () => void
+  onAccess: (path: string, access: RuleAccess, inheritedAccess: RuleAccess) => void
+  onRemove: (path: string) => void
 }) {
+  const { folder, name, children } = node
+  const [expanded, setExpanded] = useState(true)
   const [showAllFiles, setShowAllFiles] = useState(false)
+  const isExpanded = needle !== '' || expanded
   const visibleFiles =
     needle === ''
       ? folder.files
@@ -851,13 +872,31 @@ function DriveFolderItem({
   return (
     <li className="border-t border-line py-2.5 first:border-t-0">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <span className="flex min-w-0 flex-1 basis-48 items-center gap-2">
+        <span className="flex min-w-0 flex-1 basis-48 items-center gap-1.5">
+          {children.length > 0 ? (
+            <button
+              type="button"
+              aria-expanded={isExpanded}
+              aria-label={`Toggle subfolders of ${folder.path}`}
+              onClick={() => setExpanded((prev) => !prev)}
+              className="-ml-1 inline-flex size-7 shrink-0 items-center justify-center rounded-control text-muted transition-colors hover:bg-raised hover:text-ink"
+            >
+              {isExpanded ? <ChevronDown aria-hidden="true" className="size-4" /> : <ChevronRight aria-hidden="true" className="size-4" />}
+            </button>
+          ) : null}
           <Folder aria-hidden="true" className="size-4 shrink-0 text-muted" />
           <span className="sr-only">Google Drive folder</span>
-          <span className="font-mono text-sm break-all">{folder.path}/</span>
+          <span className="font-mono text-sm break-all">{name}/</span>
           {folder.coveredByParent === null ? null : (
-            <span className="rounded-full bg-raised px-2 py-0.5 text-xs text-muted">
-              {folder.coveredByParent === DRIVE_ROOT_RULE_PATH ? 'Covered by Drive lock' : `Inside ${folder.coveredByParent}/`}
+            <span
+              title={
+                folder.coveredByParent === DRIVE_ROOT_RULE_PATH
+                  ? 'Covered by All of Google Drive'
+                  : `Inside ${folder.coveredByParent}/`
+              }
+              className="shrink-0 whitespace-nowrap rounded-full bg-raised px-2 py-0.5 text-xs text-muted"
+            >
+              {folder.coveredByParent === DRIVE_ROOT_RULE_PATH ? 'Covered by Drive lock' : 'Inherited'}
             </span>
           )}
         </span>
@@ -867,11 +906,12 @@ function DriveFolderItem({
         <AccessToggle
           label={`Drive: ${folder.path}/`}
           access={folder.access}
+          inheritedAccess={folder.inheritedAccess}
           saving={saving}
-          onAccess={onAccess}
+          onAccess={(access) => onAccess(folder.path, access, folder.inheritedAccess)}
         />
-        {onRemove === undefined ? null : (
-          <RemoveButton label={`Drive: ${folder.path}/`} saving={saving} onRemove={onRemove} />
+        {folder.inCatalog ? null : (
+          <RemoveButton label={`Drive: ${folder.path}/`} saving={saving} onRemove={() => onRemove(folder.path)} />
         )}
       </div>
       {visibleFiles.length > 0 ? (
@@ -893,6 +933,20 @@ function DriveFolderItem({
               </button>
             </li>
           ) : null}
+        </ul>
+      ) : null}
+      {children.length > 0 && isExpanded ? (
+        <ul className="mt-2 ml-2.5 border-l border-line pl-4" aria-label={`Subfolders of ${folder.path}`}>
+          {children.map((child) => (
+            <DriveFolderItem
+              key={child.folder.path}
+              node={child}
+              needle={needle}
+              saving={saving}
+              onAccess={onAccess}
+              onRemove={onRemove}
+            />
+          ))}
         </ul>
       ) : null}
     </li>
@@ -929,6 +983,7 @@ function RuleRowItem({
   count,
   badge,
   access,
+  inheritedAccess = 'allowed',
   saving,
   onAccess,
   onRemove,
@@ -939,6 +994,7 @@ function RuleRowItem({
   count: string | null
   badge: string | null
   access: RuleAccess
+  inheritedAccess?: RuleAccess
   saving: boolean
   onAccess: (access: RuleAccess) => void
   onRemove?: () => void
@@ -952,7 +1008,7 @@ function RuleRowItem({
         {badge === null ? null : <span className="rounded-full bg-raised px-2 py-0.5 text-xs text-muted">{badge}</span>}
       </span>
       {count === null ? null : <span className="text-sm text-muted tabular-nums">{count}</span>}
-      <AccessToggle label={label} access={access} saving={saving} onAccess={onAccess} />
+      <AccessToggle label={label} access={access} inheritedAccess={inheritedAccess} saving={saving} onAccess={onAccess} />
       {onRemove === undefined ? null : <RemoveButton label={label} saving={saving} onRemove={onRemove} />}
     </li>
   )
@@ -961,23 +1017,40 @@ function RuleRowItem({
 function AccessToggle({
   label,
   access,
+  inheritedAccess = 'allowed',
   saving,
   onAccess,
 }: {
   label: string
   access: RuleAccess
+  inheritedAccess?: RuleAccess
   saving: boolean
   onAccess: (access: RuleAccess) => void
 }) {
   return (
     <div role="radiogroup" aria-label={`Access for ${label}`} className="flex flex-wrap rounded-control bg-raised p-0.5">
-      <AccessButton checked={access === 'allowed'} disabled={saving} onClick={() => onAccess('allowed')} icon={LockOpen}>
+      <AccessButton
+        checked={access === 'allowed'}
+        disabled={saving || isAccessWeaker('allowed', inheritedAccess)}
+        onClick={() => onAccess('allowed')}
+        icon={LockOpen}
+      >
         Allowed
       </AccessButton>
-      <AccessButton checked={access === 'llm'} disabled={saving} onClick={() => onAccess('llm')} icon={Lock}>
+      <AccessButton
+        checked={access === 'llm'}
+        disabled={saving || isAccessWeaker('llm', inheritedAccess)}
+        onClick={() => onAccess('llm')}
+        icon={Lock}
+      >
         No Gemini
       </AccessButton>
-      <AccessButton checked={access === 'all'} disabled={saving} onClick={() => onAccess('all')} icon={EyeOff}>
+      <AccessButton
+        checked={access === 'all'}
+        disabled={saving || inheritedAccess === 'all'}
+        onClick={() => onAccess('all')}
+        icon={EyeOff}
+      >
         Excluded
       </AccessButton>
     </div>
@@ -1018,7 +1091,9 @@ function AccessButton({
       aria-checked={checked}
       disabled={disabled}
       onClick={onClick}
-      className="inline-flex min-h-10 items-center gap-1.5 rounded-[0.625rem] px-3 text-sm text-muted transition-colors hover:text-ink disabled:cursor-not-allowed aria-checked:bg-strong aria-checked:font-medium aria-checked:text-on-strong"
+      className={`inline-flex min-h-10 items-center gap-1.5 rounded-[0.625rem] px-3 text-sm text-muted transition-colors hover:text-ink disabled:cursor-not-allowed aria-checked:bg-strong aria-checked:font-medium aria-checked:text-on-strong ${
+        checked ? '' : 'disabled:opacity-40'
+      }`}
     >
       <Icon aria-hidden="true" className="size-3.5" />
       {children}

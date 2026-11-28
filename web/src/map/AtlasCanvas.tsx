@@ -1,7 +1,8 @@
-import { Lock, Maximize2, Minimize2, Minus, Plus, RotateCcw } from 'lucide-react'
-import type { KeyboardEvent, PointerEvent, ReactNode } from 'react'
+import { Lock } from 'lucide-react'
+import type { KeyboardEvent, PointerEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { documentPath, navigate, repoPath } from '../router'
+import { GraphViewportChrome } from './GraphViewportChrome'
 import {
   clamp,
   DEFAULT_CAMERA,
@@ -680,13 +681,18 @@ export function AtlasCanvas({
   }
 
   return (
-    <div
-      ref={wrapperRef}
-      className={
-        fullscreen
-          ? 'fixed inset-0 z-50 m-0 h-dvh w-dvw overflow-hidden bg-nav'
-          : `relative mt-4 w-full overflow-hidden rounded-control border border-nav-line bg-nav ${heightClassName}`
-      }
+    <GraphViewportChrome
+      wrapperRef={wrapperRef}
+      fullscreen={fullscreen}
+      onFullscreenChange={setFullscreen}
+      title={title}
+      subtitle={subtitle}
+      interactionHint="DRAG - rotate   SCROLL - zoom"
+      heightClassName={heightClassName}
+      marginClassName="mt-4"
+      onZoomIn={() => zoomBy(ZOOM_STEP)}
+      onZoomOut={() => zoomBy(1 / ZOOM_STEP)}
+      onResetView={resetView}
     >
       <canvas
         ref={canvasRef}
@@ -703,72 +709,13 @@ export function AtlasCanvas({
         className={`block h-full w-full touch-none select-none focus-visible:outline-2 focus-visible:outline-accent ${dragging ? 'cursor-grabbing' : 'cursor-grab'}`}
       />
 
-      {/* Top-left Atlas HUD header */}
-      <div className="pointer-events-none absolute top-3 left-3.5 flex max-w-[60%] items-center gap-2.5">
-        <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-accent shadow-[0_0_8px_var(--color-accent)]" />
-        <p className="truncate font-mono text-xs tracking-wider text-nav-ink uppercase">
-          {title}
-          {subtitle ? <span className="ml-2 font-normal text-nav-muted normal-case">{subtitle}</span> : null}
-        </p>
-      </div>
-
-      {/* Top-right interaction hint, fullscreen toggle and zoom/reset buttons */}
-      <div className="absolute top-2.5 right-2.5 flex items-start gap-2.5">
-        <p className="pointer-events-none hidden pt-2 font-mono text-[11px] tracking-wider text-nav-muted md:block">
-          DRAG - rotate &nbsp; SCROLL - zoom{fullscreen ? '   ESC - exit' : ''}
-        </p>
-        <div className="flex flex-col items-end gap-1.5">
-          {fullscreen ? (
-            <button
-              type="button"
-              aria-label="Exit full screen"
-              aria-pressed={true}
-              title="Exit full screen (Esc)"
-              onClick={() => setFullscreen(false)}
-              className="inline-flex min-h-11 items-center gap-1.5 rounded-control border border-nav-line bg-nav/85 px-3 text-xs font-medium text-nav-ink backdrop-blur-sm transition-colors hover:bg-nav-raised"
-            >
-              <Minimize2 aria-hidden="true" className="size-4" />
-              <span>Exit</span>
-            </button>
-          ) : (
-            <ZoomButton label="Full screen" pressed={false} onClick={() => setFullscreen(true)}>
-              <Maximize2 aria-hidden="true" className="size-4" />
-            </ZoomButton>
-          )}
-          <ZoomButton label="Zoom in" onClick={() => zoomBy(ZOOM_STEP)}>
-            <Plus aria-hidden="true" className="size-4" />
-          </ZoomButton>
-          <ZoomButton label="Zoom out" onClick={() => zoomBy(1 / ZOOM_STEP)}>
-            <Minus aria-hidden="true" className="size-4" />
-          </ZoomButton>
-          <ZoomButton label="Reset view" onClick={resetView}>
-            <RotateCcw aria-hidden="true" className="size-4" />
-          </ZoomButton>
-        </div>
-      </div>
-
       {preview === null ? null : (
         <NodePreview
           preview={preview}
           canExploreBranch={Boolean(onSelectBranch)}
         />
       )}
-    </div>
-  )
-}
-
-function ZoomButton({ label, pressed, onClick, children }: { label: string; pressed?: boolean; onClick: () => void; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      aria-pressed={pressed}
-      title={label}
-      onClick={onClick}
-      className="inline-flex size-11 items-center justify-center rounded-control border border-nav-line bg-nav/85 text-nav-ink backdrop-blur-sm transition-colors hover:bg-nav-raised"
-    >
-      {children}
-    </button>
+    </GraphViewportChrome>
   )
 }
 

@@ -1,4 +1,6 @@
 import type { Pool } from 'pg'
+import { parseRepoSummaryMetadata } from '../search/repoService.js'
+import { sourceFilterSql, toVectorLiteral, visibleSource, withHnswScan } from './pgHelpers.js'
 import { SUMMARY_PATH } from './repoStore.js'
 
 /** Kinds a search or document lookup can return. `work` never appears (R2). */
@@ -24,6 +26,12 @@ export interface HybridSearchParams {
   limit: number
 }
 
+export interface Snippet {
+  text: string
+  /** `[start, end)` offsets into `text`, in UTF-16 code units. */
+  highlights: Array<[number, number]>
+}
+
 export interface ChunkHit {
   chunkId: number
   documentId: number
@@ -38,8 +46,7 @@ export interface ChunkHit {
   score: number
   ftsRank: number | null
   vectorRank: number | null
-  /** `ts_headline` output with HEADLINE_START / HEADLINE_STOP around matches. */
-  headline: string
+  snippet: Snippet
   mtime?: Date | null
   updatedAt?: Date
 }
@@ -130,19 +137,6 @@ export interface AskContextLoader {
   recentDocuments(filters: SearchFilters, limit: number): Promise<RecentCatalogEntry[]>
 }
 
-const parseIsoField = (content: string, prefix: string): Date | null => {
-  const match = new RegExp(`^${prefix}:\\s*(.+)$`, 'm').exec(content)
-  if (match?.[1] === undefined) return null
-  const ms = Date.parse(match[1].trim())
-  return Number.isNaN(ms) ? null : new Date(ms)
-}
-
-const parseLineField = (content: string, prefix: string): string | null => {
-  const match = new RegExp(`^${prefix}:\\s*(.+)$`, 'm').exec(content)
-  const value = match?.[1]?.trim()
-  return value === undefined || value === '' ? null : value
-}
-
 export function createPgAskContextLoader(pool: Pool): AskContextLoader {
   return {
     async repoCatalog(filters) {
@@ -169,18 +163,21 @@ export function createPgAskContextLoader(pool: Pool): AskContextLoader {
         [SUMMARY_PATH, filters.repo ?? null],
       )
       return rows
-        .map((row) => ({
-          chunkId: Number(row.chunk_id),
-          documentId: Number(row.document_id),
-          name: row.source_name,
-          title: row.title,
-          headingPath: row.heading_path,
-          allowLlm: row.allow_llm,
-          firstCommitAt: parseIsoField(row.content, 'First commit'),
-          lastCommitAt: parseIsoField(row.content, 'Latest commit') ?? row.mtime,
-          updatedAt: row.updated_at,
-          languages: parseLineField(row.content, 'Languages'),
-        }))
+        .map((row) => {
+          const meta = parseRepoSummaryMetadata(row.content, row.mtime)
+          return {
+            chunkId: Number(row.chunk_id),
+            documentId: Number(row.document_id),
+            name: row.source_name,
+            title: row.title,
+            headingPath: row.heading_path,
+            allowLlm: row.allow_llm,
+            firstCommitAt: meta.firstCommitAt,
+            lastCommitAt: meta.lastCommitAt,
+            updatedAt: row.updated_at,
+            languages: meta.languages,
+          }
+        })
         .sort((a, b) => {
           const ac = a.lastCommitAt ?? a.firstCommitAt
           const bc = b.lastCommitAt ?? b.firstCommitAt
@@ -256,18 +253,35 @@ export function createPgChunkTextLoader(pool: Pool): ChunkTextLoader {
 
 // Control characters cannot occur in note text once the content is passed
 // through `translate`, so they mark matches without any HTML in the API.
-export const HEADLINE_START = '\u0001'
-export const HEADLINE_STOP = '\u0002'
+const HEADLINE_START = '\u0001'
+const HEADLINE_STOP = '\u0002'
 const HEADLINE_OPTIONS = `StartSel=${HEADLINE_START},StopSel=${HEADLINE_STOP},MaxWords=35,MinWords=15,ShortWord=3,MaxFragments=2,FragmentDelimiter=" … "`
+
+/** Turns `ts_headline` output into plain text plus match offsets behind the SearchStore seam. */
+export function parseHeadline(raw: string): Snippet {
+  let text = ''
+  const highlights: Array<[number, number]> = []
+  let start: number | null = null
+  for (const ch of raw) {
+    if (ch === HEADLINE_START) {
+      start ??= text.length
+    } else if (ch === HEADLINE_STOP) {
+      if (start !== null && text.length > start) highlights.push([start, text.length])
+      start = null
+    } else {
+      text += ch
+    }
+  }
+  if (start !== null && text.length > start) highlights.push([start, text.length])
+  return { text, highlights }
+}
 
 /** RRF constant from spec R4. */
 export const RRF_K = 60
 
 // Shared by both CTEs so filtered-out rows never take one of the top slots.
 // Uses $3 (kinds or null) and $4 (repo name or null).
-const SOURCE_FILTER = `s.enabled AND s.kind <> 'work' AND NOT d.excluded
-  AND ($3::text[] IS NULL OR s.kind = ANY ($3::text[]))
-  AND ($4::text IS NULL OR (s.kind = 'repo' AND s.name = $4::text))`
+const SOURCE_FILTER = sourceFilterSql(3, 4)
 
 // With a query vector, full text needs every word (`websearch_to_tsquery`).
 // Without one (Ollama down or timed out, T50) a question like "what should I
@@ -375,61 +389,42 @@ const toSummary = (row: DocumentRow): DocumentSummary => ({
   updatedAt: row.updated_at,
 })
 
-const toVectorLiteral = (vector: readonly number[]): string => `[${vector.join(',')}]`
-
 const DOCUMENT_COLUMNS = `d.id, s.kind, s.name AS source_name, d.path, d.title, d.language, d.allow_llm, d.mtime, d.updated_at`
-const VISIBLE_SOURCE = `s.enabled AND s.kind <> 'work' AND NOT d.excluded`
+const VISIBLE_SOURCE = visibleSource()
 
 export function createPgSearchStore(pool: Pool): SearchStore {
   return {
     async hybridSearch(params) {
-      const client = await pool.connect()
-      try {
-        await client.query('BEGIN')
-        try {
-          // HNSW returns at most ef_search rows (default 40, below the 50
-          // candidates), and a filter applied after the index scan would leave
-          // fewer. Iterative scans keep reading the index until LIMIT is met.
-          await client.query(
-            `SELECT set_config('hnsw.ef_search', $1, true), set_config('hnsw.iterative_scan', 'strict_order', true)`,
-            [String(Math.min(1000, Math.max(100, params.candidates * 2)))],
-          )
-          const { rows } = await client.query<HitRow>(HYBRID_SQL, [
-            params.query,
-            params.embedding === null ? null : toVectorLiteral(params.embedding),
-            params.filters.sources === undefined ? null : [...params.filters.sources],
-            params.filters.repo ?? null,
-            params.candidates,
-            params.limit,
-            HEADLINE_OPTIONS,
-            params.embedModel,
-          ])
-          await client.query('COMMIT')
-          return rows.map((row) => ({
-            chunkId: Number(row.chunk_id),
-            documentId: Number(row.document_id),
-            sourceKind: row.kind,
-            sourceName: row.source_name,
-            path: row.path,
-            title: row.title,
-            headingPath: row.heading_path,
-            startLine: row.start_line,
-            endLine: row.end_line,
-            allowLlm: row.allow_llm,
-            score: row.score,
-            ftsRank: row.fts_rank === null ? null : Number(row.fts_rank),
-            vectorRank: row.vector_rank === null ? null : Number(row.vector_rank),
-            headline: row.headline,
-            mtime: row.mtime,
-            updatedAt: row.updated_at,
-          }))
-        } catch (error) {
-          await client.query('ROLLBACK')
-          throw error
-        }
-      } finally {
-        client.release()
-      }
+      return withHnswScan(pool, params.candidates * 2, async (client) => {
+        const { rows } = await client.query<HitRow>(HYBRID_SQL, [
+          params.query,
+          params.embedding === null ? null : toVectorLiteral(params.embedding),
+          params.filters.sources === undefined ? null : [...params.filters.sources],
+          params.filters.repo ?? null,
+          params.candidates,
+          params.limit,
+          HEADLINE_OPTIONS,
+          params.embedModel,
+        ])
+        return rows.map((row) => ({
+          chunkId: Number(row.chunk_id),
+          documentId: Number(row.document_id),
+          sourceKind: row.kind,
+          sourceName: row.source_name,
+          path: row.path,
+          title: row.title,
+          headingPath: row.heading_path,
+          startLine: row.start_line,
+          endLine: row.end_line,
+          allowLlm: row.allow_llm,
+          score: row.score,
+          ftsRank: row.fts_rank === null ? null : Number(row.fts_rank),
+          vectorRank: row.vector_rank === null ? null : Number(row.vector_rank),
+          snippet: parseHeadline(row.headline),
+          mtime: row.mtime,
+          updatedAt: row.updated_at,
+        }))
+      })
     },
 
     async getDocument(id) {

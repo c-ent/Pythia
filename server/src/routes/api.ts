@@ -68,19 +68,32 @@ export const MAX_KEEP_UPLOAD_BYTES = 256 * 1024 * 1024
 
 const ZIP_TYPES = ['application/zip', 'application/x-zip-compressed', 'application/octet-stream']
 
+export interface ApiRouterDeps {
+  search: SearchService
+  ask: AskService
+  sync?: SyncService
+  repos?: RepoService
+  imports?: ImportService
+  recent?: RecentQueryService
+  related?: RelatedService
+  backlinks?: BacklinkService
+  graph?: GraphService
+  topicMap?: TopicMapService
+}
+
 /** REST transport for the search, ask, sync, repo and import services (R4, R8, R11, R9, R12). Auth sits in front of it (T8). */
-export function createApiRouter(
-  search: SearchService,
-  ask: AskService,
-  sync?: SyncService,
-  repos?: RepoService,
-  imports?: ImportService,
-  recent?: RecentQueryService,
-  related?: RelatedService,
-  backlinks?: BacklinkService,
-  graph?: GraphService,
-  topicMap?: TopicMapService,
-): Router {
+export function createApiRouter({
+  search,
+  ask,
+  sync,
+  repos,
+  imports,
+  recent,
+  related,
+  backlinks,
+  graph,
+  topicMap,
+}: ApiRouterDeps): Router {
   const router = express.Router()
   router.use((_req, res, next) => {
     // Responses hold private note text; no browser or proxy cache may keep them.

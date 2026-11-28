@@ -1,13 +1,14 @@
 import {
-  HEADLINE_START,
-  HEADLINE_STOP,
   type ChunkHit,
   type DocumentSummary,
   type SearchableKind,
   type SearchStore,
+  type Snippet,
   type StoredDocument,
 } from '../db/searchStore.js'
 import { OllamaError, type Embedder } from '../embed/ollama.js'
+
+export type { Snippet }
 
 /** Rows each of the FTS and vector CTEs keep before fusion (spec R4). */
 export const SEARCH_CANDIDATES = 50
@@ -27,12 +28,6 @@ export class SearchInputError extends Error {
 /** Several sources of the kind hold the path; the caller must name one. Maps to 409. */
 export class AmbiguousDocumentError extends Error {
   override name = 'AmbiguousDocumentError'
-}
-
-export interface Snippet {
-  text: string
-  /** `[start, end)` offsets into `text`, in UTF-16 code units. */
-  highlights: Array<[number, number]>
 }
 
 export interface SourceRef {
@@ -123,25 +118,6 @@ export interface SearchServiceOptions {
   maxDocumentChars?: number
 }
 
-/** Turns `ts_headline` output into plain text plus match offsets. */
-export function parseHeadline(raw: string): Snippet {
-  let text = ''
-  const highlights: Array<[number, number]> = []
-  let start: number | null = null
-  for (const ch of raw) {
-    if (ch === HEADLINE_START) {
-      start ??= text.length
-    } else if (ch === HEADLINE_STOP) {
-      if (start !== null && text.length > start) highlights.push([start, text.length])
-      start = null
-    } else {
-      text += ch
-    }
-  }
-  if (start !== null && text.length > start) highlights.push([start, text.length])
-  return { text, highlights }
-}
-
 /**
  * Cuts `text` to at most `max` characters: at the last line break in the
  * second half of the allowance, otherwise hard at the cap, never between the
@@ -181,7 +157,7 @@ const toResult = (hit: ChunkHit): SearchResult => ({
   score: hit.score,
   ftsRank: hit.ftsRank,
   vectorRank: hit.vectorRank,
-  snippet: parseHeadline(hit.headline),
+  snippet: hit.snippet,
   ...(hit.mtime === undefined ? {} : { mtime: hit.mtime }),
   ...(hit.updatedAt === undefined ? {} : { updatedAt: hit.updatedAt }),
 })

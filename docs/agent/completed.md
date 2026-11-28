@@ -103,3 +103,15 @@ What has shipped, one line per task. The detail of each change is in git history
 - T88 (2026-11-28): collapsible `Filters` panel (`Search nodes`, `Tags`, `Repos`, `Semantic neighbours`, `Orphans`, and `Existing files only` on Local graph) via `graphControls.ts` (`filterGraph`) and `GraphControlPanels.tsx` on `VaultGraphPanel.tsx` and `LocalGraphPanel.tsx`, plus client-side `Filter nodes` box on Topic Map in `MapScreen.tsx` (R20, R6).
 - T89 (2026-11-28): `2D | 3D` dimension switcher and 2D force-directed network layout (`force2d.ts`, `GraphCanvas2D.tsx`, `GraphCanvas.tsx`) on `VaultGraphPanel.tsx` and `LocalGraphPanel.tsx` sharing the filtered graph and list fallback (R20, R6).
 - T90 (2026-11-28): collapsible `Display` (`Arrows`, `Label density`, `Node size`, `Link thickness`, `Animate`) and `Forces` (`Center force`, `Repel force`, `Link force`, `Link distance`, `Reset defaults`) controls in `GraphControlPanels.tsx` driving `GraphCanvas2D` in real time on Whole Vault and Local Graph (R20, R6).
+- T83b (2026-11-28): manual check of server health and Oracle Cloud plan usage on the host verified by the owner (R21).
+- T67b (2026-11-28): manual check of Related on real data (R20). Verified 584 stored neighbour edges (`min` 0.637, `median` 0.781, `max` 1.000; 243 strong `>= 0.80`, 271 medium `0.70–0.799`, 60 weak `0.65–0.699`, 10 weak `0.60–0.649`); confirmed and recorded cosine similarity cut-off `0.6` in `spec.md`.
+- T15b (2026-11-29): all 32 personal GitHub repos mirrored and indexed on the host (R9, R2).
+- T61b (2026-11-29): Google Drive sync verified working on the host with real files (R19).
+- T76b (2026-11-29): manual check of Knowledge Map on PC, iPhone (including offline local graph), and Claude Code MCP `topic_map` verified fast and working on real data (R20).
+- T11b (2026-11-29): manual check of Document viewer on real repo data verified (R6, R4).
+- T17b (2026-11-29): manual check of repo search on real repos verified (`"which repo uses rag?"` returned `lumieric :SUMMARY` at #1 and `retrieval.py` at #5) (R9, R2).
+- T7b (2026-11-29): relevance check of hybrid search on the real vault passed 10/10 in the top 5 for the 10 owner-written test questions (R4).
+- T18b (2026-11-29): production stack verified on the Oracle host (`rclone` pulling `Dropbox root 'Apps/remotely-save/Cent'`, `scripts/db-dump.sh`, and `scripts/db-restore.sh --replace` with `app` stopped/restarted) (R10).
+- T23b (2026-11-29): skipped by owner (30-question `hit@5` baseline not needed right now) (R12).
+- T21b (2026-11-29): installed iPhone Home Screen app verified in airplane mode for offline search of cached notes and pinned repo files (R11, R6).
+- T22b (2026-11-29): real Google Keep Takeout zip import, search, and duplicate-free re-upload verified by the owner (R12, R6).

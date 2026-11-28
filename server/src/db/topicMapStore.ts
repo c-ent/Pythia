@@ -1,4 +1,5 @@
 import type { Pool } from 'pg'
+import { sourceFilterSql, toVectorLiteral, visibleSource, withHnswScan } from './pgHelpers.js'
 import type { SearchFilters, SearchableKind } from './searchStore.js'
 
 /** Lowest query-to-chunk cosine similarity for semantic topic map candidates. */
@@ -64,9 +65,7 @@ fts AS (
     CROSS JOIN q
     WHERE (c.fts @@ q.tsq OR d.title_fts @@ q.tsq) AND (d.title_fts || c.fts) @@ q.tsq AND c.embedding IS NOT NULL AND c.embed_model = $7
       AND ($10::float8 IS NULL OR (c.embedding <=> $2::vector) <= $10::float8)
-      AND s.enabled AND s.kind <> 'work' AND NOT d.excluded
-      AND ($3::text[] IS NULL OR s.kind = ANY ($3::text[]))
-      AND ($4::text IS NULL OR (s.kind = 'repo' AND s.name = $4::text))
+      AND ${sourceFilterSql(3, 4)}
     GROUP BY c.document_id
   ) docs
   ORDER BY best_score DESC, document_id
@@ -92,9 +91,7 @@ semantic_chunks AS (
         )
       )
     )
-    AND s.enabled AND s.kind <> 'work' AND NOT d.excluded
-    AND ($3::text[] IS NULL OR s.kind = ANY ($3::text[]))
-    AND ($4::text IS NULL OR (s.kind = 'repo' AND s.name = $4::text))
+    AND ${sourceFilterSql(3, 4)}
   ORDER BY c.embedding <=> $2::vector
   LIMIT $9
 ),
@@ -149,7 +146,7 @@ LEFT JOIN LATERAL (
     SELECT l.target AS t FROM links l WHERE l.document_id = d.id AND l.kind = 'tag'
   ) all_tags
 ) tag_list ON true
-WHERE s.enabled AND s.kind <> 'work' AND NOT d.excluded
+WHERE ${visibleSource()}
 ORDER BY f.score DESC, d.id`
 
 const toVector = (text: string): number[] => {
@@ -165,59 +162,45 @@ export function createPgTopicMapStore(pool: Pool): TopicMapStore {
       const strongMaxDistance = params.strongMaxDistance ?? 1 - TOPIC_MAP_STRONG_SIMILARITY
       const docMaxDistance = params.docMaxDistance ?? 1 - TOPIC_MAP_DOC_MIN_SIMILARITY
       const chunkScanLimit = Math.max(params.candidates * 4, 200)
-      const client = await pool.connect()
-      try {
-        await client.query('BEGIN')
-        try {
-          await client.query(
-            `SELECT set_config('hnsw.ef_search', $1, true), set_config('hnsw.iterative_scan', 'strict_order', true)`,
-            [String(Math.min(1000, Math.max(100, chunkScanLimit)))],
-          )
-          const { rows } = await client.query<{
-            document_id: string
-            kind: SearchableKind
-            source_name: string
-            path: string
-            title: string
-            allow_llm: boolean
-            embedding: string
-            heading_paths: string[]
-            text: string
-            tags: string[]
-          }>(TOPIC_MAP_SQL, [
-            params.ftsQuery ?? params.query,
-            `[${params.embedding.join(',')}]`,
-            params.filters.sources === undefined ? null : [...params.filters.sources],
-            params.filters.repo ?? null,
-            params.candidates,
-            params.limit,
-            params.embedModel,
-            maxDistance,
-            chunkScanLimit,
-            params.ftsMaxDistance ?? null,
-            strongMaxDistance,
-            docMaxDistance,
-          ])
-          await client.query('COMMIT')
-          return rows.map((row) => ({
-            documentId: Number(row.document_id),
-            sourceKind: row.kind,
-            sourceName: row.source_name,
-            path: row.path,
-            title: row.title,
-            allowLlm: row.allow_llm,
-            embedding: toVector(row.embedding),
-            headingPaths: row.heading_paths,
-            text: row.text,
-            tags: row.tags ?? [],
-          }))
-        } catch (error) {
-          await client.query('ROLLBACK')
-          throw error
-        }
-      } finally {
-        client.release()
-      }
+      return withHnswScan(pool, chunkScanLimit, async (client) => {
+        const { rows } = await client.query<{
+          document_id: string
+          kind: SearchableKind
+          source_name: string
+          path: string
+          title: string
+          allow_llm: boolean
+          embedding: string
+          heading_paths: string[]
+          text: string
+          tags: string[]
+        }>(TOPIC_MAP_SQL, [
+          params.ftsQuery ?? params.query,
+          toVectorLiteral(params.embedding),
+          params.filters.sources === undefined ? null : [...params.filters.sources],
+          params.filters.repo ?? null,
+          params.candidates,
+          params.limit,
+          params.embedModel,
+          maxDistance,
+          chunkScanLimit,
+          params.ftsMaxDistance ?? null,
+          strongMaxDistance,
+          docMaxDistance,
+        ])
+        return rows.map((row) => ({
+          documentId: Number(row.document_id),
+          sourceKind: row.kind,
+          sourceName: row.source_name,
+          path: row.path,
+          title: row.title,
+          allowLlm: row.allow_llm,
+          embedding: toVector(row.embedding),
+          headingPaths: row.heading_paths,
+          text: row.text,
+          tags: row.tags ?? [],
+        }))
+      })
     },
   }
 }

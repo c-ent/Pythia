@@ -12,9 +12,7 @@ import {
 
 /**
  * Interactive 2D/3D network graph for the Whole-Vault and Document Local
- * graphs (R20, T71, T89, T90): colour by source, size by links, click (tap)
- * opens a document, hover or tap shows a preview, zoom/pan/rotate, and
- * real-time Display & Forces controls.
+ * graphs (R20, T71, T89, T90).
  */
 export function GraphCanvas({
   graph,
@@ -37,8 +35,6 @@ export function GraphCanvas({
   forces?: GraphForceSettings
   layoutVersion?: number
 }) {
-  const atlas = useMemo(() => buildNetworkAtlasGraph(graph, center), [graph, center])
-
   if (dimension === '2d') {
     return (
       <GraphCanvas2D
@@ -54,6 +50,24 @@ export function GraphCanvas({
       />
     )
   }
+
+  return <GraphCanvas3D graph={graph} center={center} title={title} subtitle={subtitle} heightClassName={heightClassName} />
+}
+
+function GraphCanvas3D({
+  graph,
+  center,
+  title,
+  subtitle,
+  heightClassName,
+}: {
+  graph: Pick<GraphResponse, 'nodes' | 'edges'>
+  center?: string
+  title: string
+  subtitle?: string
+  heightClassName: string
+}) {
+  const atlas = useMemo(() => buildNetworkAtlasGraph(graph, center), [graph, center])
 
   return (
     <AtlasCanvas

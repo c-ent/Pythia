@@ -602,4 +602,102 @@ describe('Gemini access helpers', () => {
       documents: 15,
     })
   })
+
+  it('nests Drive subfolders and inherits parent folder access rules', () => {
+    const drive = buildDriveView(
+      {
+        totalDocuments: 3,
+        folders: [
+          { path: 'Anime', documents: 3 },
+          { path: 'Anime/[Complete]', documents: 3 },
+          { path: 'Anime/[Complete]/[Light Novels]', documents: 3 },
+          { path: 'Anime/[Complete]/[Light Novels]/Date A Live', documents: 2 },
+          { path: 'Anime/[Complete]/[Light Novels]/Rokka No Yuusha', documents: 1 },
+        ],
+        files: [
+          'Anime/[Complete]/[Light Novels]/Date A Live/Vol1.pdf',
+          'Anime/[Complete]/[Light Novels]/Date A Live/Vol2.pdf',
+          'Anime/[Complete]/[Light Novels]/Rokka No Yuusha/Vol1.pdf',
+        ],
+      },
+      [{ kind: 'gdrive', path: 'Anime/[Complete]/[Light Novels]', scope: 'all', documents: 3 }],
+      [],
+    )
+
+    expect(drive.folderTree).toHaveLength(1)
+    const anime = drive.folderTree[0]!
+    expect(anime.name).toBe('Anime')
+    expect(anime.folder.access).toBe('allowed')
+    const complete = anime.children[0]!
+    expect(complete.name).toBe('[Complete]')
+    expect(complete.folder.access).toBe('allowed')
+    const ln = complete.children[0]!
+    expect(ln.name).toBe('[Light Novels]')
+    expect(ln.folder.access).toBe('all')
+    expect(ln.children.map((c) => c.name)).toEqual(['Date A Live', 'Rokka No Yuusha'])
+    expect(ln.children[0]!.folder).toMatchObject({
+      access: 'all',
+      inheritedAccess: 'all',
+      coveredByParent: 'Anime/[Complete]/[Light Novels]',
+      locked: false,
+    })
+  })
+
+  it('inherits Excluded and No Gemini in the Drive UI and disables weaker options', async () => {
+    const server = stubServer({
+      catalog: {
+        ...EMPTY_EXCLUSION_CATALOG,
+        gdrive: {
+          totalDocuments: 2,
+          folders: [
+            { path: 'Anime', documents: 2 },
+            { path: 'Anime/Light Novels', documents: 2 },
+            { path: 'Anime/Light Novels/Date A Live', documents: 2 },
+          ],
+          files: [
+            'Anime/Light Novels/Date A Live/Vol1.pdf',
+            'Anime/Light Novels/Date A Live/Vol2.pdf',
+          ],
+        },
+      },
+    })
+    render(<GeminiSection />)
+    const card = rulesCard()
+    fireEvent.click(await within(card).findByRole('button', { name: /Google Drive/ }))
+
+    // Subfolder is nested under its parent and displays its short name.
+    const subList = within(card).getByRole('list', { name: 'Subfolders of Anime/Light Novels' })
+    expect(within(subList).getByText('Date A Live/')).toBeTruthy()
+    expect(checked('Drive: Anime/Light Novels/Date A Live/')).toBe('Allowed')
+
+    // Excluding the upper folder cascades Excluded to subfolders and disables weaker options.
+    fireEvent.click(within(access('Drive: Anime/Light Novels/')).getByRole('radio', { name: 'Excluded' }))
+    await waitFor(() => expect(checked('Drive: Anime/Light Novels/Date A Live/')).toBe('Excluded'))
+    expect(within(access('Drive: Anime/Light Novels/Date A Live/')).getByRole('radio', { name: 'Allowed' })).toHaveProperty(
+      'disabled',
+      true,
+    )
+    expect(within(access('Drive: Anime/Light Novels/Date A Live/')).getByRole('radio', { name: 'No Gemini' })).toHaveProperty(
+      'disabled',
+      true,
+    )
+
+    // Switching upper folder to No Gemini allows tightening subfolder to Excluded, and reverting removes subfolder rule.
+    fireEvent.click(within(access('Drive: Anime/Light Novels/')).getByRole('radio', { name: 'No Gemini' }))
+    await waitFor(() => expect(checked('Drive: Anime/Light Novels/Date A Live/')).toBe('No Gemini'))
+    expect(within(access('Drive: Anime/Light Novels/Date A Live/')).getByRole('radio', { name: 'Allowed' })).toHaveProperty(
+      'disabled',
+      true,
+    )
+    expect(within(access('Drive: Anime/Light Novels/Date A Live/')).getByRole('radio', { name: 'Excluded' })).toHaveProperty(
+      'disabled',
+      false,
+    )
+
+    fireEvent.click(within(access('Drive: Anime/Light Novels/Date A Live/')).getByRole('radio', { name: 'Excluded' }))
+    await waitFor(() => expect(checked('Drive: Anime/Light Novels/Date A Live/')).toBe('Excluded'))
+    fireEvent.click(within(access('Drive: Anime/Light Novels/Date A Live/')).getByRole('radio', { name: 'No Gemini' }))
+    await waitFor(() => expect(checked('Drive: Anime/Light Novels/Date A Live/')).toBe('No Gemini'))
+    expect(server.puts.at(-1)).toEqual([{ kind: 'gdrive', path: 'Anime/Light Novels' }])
+  })
 })

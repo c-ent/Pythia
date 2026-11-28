@@ -40,8 +40,18 @@ export const KIND_LABELS: Record<LlmExclusionKind, string> = {
 
 export type RuleAccess = 'allowed' | 'llm' | 'all'
 
+const ACCESS_RANK: Record<RuleAccess, number> = { allowed: 0, llm: 1, all: 2 }
+
 export const ruleAccess = (rule?: Pick<LlmExclusion, 'scope'>): RuleAccess =>
   rule === undefined ? 'allowed' : rule.scope === 'all' ? 'all' : 'llm'
+
+export function strictestAccess(a: RuleAccess, b: RuleAccess): RuleAccess {
+  return ACCESS_RANK[a] >= ACCESS_RANK[b] ? a : b
+}
+
+export function isAccessWeaker(candidate: RuleAccess, minimum: RuleAccess): boolean {
+  return ACCESS_RANK[candidate] < ACCESS_RANK[minimum]
+}
 
 const ruleKey = (rule: LlmExclusion): string => `${rule.kind}:${rule.path.toLowerCase()}`
 
@@ -106,22 +116,36 @@ function compareIgnoreCase(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0
 }
 
-function parentFolderCover(path: string, lockedFolders: readonly string[]): string | null {
+function parentCover(
+  path: string,
+  rules: readonly LlmExclusion[],
+  rootRule?: LlmExclusion,
+): { coveredByParent: string | null; inheritedAccess: RuleAccess } {
+  let coveredByParent: string | null = rootRule === undefined ? null : DRIVE_ROOT_RULE_PATH
+  let inheritedAccess: RuleAccess = ruleAccess(rootRule)
   const lower = path.toLowerCase()
-  for (const folder of lockedFolders) {
-    const prefix = `${folder.toLowerCase()}/`
-    if (lower.startsWith(prefix)) return folder
+  for (const rule of rules) {
+    const prefix = `${rule.path.toLowerCase()}/`
+    if (!lower.startsWith(prefix)) continue
+    const access = ruleAccess(rule)
+    const rankDiff = ACCESS_RANK[access] - ACCESS_RANK[inheritedAccess]
+    if (
+      coveredByParent === null ||
+      rankDiff > 0 ||
+      (rankDiff === 0 && coveredByParent !== DRIVE_ROOT_RULE_PATH && rule.path.length > coveredByParent.length)
+    ) {
+      coveredByParent = rule.path
+      inheritedAccess = access
+    }
   }
-  return null
+  return { coveredByParent, inheritedAccess }
 }
 
-function parentTagCover(tag: string, lockedTags: readonly string[]): string | null {
-  const lower = tag.toLowerCase()
-  for (const locked of lockedTags) {
-    const prefix = `${locked.toLowerCase()}/`
-    if (lower.startsWith(prefix)) return locked
-  }
-  return null
+function parentTagCover(
+  tag: string,
+  rules: readonly LlmExclusion[],
+): { coveredByParent: string | null; inheritedAccess: RuleAccess } {
+  return parentCover(tag, rules)
 }
 
 function directDirname(filePath: string): string {
@@ -139,6 +163,7 @@ export interface ObsidianFolderRow {
   documents: number | null
   locked: boolean
   access: RuleAccess
+  inheritedAccess: RuleAccess
   coveredByParent: string | null
   inCatalog: boolean
 }
@@ -148,6 +173,7 @@ export interface ObsidianTagRow {
   documents: number | null
   locked: boolean
   access: RuleAccess
+  inheritedAccess: RuleAccess
   coveredByParent: string | null
   inCatalog: boolean
 }
@@ -156,6 +182,7 @@ export interface ObsidianNoteRow {
   path: string
   locked: boolean
   access: RuleAccess
+  inheritedAccess: RuleAccess
   coveredByFolder: string | null
   inCatalog: boolean
 }
@@ -176,18 +203,17 @@ export function buildObsidianView(
   const lockedTags = list.filter((r) => r.kind === 'tag')
   const lockedNotes = list.filter((r) => r.kind === 'note')
 
-  const lockedFolderPaths = lockedFolders.map((r) => r.path)
-  const lockedTagNames = lockedTags.map((r) => r.path)
-
   const folderMap = new Map<string, ObsidianFolderRow>()
   for (const item of obsidian.folders) {
     const rule = lockedFolders.find((r) => r.path.toLowerCase() === item.path.toLowerCase())
+    const cover = parentCover(item.path, lockedFolders)
     folderMap.set(item.path.toLowerCase(), {
       path: rule?.path ?? item.path,
       documents: rule?.documents ?? item.documents,
       locked: rule !== undefined,
-      access: ruleAccess(rule),
-      coveredByParent: parentFolderCover(item.path, lockedFolderPaths),
+      access: strictestAccess(ruleAccess(rule), cover.inheritedAccess),
+      inheritedAccess: cover.inheritedAccess,
+      coveredByParent: cover.coveredByParent,
       inCatalog: true,
     })
   }
@@ -195,12 +221,14 @@ export function buildObsidianView(
     const key = rule.path.toLowerCase()
     const active = lockedFolders.find((r) => r.path.toLowerCase() === key)
     if (!folderMap.has(key)) {
+      const cover = parentCover(rule.path, lockedFolders)
       folderMap.set(key, {
         path: rule.path,
         documents: rule.documents,
         locked: active !== undefined,
-        access: ruleAccess(active),
-        coveredByParent: parentFolderCover(rule.path, lockedFolderPaths),
+        access: strictestAccess(ruleAccess(active), cover.inheritedAccess),
+        inheritedAccess: cover.inheritedAccess,
+        coveredByParent: cover.coveredByParent,
         inCatalog: false,
       })
     }
@@ -209,12 +237,14 @@ export function buildObsidianView(
   const tagMap = new Map<string, ObsidianTagRow>()
   for (const item of obsidian.tags) {
     const rule = lockedTags.find((r) => r.path.toLowerCase() === item.tag.toLowerCase())
+    const cover = parentTagCover(item.tag, lockedTags)
     tagMap.set(item.tag.toLowerCase(), {
       tag: rule?.path ?? item.tag,
       documents: rule?.documents ?? item.documents,
       locked: rule !== undefined,
-      access: ruleAccess(rule),
-      coveredByParent: parentTagCover(item.tag, lockedTagNames),
+      access: strictestAccess(ruleAccess(rule), cover.inheritedAccess),
+      inheritedAccess: cover.inheritedAccess,
+      coveredByParent: cover.coveredByParent,
       inCatalog: true,
     })
   }
@@ -222,12 +252,14 @@ export function buildObsidianView(
     const key = rule.path.toLowerCase()
     const active = lockedTags.find((r) => r.path.toLowerCase() === key)
     if (!tagMap.has(key)) {
+      const cover = parentTagCover(rule.path, lockedTags)
       tagMap.set(key, {
         tag: rule.path,
         documents: rule.documents,
         locked: active !== undefined,
-        access: ruleAccess(active),
-        coveredByParent: parentTagCover(rule.path, lockedTagNames),
+        access: strictestAccess(ruleAccess(active), cover.inheritedAccess),
+        inheritedAccess: cover.inheritedAccess,
+        coveredByParent: cover.coveredByParent,
         inCatalog: false,
       })
     }
@@ -236,11 +268,13 @@ export function buildObsidianView(
   const noteMap = new Map<string, ObsidianNoteRow>()
   for (const path of obsidian.notes) {
     const rule = lockedNotes.find((r) => r.path.toLowerCase() === path.toLowerCase())
+    const cover = parentCover(path, lockedFolders)
     noteMap.set(path.toLowerCase(), {
       path: rule?.path ?? path,
       locked: rule !== undefined,
-      access: ruleAccess(rule),
-      coveredByFolder: parentFolderCover(path, lockedFolderPaths),
+      access: strictestAccess(ruleAccess(rule), cover.inheritedAccess),
+      inheritedAccess: cover.inheritedAccess,
+      coveredByFolder: cover.coveredByParent,
       inCatalog: true,
     })
   }
@@ -248,11 +282,13 @@ export function buildObsidianView(
     const key = rule.path.toLowerCase()
     const active = lockedNotes.find((r) => r.path.toLowerCase() === key)
     if (!noteMap.has(key)) {
+      const cover = parentCover(rule.path, lockedFolders)
       noteMap.set(key, {
         path: rule.path,
         locked: active !== undefined,
-        access: ruleAccess(active),
-        coveredByFolder: parentFolderCover(rule.path, lockedFolderPaths),
+        access: strictestAccess(ruleAccess(active), cover.inheritedAccess),
+        inheritedAccess: cover.inheritedAccess,
+        coveredByFolder: cover.coveredByParent,
         inCatalog: false,
       })
     }
@@ -313,8 +349,15 @@ export interface DriveFolderRow {
   files: { path: string; name: string }[]
   locked: boolean
   access: RuleAccess
+  inheritedAccess: RuleAccess
   coveredByParent: string | null
   inCatalog: boolean
+}
+
+export interface DriveFolderNode {
+  folder: DriveFolderRow
+  name: string
+  children: DriveFolderNode[]
 }
 
 export interface DriveCatalogView {
@@ -323,7 +366,34 @@ export interface DriveCatalogView {
   allDocuments: number
   lockedFolderCount: number
   folders: DriveFolderRow[]
+  folderTree: DriveFolderNode[]
   rootFiles: { path: string; name: string }[]
+}
+
+/** Nests sorted Drive folder rows under their nearest present ancestor folder. */
+export function buildDriveFolderTree(folders: readonly DriveFolderRow[]): DriveFolderNode[] {
+  const roots: DriveFolderNode[] = []
+  const byPath = new Map<string, DriveFolderNode>()
+  for (const folder of folders) {
+    const node: DriveFolderNode = { folder, name: folder.path, children: [] }
+    byPath.set(folder.path.toLowerCase(), node)
+    const parts = folder.path.split('/')
+    let parent: DriveFolderNode | undefined
+    for (let i = parts.length - 1; i >= 1; i--) {
+      const candidate = byPath.get(parts.slice(0, i).join('/').toLowerCase())
+      if (candidate !== undefined) {
+        parent = candidate
+        break
+      }
+    }
+    if (parent !== undefined) {
+      node.name = folder.path.slice(parent.folder.path.length + 1)
+      parent.children.push(node)
+    } else {
+      roots.push(node)
+    }
+  }
+  return roots
 }
 
 export function buildDriveView(
@@ -336,7 +406,6 @@ export function buildDriveView(
   const allLocked = rootRule !== undefined
   const allAccess = ruleAccess(rootRule)
   const folderRules = driveRules.filter((r) => r.path !== DRIVE_ROOT_RULE_PATH)
-  const lockedFolderPaths = folderRules.map((r) => r.path)
 
   const filesByDir = new Map<string, { path: string; name: string }[]>()
   for (const filePath of gdrive.files) {
@@ -350,13 +419,15 @@ export function buildDriveView(
   for (const item of gdrive.folders) {
     const key = item.path.toLowerCase()
     const rule = folderRules.find((r) => r.path.toLowerCase() === key)
+    const cover = parentCover(item.path, folderRules, rootRule)
     folderMap.set(key, {
       path: rule?.path ?? item.path,
       documents: rule?.documents ?? item.documents,
       files: filesByDir.get(key) ?? [],
       locked: rule !== undefined,
-      access: ruleAccess(rule),
-      coveredByParent: allLocked ? DRIVE_ROOT_RULE_PATH : parentFolderCover(item.path, lockedFolderPaths),
+      access: strictestAccess(ruleAccess(rule), cover.inheritedAccess),
+      inheritedAccess: cover.inheritedAccess,
+      coveredByParent: cover.coveredByParent,
       inCatalog: true,
     })
   }
@@ -367,24 +438,28 @@ export function buildDriveView(
     const key = rule.path.toLowerCase()
     const active = folderRules.find((r) => r.path.toLowerCase() === key)
     if (!folderMap.has(key)) {
+      const cover = parentCover(rule.path, folderRules, rootRule)
       folderMap.set(key, {
         path: rule.path,
         documents: rule.documents,
         files: filesByDir.get(key) ?? [],
         locked: active !== undefined,
-        access: ruleAccess(active),
-        coveredByParent: allLocked ? DRIVE_ROOT_RULE_PATH : parentFolderCover(rule.path, lockedFolderPaths),
+        access: strictestAccess(ruleAccess(active), cover.inheritedAccess),
+        inheritedAccess: cover.inheritedAccess,
+        coveredByParent: cover.coveredByParent,
         inCatalog: false,
       })
     }
   }
 
+  const folders = [...folderMap.values()].sort((a, b) => compareIgnoreCase(a.path, b.path))
   return {
     allLocked,
     allAccess,
     allDocuments: rootRule?.documents ?? gdrive.totalDocuments,
     lockedFolderCount: folderRules.length,
-    folders: [...folderMap.values()].sort((a, b) => compareIgnoreCase(a.path, b.path)),
+    folders,
+    folderTree: buildDriveFolderTree(folders),
     rootFiles: filesByDir.get('') ?? [],
   }
 }

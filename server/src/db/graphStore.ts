@@ -2,6 +2,7 @@ import type { Pool } from 'pg'
 import type { LinkKind } from '../ingest/links.js'
 import { createPgBacklinkStore, type SourceNote } from './linkStore.js'
 import { NEIGHBOUR_CUTOFF } from './neighbourStore.js'
+import { visibleSource } from './pgHelpers.js'
 import type { SearchableKind, SearchFilters } from './searchStore.js'
 
 /**
@@ -90,7 +91,7 @@ export interface GraphStore {
 
 // Uses $1 (kinds or null), $2 (repo name or null) and $3 (the always-shown
 // document or null). Same visibility and filters as hybrid search.
-const visible = (s: string, d: string): string => `${s}.enabled AND ${s}.kind <> 'work' AND NOT ${d}.excluded
+const visible = (s: string, d: string): string => `${visibleSource(s, d)}
   AND (${d}.id = $3::bigint OR (
     ($1::text[] IS NULL OR ${s}.kind = ANY ($1::text[]))
     AND ($2::text IS NULL OR (${s}.kind = 'repo' AND ${s}.name = $2::text))))`

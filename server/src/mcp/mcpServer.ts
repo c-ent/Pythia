@@ -109,15 +109,24 @@ function withholdTopicLabels(response: TopicMapResponse): TopicMapResponse {
   return { ...response, branches: visit(response.branches, 'Topic') }
 }
 
+export interface McpRouterDeps {
+  search: SearchService
+  log?: (line: string) => void
+  repos?: RepoService
+  related?: RelatedService
+  backlinks?: BacklinkService
+  topicMap?: TopicMapService
+}
+
 /** One MCP server with Pythia's tools. Stateless: a new one serves each request. */
-export function buildMcpServer(
-  search: SearchService,
-  log: (line: string) => void = console.error,
-  repos?: RepoService,
-  related?: RelatedService,
-  backlinks?: BacklinkService,
-  topicMap?: TopicMapService,
-): McpServer {
+export function buildMcpServer({
+  search,
+  log = console.error,
+  repos,
+  related,
+  backlinks,
+  topicMap,
+}: McpRouterDeps): McpServer {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION })
   const readOnly = { readOnlyHint: true, openWorldHint: false } as const
 
@@ -283,14 +292,7 @@ export function buildMcpServer(
  * There are no sessions, so `GET` (server stream) and `DELETE` answer 405.
  * The bearer check sits in front of this router (`createApp`).
  */
-export function createMcpRouter(
-  search: SearchService,
-  log: (line: string) => void = console.error,
-  repos?: RepoService,
-  related?: RelatedService,
-  backlinks?: BacklinkService,
-  topicMap?: TopicMapService,
-): Router {
+export function createMcpRouter(deps: McpRouterDeps): Router {
   const router = express.Router()
   router.use((_req, res, next) => {
     res.set('cache-control', 'no-store')
@@ -298,7 +300,7 @@ export function createMcpRouter(
   })
 
   router.post('/', express.json({ limit: '64kb' }), async (req, res) => {
-    const server = buildMcpServer(search, log, repos, related, backlinks, topicMap)
+    const server = buildMcpServer(deps)
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
     res.on('close', () => {
       void transport.close()

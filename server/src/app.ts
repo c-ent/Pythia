@@ -81,28 +81,21 @@ export function createApp(deps: AppDeps): Express {
   if (deps.recent !== undefined) app.use('/api', createRecentQueriesRouter(deps.recent))
   if (deps.status !== undefined) app.use('/api', createStatusRouter(deps.status.service, deps.status.sync, deps.status.health))
   if (deps.hostMetrics !== undefined) app.use('/api', createServerStatusRouter(deps.hostMetrics))
-  app.use(
-    '/api',
-    createApiRouter(
-      deps.search,
-      deps.ask,
-      deps.sync,
-      deps.repos,
-      deps.imports,
-      deps.recent,
-      deps.related,
-      deps.backlinks,
-      deps.graph,
-      deps.topicMap,
-    ),
-  )
+  app.use('/api', createApiRouter(deps))
   // The MCP server (R7) is tailnet only (T48): Funnel traffic gets 403 before the
   // token check. It has its own bearer token, separate from login (rotated under Settings, T37).
   app.use(
     '/mcp',
     requireTailnet(),
     requireBearer(deps.auth.mcp),
-    createMcpRouter(deps.search, console.error, deps.repos, deps.related, deps.backlinks, deps.topicMap),
+    createMcpRouter({
+      search: deps.search,
+      log: console.error,
+      repos: deps.repos,
+      related: deps.related,
+      backlinks: deps.backlinks,
+      topicMap: deps.topicMap,
+    }),
   )
   // The app shell is public: it has to load before the login screen can show.
   // It never answers /api, /mcp or /healthz paths (see routes/static.ts).
