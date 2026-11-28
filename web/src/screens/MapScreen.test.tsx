@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MapScreen } from './MapScreen'
 
 vi.mock('../map/GraphCanvas', () => ({ GraphCanvas: ({ graph }: { graph: { nodes: unknown[] } }) => <div data-testid="vault-canvas">{graph.nodes.length} nodes</div> }))
@@ -33,6 +33,7 @@ function stubFetch() {
 
 describe('MapScreen', () => {
   beforeEach(() => setNarrow(false))
+  afterEach(() => vi.restoreAllMocks())
 
   it('sends topic, selected source filters and repository filter to the REST API', async () => {
     const calls = stubFetch()
@@ -89,5 +90,31 @@ describe('MapScreen', () => {
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
     fireEvent.click(screen.getByRole('button', { name: 'Whole vault' }))
     expect(screen.getByText('The whole-vault graph needs the server.')).toBeTruthy()
+  })
+
+  it('shows the 3D topic atlas with zoom controls on wide screens and lets the user switch to the outline list', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json(200, {
+      topic: 'job',
+      branches: [
+        {
+          label: 'just · not',
+          documents: [{ documentId: 1, title: 'Job Search Strategy', path: 'Job Search Strategy.md', source: { kind: 'obsidian', name: 'vault' }, allowLlm: true }],
+        },
+      ],
+    })))
+    setNarrow(false)
+    render(<MapScreen />)
+    fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'job' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Build map' }))
+
+    await screen.findByRole('img', { name: /3D topic map for job/ })
+    expect(screen.getByRole('button', { name: 'Zoom in' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Zoom out' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Reset view' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show list' }))
+    expect(screen.getByRole('list', { name: 'Topic map outline' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Show map' }))
+    expect(screen.getByRole('img', { name: /3D topic map for job/ })).toBeTruthy()
   })
 })

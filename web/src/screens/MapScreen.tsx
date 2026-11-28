@@ -1,5 +1,5 @@
 import { Copy, LoaderCircle, Map, RotateCw, TriangleAlert } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { buildTopicMap, type TopicMapResponse } from '../api/topicMap'
 import type { SourceKind } from '../api/search'
@@ -7,10 +7,13 @@ import { useClipboard } from '../hooks/useClipboard'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useOnline } from '../hooks/useOnline'
 import { safeTopicBranches, topicMapDocuments, topicMapOutline, type VisibleTopicBranch } from '../map/topicMapModel'
-import { documentPath, followLink, navigate } from '../router'
+import { NODE_TONES, TONE_LABELS, TONE_SWATCH } from '../map/graphModel'
+import { documentPath, followLink } from '../router'
 import { SOURCE_LABELS } from '../search/format'
 import { SourceChips } from '../search/SourceChips'
 import { VaultGraphPanel } from '../map/VaultGraphPanel'
+
+const TopicAtlas = lazy(() => import('../map/TopicAtlas').then((module) => ({ default: module.TopicAtlas })))
 
 type LoadState = { status: 'idle' } | { status: 'loading' } | { status: 'done'; response: TopicMapResponse } | { status: 'error'; message: string }
 
@@ -110,10 +113,19 @@ export function MapScreen() {
             <div><p className="text-xs font-medium uppercase tracking-wide text-muted">Topic map</p><h2 className="mt-1 text-xl font-semibold">{state.response.topic}</h2><p className="mt-1 text-sm text-muted">{documents.length} documents · {branches.length} branches</p></div>
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={() => void copyOutline()} className={BUTTON}><Copy aria-hidden="true" className="size-4" />{copied === 'copied' ? 'Copied' : copied === 'failed' ? 'Copy failed' : 'Copy as Markdown'}</button>
-              {narrow ? <button type="button" aria-pressed={listView} onClick={() => setViewOverride({ narrow, listView: !listView })} className={BUTTON}>{listView ? 'Show map' : 'Show list'}</button> : null}
+              {documents.length > 0 ? <button type="button" aria-pressed={listView} onClick={() => setViewOverride({ narrow, listView: !listView })} className={BUTTON}>{listView ? 'Show map' : 'Show list'}</button> : null}
             </div>
           </header>
-          {documents.length === 0 ? <p className="py-10 text-center text-sm text-muted">No matching map documents were found. Try another topic or filter.</p> : listView ? <TopicList branches={branches} onBranch={chooseBranch} /> : <RadialMap topic={state.response.topic} branches={branches} onBranch={chooseBranch} />}
+          {documents.length === 0 ? <p className="py-10 text-center text-sm text-muted">No matching map documents were found. Try another topic or filter.</p> : listView ? <TopicList branches={branches} onBranch={chooseBranch} /> : <>
+            <Suspense fallback={<p role="status" className="flex h-104 items-center justify-center gap-2 text-sm text-muted md:h-136"><LoaderCircle aria-hidden="true" className="size-4 animate-spin" />Drawing the atlas…</p>}>
+              <TopicAtlas topic={state.response.topic} branches={branches} onBranch={chooseBranch} />
+            </Suspense>
+            <ul aria-label="Topic map colours" className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+              {NODE_TONES.filter((tone) => documents.some((doc) => doc.source.kind === tone)).map((tone) => (
+                <li key={tone} className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`size-2.5 rounded-full ${TONE_SWATCH[tone]}`} />{TONE_LABELS[tone]}</li>
+              ))}
+            </ul>
+          </>}
         </section>
       ) : null}
       </>}
@@ -136,34 +148,4 @@ function BranchList({ branch, depth, onBranch }: { branch: VisibleTopicBranch; d
 function DocumentLink({ document }: { document: { documentId: number; title: string; path: string; source: { kind: SourceKind }; allowLlm: boolean } }) {
   const path = documentPath(document.documentId)
   return <a href={path} onClick={(event) => followLink(event, path)} className="flex min-h-11 items-center justify-between gap-3 rounded-control px-2 text-sm hover:bg-raised"><span className="min-w-0 truncate">{document.title}</span><span className="shrink-0 text-xs text-muted">{SOURCE_LABELS[document.source.kind]}{document.allowLlm ? '' : ' · Local only'}</span></a>
-}
-
-function RadialMap({ topic, branches, onBranch }: { topic: string; branches: VisibleTopicBranch[]; onBranch: (label: string) => void }) {
-  const width = 760, height = 540, center = { x: width / 2, y: height / 2 }
-  const branchRadius = 155, leafRadius = 240
-  const displayedBranches = branches.flatMap((branch) => branch.branches?.length ? branch.branches : [branch])
-  const leaves = displayedBranches.flatMap((branch) => branch.documents.map((document) => ({ branch, document })))
-  const points = displayedBranches.map((branch, index) => {
-    const angle = -Math.PI / 2 + (2 * Math.PI * index) / displayedBranches.length
-    return { branch, x: center.x + branchRadius * Math.cos(angle), y: center.y + branchRadius * Math.sin(angle), angle }
-  })
-  const leafPoints = leaves.map((leaf, index) => {
-    const point = points.find((candidate) => candidate.branch === leaf.branch) ?? points[0]!
-    const siblings = leaves.filter((candidate) => candidate.branch === leaf.branch)
-    const siblingIndex = siblings.indexOf(leaf)
-    const spread = Math.min(0.78, siblings.length * 0.12)
-    const angle = point.angle + (siblings.length <= 1 ? 0 : -spread / 2 + (spread * siblingIndex) / (siblings.length - 1))
-    return { ...leaf, x: center.x + leafRadius * Math.cos(angle), y: center.y + leafRadius * Math.sin(angle), index }
-  })
-  return <div className="mt-4 overflow-x-auto" role="region" aria-label="Radial topic map" tabIndex={0}><svg viewBox={`0 0 ${width} ${height}`} className="mx-auto block h-auto min-w-[38rem] max-w-full" role="img" aria-label={`Radial map with ${branches.length} branches and ${leaves.length} documents`}>
-    {points.map((point) => <line key={`center-${point.branch.label}`} x1={center.x} y1={center.y} x2={point.x} y2={point.y} stroke="var(--color-line)" strokeWidth="2" />)}
-    {leafPoints.map((point) => <line key={`leaf-${point.document.documentId}`} x1={point.x - (point.x - center.x) * 0.18} y1={point.y - (point.y - center.y) * 0.18} x2={point.x} y2={point.y} stroke="var(--color-line)" strokeWidth="1" />)}
-    <circle cx={center.x} cy={center.y} r="58" fill="var(--color-strong)" />
-    <foreignObject x={center.x - 52} y={center.y - 32} width="104" height="64"><div className="flex h-full items-center justify-center overflow-hidden px-2 text-center text-sm font-semibold text-on-strong" title={topic}>{topic}</div></foreignObject>
-    {points.map((point) => <g key={point.branch.label} role="button" tabIndex={0} aria-label={`Explore branch ${point.branch.label}`} onClick={() => onBranch(point.branch.label)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onBranch(point.branch.label) } }} className="cursor-pointer"><circle cx={point.x} cy={point.y} r="49" fill="var(--color-raised)" stroke="var(--color-accent-ink)" strokeWidth="2"/><foreignObject x={point.x - 43} y={point.y - 32} width="86" height="64"><div className="flex h-full items-center justify-center overflow-hidden text-center text-xs font-semibold text-ink" title={point.branch.label}>{point.branch.label}</div></foreignObject></g>)}
-    {leafPoints.map((point) => {
-      const path = documentPath(point.document.documentId)
-      return <g key={point.document.documentId} role="link" tabIndex={0} aria-label={`Open ${point.document.title}`} onClick={() => navigate(path)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); navigate(path) } }} className="cursor-pointer"><circle cx={point.x} cy={point.y} r="7" fill={`var(--color-map-${point.document.source.kind})`} /><foreignObject x={point.x - 56} y={point.y + 8} width="112" height="44"><div className="overflow-hidden text-center text-xs text-ink" title={point.document.title}>{point.document.title}</div></foreignObject></g>
-    })}
-  </svg></div>
 }
