@@ -8,11 +8,14 @@ import {
   documentIdFromPath,
   redirect,
   redirectFor,
+  repoNameFromPath,
   routeFromPath,
   settingsSectionFromPath,
+  sourceKindFromPath,
   usePathname,
 } from '../router'
 import { AskScreen } from '../screens/AskScreen'
+import { BrowseFilesScreen } from '../screens/BrowseFilesScreen'
 import { DocumentScreen } from '../screens/DocumentScreen'
 import { ReposScreen } from '../screens/ReposScreen'
 import { SearchScreen } from '../screens/SearchScreen'
@@ -46,6 +49,8 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
   const route = routeFromPath(pathname)
   // `/doc/<id>` opens a document over Search, which stays the active tab.
   const documentId = documentIdFromPath(pathname)
+  const repoName = repoNameFromPath(pathname)
+  const browseSource = sourceKindFromPath(pathname)
   const section = settingsSectionFromPath(pathname)
   const online = useOnline()
   const devices = useDeviceCount(online)
@@ -77,9 +82,11 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
   useEffect(() => {
     // The document screen sets its own title once the document loads.
     if (documentId !== null) document.title = 'Document · Pythia'
+    else if (repoName !== null) document.title = `${repoName} · Repos · Pythia`
+    else if (browseSource !== null) document.title = `${NAV.find((item) => item.route === 'sources')?.label ?? 'Sources'} · Pythia`
     else if (route === 'settings') document.title = `${SETTINGS_SECTION_LABELS[section]} · Settings · Pythia`
     else document.title = `${NAV.find((item) => item.route === route)?.label ?? 'Search'} · Pythia`
-  }, [route, section, documentId])
+  }, [route, section, documentId, repoName, browseSource])
 
   // Ctrl K / ⌘ K starts a new search from anywhere, also from inside a field.
   useEffect(() => {
@@ -99,7 +106,8 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
     requestAnimationFrame(() => document.getElementById(next ? 'sidebar-expand' : 'sidebar-collapse')?.focus())
   }
 
-  const current: CurrentFor = (item) => (item !== route ? undefined : documentId === null ? 'page' : 'true')
+  const subpageOpen = documentId !== null || repoName !== null || browseSource !== null
+  const current: CurrentFor = (item) => (item !== route ? undefined : !subpageOpen ? 'page' : 'true')
 
   let screen
   // Search results get the full panel width for the preview pane (xl up);
@@ -112,7 +120,12 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
       screen = <AskScreen />
       break
     case 'repos':
-      screen = <ReposScreen />
+      if (repoName !== null) {
+        width = 'max-w-5xl'
+        screen = <BrowseFilesScreen key={`repo:${repoName}`} source="repo" repoName={repoName} />
+      } else {
+        screen = <ReposScreen />
+      }
       break
     case 'pinned':
       // Pinned repos beside the storage card from lg.
@@ -120,13 +133,18 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
       screen = <PinnedScreen />
       break
     case 'map':
-      width = 'max-w-6xl'
+      width = 'max-w-none'
       screen = <MapScreen />
       break
     case 'sources':
-      // The sources list and the activity side by side from lg.
-      width = 'max-w-6xl'
-      screen = <SourcesScreen />
+      if (browseSource !== null) {
+        width = 'max-w-5xl'
+        screen = <BrowseFilesScreen key={`source:${browseSource}`} source={browseSource} />
+      } else {
+        // The sources list and the activity side by side from lg.
+        width = 'max-w-6xl'
+        screen = <SourcesScreen />
+      }
       break
     case 'settings':
       screen = <SettingsScreen key={section} section={section} onSignOut={onSignOut} />
@@ -176,6 +194,8 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
           reachable={server.reachable}
           health={server.status?.health}
           brokenChecks={brokenChecks}
+          gemini={gemini}
+          checkedAt={server.status?.checkedAt}
         />
         <TopBar
           online={online}
@@ -184,6 +204,7 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
           brokenChecks={brokenChecks}
           devices={devices}
           gemini={gemini}
+          checkedAt={server.status?.checkedAt}
         />
         <main
           id="main"

@@ -7,7 +7,8 @@ import { NAV, TAB_BAR } from './nav'
 import { shortcutLabel, startNewSearch } from './newSearch'
 import { OfflineCard, OfflineRailButton } from './OfflineCard'
 import { RecentQueries } from './RecentQueries'
-import { Avatar, HealthDot, OnlinePill } from './TopBar'
+import { Avatar } from './TopBar'
+import { StatusMenu } from './StatusMenu'
 import type { ServerHealth } from '../api/status'
 
 /** `aria-current` for a nav item: "page" on its screen, "true" while a document is open over it. */
@@ -196,17 +197,21 @@ export function Rail({
   )
 }
 
-/** Phones (below md): logo, Online pill and avatar. */
+/** Phones (below md): logo, unified status menu and avatar. */
 export function MobileTopBar({
   online,
   reachable,
   health,
   brokenChecks,
+  gemini,
+  checkedAt,
 }: {
   online: boolean
   reachable?: boolean
   health?: ServerHealth
   brokenChecks?: readonly string[]
+  gemini?: boolean
+  checkedAt?: string
 }) {
   return (
     <header
@@ -218,8 +223,14 @@ export function MobileTopBar({
         <span className="text-xl font-semibold tracking-tight">Pythia</span>
       </AppLink>
       <div className="flex items-center gap-2">
-        <HealthDot online={online} reachable={reachable} health={health} brokenChecks={brokenChecks} />
-        <OnlinePill online={online} reachable={reachable} />
+        <StatusMenu
+          online={online}
+          reachable={reachable}
+          health={health}
+          brokenChecks={brokenChecks}
+          gemini={gemini}
+          checkedAt={checkedAt}
+        />
         <Avatar />
       </div>
     </header>

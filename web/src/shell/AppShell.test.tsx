@@ -166,6 +166,28 @@ describe('AppShell', () => {
     expect(screen.queryByRole('heading', { level: 1, name: 'Pythia notes' })).toBeNull()
   })
 
+  it('opens a repo file browser at /repos/<name> and a source file browser at /sources/<kind>', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url === '/api/files?source=repo&name=kitchen-app') return json(200, { documents: [], total: 0 })
+        if (url === '/api/files?source=obsidian') return json(200, { documents: [], total: 0 })
+        if (url === '/api/status') return json(200, statusPayload())
+        return json(404, {})
+      }),
+    )
+    window.history.replaceState(null, '', '/repos/kitchen-app')
+    const { unmount } = render(<AppShell onSignOut={() => {}} />)
+    expect(await screen.findByRole('heading', { level: 1, name: 'kitchen-app' })).toBeTruthy()
+    expect(nav().getByRole('link', { name: 'Repos' }).getAttribute('aria-current')).toBe('true')
+    unmount()
+
+    window.history.replaceState(null, '', '/sources/obsidian')
+    render(<AppShell onSignOut={() => {}} />)
+    expect(await screen.findByRole('heading', { level: 1, name: 'Obsidian vault' })).toBeTruthy()
+    expect(nav().getByRole('link', { name: 'Sources' }).getAttribute('aria-current')).toBe('true')
+  })
+
   it('signs out from Profile', () => {
     window.history.replaceState(null, '', '/settings/profile')
     const onSignOut = vi.fn()
@@ -216,7 +238,7 @@ describe('AppShell', () => {
     online.mockRestore()
   })
 
-  it('shows the top bar red dot naming broken checks, opens Settings › Server, and hides it offline', async () => {
+  it('shows one status button naming broken checks, opens a details popover, and switches to Offline offline', async () => {
     const fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === '/api/status') return json(200, statusPayload('broken'))
@@ -226,6 +248,7 @@ describe('AppShell', () => {
           serverDetailsPayload({
             postgres: { state: 'ok', reason: null },
             ollama: { state: 'broken', reason: 'TimeoutError' },
+            gemini: { state: 'ok', reason: null },
             vault: { state: 'broken', reason: 'EACCES' },
           }),
         )
@@ -237,13 +260,13 @@ describe('AppShell', () => {
     render(<AppShell onSignOut={() => {}} />)
 
     expect(
-      await within(layout('topbar')).findByRole('link', {
-        name: 'Server health broken: Ollama, Vault folder',
+      await within(layout('topbar')).findByRole('button', {
+        name: 'Server issue: Ollama, Vault folder',
       }),
     ).toBeTruthy()
     expect(
-      within(layout('mobile-top')).getByRole('link', {
-        name: 'Server health broken: Ollama, Vault folder',
+      within(layout('mobile-top')).getByRole('button', {
+        name: 'Server issue: Ollama, Vault folder',
       }),
     ).toBeTruthy()
 
@@ -251,33 +274,41 @@ describe('AppShell', () => {
     act(() => {
       window.dispatchEvent(new Event('offline'))
     })
-    expect(screen.queryByRole('link', { name: /Server health broken/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Server issue/ })).toBeNull()
+    expect(within(layout('topbar')).getByRole('button', { name: 'Status: Offline' })).toBeTruthy()
 
     online.mockReturnValue(true)
     act(() => {
       window.dispatchEvent(new Event('online'))
     })
-    const backDot = await within(layout('topbar')).findByRole('link', {
-      name: 'Server health broken: Ollama, Vault folder',
+    const backButton = await within(layout('topbar')).findByRole('button', {
+      name: 'Server issue: Ollama, Vault folder',
     })
-    expect(backDot).toBeTruthy()
-    fireEvent.click(backDot)
+    expect(backButton).toBeTruthy()
+    fireEvent.click(backButton)
+    const panel = await within(layout('topbar')).findByRole('region', { name: 'Server issue' })
+    expect(await within(panel).findByText('Gemini')).toBeTruthy()
+    fireEvent.click(within(panel).getByRole('link', { name: 'Server details' }))
     expect(window.location.pathname).toBe('/settings/server')
     expect(await screen.findByRole('heading', { level: 2, name: 'Server' })).toBeTruthy()
     online.mockRestore()
   })
 
-  it('shows no top bar red dot when health is ok or warning without fetching /api/status/server', async () => {
+  it('shows Online or Warning without fetching /api/status/server until opened', async () => {
     let currentHealth: 'ok' | 'warning' = 'ok'
     const fetch = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input) === '/api/status') return json(200, statusPayload(currentHealth))
+      if (String(input) === '/api/status/server') {
+        return json(200, serverDetailsPayload({ postgres: { state: 'ok', reason: null }, gemini: { state: 'ok', reason: null } }))
+      }
       return json(404, {})
     })
     vi.stubGlobal('fetch', fetch)
 
     const { rerender } = render(<AppShell onSignOut={() => {}} />)
     await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/status', expect.anything()))
-    expect(screen.queryByRole('link', { name: /Server health broken/ })).toBeNull()
+    expect(within(layout('topbar')).getByRole('button', { name: 'Status: Online' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Server issue/ })).toBeNull()
 
     currentHealth = 'warning'
     act(() => {
@@ -287,7 +318,11 @@ describe('AppShell', () => {
       expect(fetch.mock.calls.filter(([url]) => String(url) === '/api/status').length).toBeGreaterThanOrEqual(2),
     )
     rerender(<AppShell onSignOut={() => {}} />)
-    expect(screen.queryByRole('link', { name: /Server health broken/ })).toBeNull()
+    const warningButton = within(layout('topbar')).getByRole('button', { name: 'Status: Warning' })
+    expect(warningButton).toBeTruthy()
     expect(fetch.mock.calls.some(([url]) => String(url) === '/api/status/server')).toBe(false)
+
+    fireEvent.click(warningButton)
+    expect(await within(layout('topbar')).findByText('PostgreSQL')).toBeTruthy()
   })
 })

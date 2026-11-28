@@ -3,57 +3,7 @@ import type { ServerHealth } from '../api/status'
 import { useProfile } from '../profile/profile'
 import { plural } from '../repos/format'
 import { followLink, settingsPath } from '../router'
-
-/** Screen-reader label for the top-bar broken-health indicator (R21). */
-function brokenHealthLabel(brokenChecks: readonly string[]): string {
-  return brokenChecks.length > 0 ? `Server health broken: ${brokenChecks.join(', ')}` : 'Server health broken'
-}
-
-/**
- * Red dot shown in the top bar only when online, reachable, and `health === 'broken'`
- * (R21, T80). `warning` and offline show no dot; clicking opens Settings › Server.
- */
-export function HealthDot({
-  health,
-  online,
-  reachable,
-  brokenChecks = [],
-}: {
-  health?: ServerHealth
-  online: boolean
-  reachable?: boolean
-  brokenChecks?: readonly string[]
-}) {
-  if (!online || reachable === false || health !== 'broken') return null
-  const path = settingsPath('server')
-  const label = brokenHealthLabel(brokenChecks)
-  return (
-    <a
-      href={path}
-      onClick={(event) => followLink(event, path)}
-      aria-label={label}
-      title={label}
-      className="inline-flex size-11 items-center justify-center rounded-full transition-colors hover:bg-surface/75"
-    >
-      <span aria-hidden="true" className="size-2.5 rounded-full bg-danger" />
-    </a>
-  )
-}
-
-/**
- * Online, Offline, or "Server unreachable" when this device has a connection
- * but the last `GET /api/status` could not reach the server (R18).
- */
-export function OnlinePill({ online, reachable }: { online: boolean; reachable?: boolean }) {
-  const up = online && reachable !== false
-  const label = !online ? 'Offline' : up ? 'Online' : 'Server unreachable'
-  return (
-    <span className="inline-flex h-9 items-center gap-2 rounded-full bg-surface/75 px-3.5 text-sm text-ink">
-      <span aria-hidden="true" className={`size-2 rounded-full ${up ? 'bg-success' : 'bg-warning'}`} />
-      {label}
-    </span>
-  )
-}
+import { StatusMenu } from './StatusMenu'
 
 /** The owner's initial (a person icon until Profile has a name); opens Profile. */
 export function Avatar({ name, className = '' }: { name?: string; className?: string }) {
@@ -73,8 +23,8 @@ export function Avatar({ name, className = '' }: { name?: string; className?: st
 }
 
 /**
- * The main panel's top bar, from md up. The source picker, the device count
- * and the Gemini pill show placeholders until their data exists.
+ * The main panel's top bar, from md up. Shows the source label, device count,
+ * unified status menu (connectivity, server health, API keys), and avatar.
  */
 export function TopBar({
   online,
@@ -83,6 +33,7 @@ export function TopBar({
   brokenChecks,
   devices,
   gemini,
+  checkedAt,
   name,
 }: {
   online: boolean
@@ -92,6 +43,7 @@ export function TopBar({
   brokenChecks?: readonly string[]
   devices?: number
   gemini?: boolean
+  checkedAt?: string
   name?: string
 }) {
   const devicesPath = settingsPath('devices')
@@ -114,13 +66,14 @@ export function TopBar({
         </a>
       </div>
       <div className="flex flex-wrap items-center gap-2.5">
-        <HealthDot online={online} reachable={reachable} health={health} brokenChecks={brokenChecks} />
-        <OnlinePill online={online} reachable={reachable} />
-        {gemini === undefined ? null : (
-          <span className="inline-flex h-9 items-center rounded-full bg-surface/75 px-3.5 text-sm text-ink">
-            {gemini ? 'Gemini on' : 'Gemini off'}
-          </span>
-        )}
+        <StatusMenu
+          online={online}
+          reachable={reachable}
+          health={health}
+          brokenChecks={brokenChecks}
+          gemini={gemini}
+          checkedAt={checkedAt}
+        />
         <Avatar name={name} />
       </div>
     </header>
