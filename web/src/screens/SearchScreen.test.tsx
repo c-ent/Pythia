@@ -408,4 +408,38 @@ describe('SearchScreen', () => {
     fireEvent.keyDown(window, { key: '/' })
     expect(document.activeElement).toBe(screen.getByLabelText('Search notes, repos and Keep'))
   })
+
+  it('shows document age on result cards when mtime or updatedAt is present', async () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 3_600_000).toISOString()
+    stubSearch(() => json(200, { results: [result({ mtime: twoHoursAgo })], degraded: false }))
+    render(<SearchScreen />)
+    search('goals')
+    expect(await screen.findByText('2h ago')).toBeTruthy()
+  })
+
+  it('offers Ask about these results in Search mode and switches to Ask', async () => {
+    const asks: Record<string, unknown>[] = []
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit = {}) => {
+      if (url === '/api/search') return json(200, { results: [result()], degraded: false })
+      if (url === '/api/ask') {
+        asks.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+        return json(200, {
+          answer: 'From your notes [1].',
+          engine: 'gemini',
+          model: 'gemini-test',
+          fallbacks: [],
+          citations: [],
+          withheld: 0,
+          degraded: false,
+        })
+      }
+      return json(200, { documents: [] })
+    })
+    render(<SearchScreen />)
+    search('goals')
+    const askBtn = await screen.findByRole('button', { name: 'Ask about these results' })
+    fireEvent.click(askBtn)
+    expect(await screen.findByText('From your notes [1].')).toBeTruthy()
+    expect(asks).toEqual([{ question: 'goals' }])
+  })
 })

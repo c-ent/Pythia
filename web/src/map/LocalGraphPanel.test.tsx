@@ -116,6 +116,11 @@ describe('LocalGraphPanel', () => {
     render(<LocalGraphPanel id={7} />)
 
     expect((await screen.findByTestId('graph-canvas')).textContent).toBe('4 nodes')
+    fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Existing files only' }))
+    expect(screen.getByTestId('graph-canvas').textContent).toBe('3 nodes')
+    fireEvent.click(screen.getByRole('button', { name: '2D' }))
+    expect(screen.getByRole('button', { name: '2D' }).getAttribute('aria-pressed')).toBe('true')
     fireEvent.click(screen.getByRole('button', { name: 'List' }))
     expect(screen.queryByTestId('graph-canvas')).toBeNull()
     expect(screen.getByRole('link', { name: 'Bread' })).toBeTruthy()

@@ -204,7 +204,15 @@ console.log(config.webDir === null ? 'PYTHIA_WEB_DIR is not set; serving the API
 const related = createRelatedService({ store: createPgRelatedStore(pool) })
 const backlinks = createBacklinkService({ store: createPgBacklinkStore(pool) })
 const graph = createGraphService({ store: createPgGraphStore(pool) })
-const topicMap = createTopicMapService({ store: createPgTopicMapStore(pool), embedder: queryEmbedder })
+const topicMap = createTopicMapService({
+  store: createPgTopicMapStore(pool),
+  embedder: queryEmbedder,
+  gemini: () => gemini.model(),
+  local:
+    config.ask.ollamaChatModel === null
+      ? null
+      : createOllamaChatModel({ baseUrl: config.ollamaUrl, model: config.ask.ollamaChatModel }),
+})
 const hostMetrics = createHostMetrics(pool, {
   appVersion: '0.0.0',
   commit: process.env.PYTHIA_GIT_COMMIT ?? null,

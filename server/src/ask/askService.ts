@@ -1,7 +1,7 @@
 import { SUMMARY_PATH } from '../db/repoStore.js'
 import type { AskContextLoader, ChunkTextLoader, RecentCatalogEntry, RepoCatalogEntry, SearchableKind } from '../db/searchStore.js'
 import { capText, MAX_SEARCH_LIMIT, type SearchResult, type SearchService, type Snippet, type SourceRef } from '../search/searchService.js'
-import { describeError, type ChatModel, type ChatPrompt } from './llm.js'
+import { describeError, type AskHistoryTurn, type ChatModel, type ChatPrompt } from './llm.js'
 
 /**
  * `POST /api/ask` (R8): hybrid search, then the fallback chain
@@ -34,6 +34,7 @@ export type FallbackReason =
 
 export interface AskRequest {
   question: string
+  history?: readonly AskHistoryTurn[]
   sources?: readonly SearchableKind[]
   repo?: string
   /** Passages retrieved for the model. */
@@ -69,8 +70,22 @@ export interface AskResponse {
   degraded: boolean
 }
 
+export type AskStreamEvent =
+  | {
+      type: 'meta'
+      engine: AskEngine
+      model: string | null
+      fallbacks: FallbackReason[]
+      citations: AskCitation[]
+      withheld: number
+      degraded: boolean
+    }
+  | { type: 'token'; text: string }
+  | { type: 'done'; answer: string | null }
+
 export interface AskService {
   ask(request: AskRequest): Promise<AskResponse>
+  askStream?(request: AskRequest, emit: (event: AskStreamEvent) => void, signal?: AbortSignal): Promise<AskResponse>
 }
 
 export interface AskServiceOptions {
@@ -106,7 +121,12 @@ export const SYSTEM_PROMPT = [
 
 const isoDay = (date: Date): string => date.toISOString().slice(0, 10)
 
-export function buildPrompt(question: string, passages: readonly Passage[], catalog?: string | null): ChatPrompt {
+export function buildPrompt(
+  question: string,
+  passages: readonly Passage[],
+  catalog?: string | null,
+  history?: readonly AskHistoryTurn[],
+): ChatPrompt {
   const blocks = passages.map(({ result, text }, i) => {
     const where = result.headingPath === '' ? result.path : `${result.path} — ${result.headingPath}`
     const when = result.mtime instanceof Date && !Number.isNaN(result.mtime.getTime()) ? ` (${isoDay(result.mtime)})` : ''
@@ -116,6 +136,7 @@ export function buildPrompt(question: string, passages: readonly Passage[], cata
   return {
     system: SYSTEM_PROMPT,
     user: `${prefix}<passages>\n${blocks.join('\n\n---\n\n')}\n</passages>\n\nQuestion: ${question}`,
+    ...(history !== undefined && history.length > 0 ? { history } : {}),
   }
 }
 
@@ -201,8 +222,11 @@ function selectContextExtras(
     priority.push(hit)
   }
 
+  const historyText = request.history?.map((turn) => turn.question).join(' ') ?? ''
   for (const repo of repos) {
-    if (mentionsRepo(question, repo.name)) pushPriority(repoToResult(repo))
+    if (mentionsRepo(question, repo.name) || (historyText !== '' && mentionsRepo(historyText, repo.name))) {
+      pushPriority(repoToResult(repo))
+    }
   }
 
   const shouldEnrich =
@@ -287,99 +311,213 @@ export function createAskService(options: AskServiceOptions): AskService {
   const resolveGemini = async (): Promise<ChatModel | null> =>
     typeof options.gemini === 'function' ? options.gemini() : options.gemini
 
-  return {
-    async ask(request) {
-      const passageLimit = Math.min(MAX_ASK_PASSAGES, Math.max(1, Math.trunc(request.limit ?? DEFAULT_ASK_PASSAGES)))
-      const candidateLimit = Math.min(MAX_SEARCH_LIMIT, passageLimit * SEARCH_DIVERSITY_MULTIPLIER)
-      const filters = { sources: request.sources, repo: request.repo }
-      const [{ results: rawResults, degraded }, repos, recentDocs] = await Promise.all([
-        search.search({
-          query: request.question,
-          sources: request.sources,
-          repo: request.repo,
-          limit: candidateLimit,
-        }),
-        context === undefined ? Promise.resolve([] as RepoCatalogEntry[]) : context.repoCatalog(filters),
-        context === undefined ? Promise.resolve([] as RecentCatalogEntry[]) : context.recentDocuments(filters, CATALOG_RECENT_LIMIT),
-      ])
+  async function prepareAsk(request: AskRequest) {
+    const passageLimit = Math.min(MAX_ASK_PASSAGES, Math.max(1, Math.trunc(request.limit ?? DEFAULT_ASK_PASSAGES)))
+    const candidateLimit = Math.min(MAX_SEARCH_LIMIT, passageLimit * SEARCH_DIVERSITY_MULTIPLIER)
+    const filters = { sources: request.sources, repo: request.repo }
+    const lastHistory = request.history !== undefined && request.history.length > 0 ? request.history[request.history.length - 1] : undefined
+    const [primarySearch, priorSearch, repos, recentDocs] = await Promise.all([
+      search.search({
+        query: request.question,
+        sources: request.sources,
+        repo: request.repo,
+        limit: candidateLimit,
+      }),
+      lastHistory === undefined
+        ? Promise.resolve(null)
+        : search.search({
+            query: lastHistory.question,
+            sources: request.sources,
+            repo: request.repo,
+            limit: candidateLimit,
+          }),
+      context === undefined ? Promise.resolve([] as RepoCatalogEntry[]) : context.repoCatalog(filters),
+      context === undefined ? Promise.resolve([] as RecentCatalogEntry[]) : context.recentDocuments(filters, CATALOG_RECENT_LIMIT),
+    ])
 
-      const diversified = diversifyResults(rawResults, passageLimit)
-      const { priority, extra } = selectContextExtras(request.question, request, repos, recentDocs, diversified)
-      const priorityIds = new Set(priority.map((r) => r.chunkId))
-      const combined = [...priority, ...diversified.filter((r) => !priorityIds.has(r.chunkId)), ...extra].slice(0, MAX_ASK_PASSAGES)
-      const base = { degraded, withheld: 0 }
-      if (combined.length === 0) {
-        return { ...base, answer: null, engine: 'retrieval', model: null, fallbacks: ['no_results'], citations: [] }
-      }
+    const seen = new Set(primarySearch.results.map((r) => r.chunkId))
+    const rawResults =
+      priorSearch === null
+        ? primarySearch.results
+        : [...primarySearch.results, ...priorSearch.results.filter((r) => !seen.has(r.chunkId))]
+    const degraded = primarySearch.degraded || (priorSearch?.degraded ?? false)
 
-      const texts = await chunks.chunkTexts(combined.map((result) => result.chunkId))
-      const passages: Passage[] = combined.map((result) => {
-        const loaded = texts.get(result.chunkId)
-        return {
-          result,
-          text: loaded?.content ?? result.snippet.text,
-          // A chunk that vanished or changed flag since the search is not sent out.
-          cloudAllowed: result.allowLlm && loaded?.allowLlm === true,
-        }
-      })
-      const fallbacks: FallbackReason[] = []
-      const currentTime = now()
+    const diversified = diversifyResults(rawResults, passageLimit)
+    const { priority, extra } = selectContextExtras(request.question, request, repos, recentDocs, diversified)
+    const priorityIds = new Set(priority.map((r) => r.chunkId))
+    const combined = [...priority, ...diversified.filter((r) => !priorityIds.has(r.chunkId)), ...extra].slice(0, MAX_ASK_PASSAGES)
+    const base = { degraded, withheld: 0 }
+    if (combined.length === 0) {
+      return { empty: true as const, base, repos, recentDocs, passages: [] as Passage[] }
+    }
 
-      // 1. Gemini, with allowed passages and allowed catalog entries only.
-      const cloud = passages.filter((passage) => passage.cloudAllowed)
-      let gemini: ChatModel | null = null
-      try {
-        gemini = await resolveGemini()
-      } catch (error) {
-        log(`gemini key lookup failed (${describeError(error)}); skipping Gemini`)
-      }
-      if (gemini === null) {
-        fallbacks.push('gemini_unconfigured')
-      } else if (cloud.length === 0) {
-        fallbacks.push('all_private')
-      } else {
-        try {
-          const catalog = formatCatalog(repos, recentDocs, currentTime, false)
-          const answer = await gemini.generate(buildPrompt(request.question, cloud, catalog))
-          return {
-            ...base,
-            answer,
-            engine: 'gemini',
-            model: gemini.model,
-            fallbacks,
-            citations: cite(cloud),
-            withheld: passages.length - cloud.length,
-          }
-        } catch (error) {
-          // Never the question or passages: they may be private.
-          log(`gemini answer failed (${describeError(error)}); trying the local model`)
-          fallbacks.push('gemini_failed')
-        }
-      }
-
-      // 2. Local Ollama: stays on the host, so every passage and catalog entry may be used.
-      if (local === null) {
-        fallbacks.push('ollama_unconfigured')
-      } else {
-        try {
-          const catalog = formatCatalog(repos, recentDocs, currentTime, true)
-          const answer = await local.generate(buildPrompt(request.question, passages, catalog))
-          return { ...base, answer, engine: 'ollama', model: local.model, fallbacks, citations: cite(passages) }
-        } catch (error) {
-          log(`local answer failed (${describeError(error)}); returning passages only`)
-          fallbacks.push('ollama_failed')
-        }
-      }
-
-      // 3. Retrieval only.
+    const texts = await chunks.chunkTexts(combined.map((result) => result.chunkId))
+    const passages: Passage[] = combined.map((result) => {
+      const loaded = texts.get(result.chunkId)
       return {
-        ...base,
+        result,
+        text: loaded?.content ?? result.snippet.text,
+        // A chunk that vanished or changed flag since the search is not sent out.
+        cloudAllowed: result.allowLlm && loaded?.allowLlm === true,
+      }
+    })
+    return { empty: false as const, base, repos, recentDocs, passages }
+  }
+
+  async function executeAsk(
+    request: AskRequest,
+    emit?: (event: AskStreamEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<AskResponse> {
+    const prep = await prepareAsk(request)
+    if (prep.empty) {
+      const response: AskResponse = {
+        ...prep.base,
         answer: null,
         engine: 'retrieval',
         model: null,
-        fallbacks,
-        citations: cite(passages.slice(0, RETRIEVAL_PASSAGES)),
+        fallbacks: ['no_results'],
+        citations: [],
       }
+      if (emit !== undefined) {
+        emit({
+          type: 'meta',
+          engine: response.engine,
+          model: response.model,
+          fallbacks: response.fallbacks,
+          citations: response.citations,
+          withheld: response.withheld,
+          degraded: response.degraded,
+        })
+        emit({ type: 'done', answer: null })
+      }
+      return response
+    }
+
+    const { base, repos, recentDocs, passages } = prep
+    const fallbacks: FallbackReason[] = []
+    const currentTime = now()
+
+    async function runModel(
+      model: ChatModel,
+      modelPassages: readonly Passage[],
+      catalog: string | null,
+      withheld: number,
+    ): Promise<AskResponse> {
+      const prompt = buildPrompt(request.question, modelPassages, catalog, request.history)
+      const citations = cite(modelPassages)
+      if (emit === undefined) {
+        const answer = await model.generate(prompt)
+        return { ...base, answer, engine: model.engine, model: model.model, fallbacks, citations, withheld }
+      }
+      let metaSent = false
+      const sendMeta = () => {
+        if (metaSent) return
+        metaSent = true
+        emit({
+          type: 'meta',
+          engine: model.engine,
+          model: model.model,
+          fallbacks,
+          citations,
+          withheld,
+          degraded: base.degraded,
+        })
+      }
+      try {
+        const answer =
+          model.generateStream !== undefined
+            ? await model.generateStream(
+                prompt,
+                (delta) => {
+                  sendMeta()
+                  emit({ type: 'token', text: delta })
+                },
+                signal,
+              )
+            : await model.generate(prompt).then((text) => {
+                sendMeta()
+                emit({ type: 'token', text })
+                return text
+              })
+        sendMeta()
+        emit({ type: 'done', answer })
+        return { ...base, answer, engine: model.engine, model: model.model, fallbacks, citations, withheld }
+      } catch (error) {
+        // Once tokens have been streamed to the client, mark the error as terminal so we do not switch engines mid-sentence.
+        if (metaSent) throw Object.assign(error instanceof Error ? error : new Error(String(error)), { streamStarted: true })
+        throw error
+      }
+    }
+
+    // 1. Gemini, with allowed passages and allowed catalog entries only.
+    const cloud = passages.filter((passage) => passage.cloudAllowed)
+    let gemini: ChatModel | null = null
+    try {
+      gemini = await resolveGemini()
+    } catch (error) {
+      log(`gemini key lookup failed (${describeError(error)}); skipping Gemini`)
+    }
+    if (gemini === null) {
+      fallbacks.push('gemini_unconfigured')
+    } else if (cloud.length === 0) {
+      fallbacks.push('all_private')
+    } else {
+      try {
+        const catalog = formatCatalog(repos, recentDocs, currentTime, false)
+        return await runModel(gemini, cloud, catalog, passages.length - cloud.length)
+      } catch (error) {
+        if (signal?.aborted === true || (error instanceof Error && 'streamStarted' in error)) throw error
+        // Never the question or passages: they may be private.
+        log(`gemini answer failed (${describeError(error)}); trying the local model`)
+        fallbacks.push('gemini_failed')
+      }
+    }
+
+    // 2. Local Ollama: stays on the host, so every passage and catalog entry may be used.
+    if (local === null) {
+      fallbacks.push('ollama_unconfigured')
+    } else {
+      try {
+        const catalog = formatCatalog(repos, recentDocs, currentTime, true)
+        return await runModel(local, passages, catalog, 0)
+      } catch (error) {
+        if (signal?.aborted === true || (error instanceof Error && 'streamStarted' in error)) throw error
+        log(`local answer failed (${describeError(error)}); returning passages only`)
+        fallbacks.push('ollama_failed')
+      }
+    }
+
+    // 3. Retrieval only.
+    const retrieval: AskResponse = {
+      ...base,
+      answer: null,
+      engine: 'retrieval',
+      model: null,
+      fallbacks,
+      citations: cite(passages.slice(0, RETRIEVAL_PASSAGES)),
+    }
+    if (emit !== undefined) {
+      emit({
+        type: 'meta',
+        engine: retrieval.engine,
+        model: retrieval.model,
+        fallbacks: retrieval.fallbacks,
+        citations: retrieval.citations,
+        withheld: retrieval.withheld,
+        degraded: retrieval.degraded,
+      })
+      emit({ type: 'done', answer: null })
+    }
+    return retrieval
+  }
+
+  return {
+    async ask(request) {
+      return executeAsk(request)
+    },
+    async askStream(request, emit, signal) {
+      return executeAsk(request, emit, signal)
     },
   }
 }

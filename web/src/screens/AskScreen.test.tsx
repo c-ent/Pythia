@@ -233,7 +233,44 @@ describe('AskScreen', () => {
     ask('What else uses Supabase auth?', 'Ask a follow-up question')
     expect(await screen.findByRole('heading', { level: 1, name: 'What else uses Supabase auth?' })).toBeTruthy()
     await waitFor(() => expect(asks).toHaveLength(2))
-    expect(asks[1]).toEqual({ question: 'What else uses Supabase auth?' })
+    expect(asks[1]).toEqual({
+      question: 'What else uses Supabase auth?',
+      history: [
+        {
+          question: 'Why does my magic link loop?',
+          answer: 'The callback URL is missing from the allow list [1]. You already pass emailRedirectTo [2].',
+        },
+      ],
+    })
+  })
+
+  it('streams SSE tokens into the answer as they arrive', async () => {
+    const sse = [
+      `event: meta\ndata: ${JSON.stringify({ engine: 'gemini', model: 'gemini-2.5-flash', fallbacks: [], citations: CITATIONS, withheld: 0, degraded: false })}`,
+      '',
+      `event: token\ndata: ${JSON.stringify({ text: 'Streaming ' })}`,
+      '',
+      `event: token\ndata: ${JSON.stringify({ text: 'answer [1].' })}`,
+      '',
+      `event: done\ndata: ${JSON.stringify({ answer: 'Streaming answer [1].' })}`,
+      '',
+    ].join('\n')
+    stubFetch({
+      respond: () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(sse))
+              controller.close()
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'text/event-stream; charset=utf-8' } },
+        ),
+    })
+    render(<AskScreen />)
+    ask('Stream test?')
+    expect(await screen.findByText('Answered by Gemini')).toBeTruthy()
+    expect(screen.getByText(/Streaming answer/)).toBeTruthy()
   })
 
   it('goes back to an empty box with New question', async () => {

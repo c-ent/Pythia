@@ -1,3 +1,4 @@
+import type { SourceKind } from '../api/search'
 import type { PartitionedTopicMap, VisibleTopicBranch } from './topicMapModel'
 
 export type MindmapSide = 'left' | 'right'
@@ -18,6 +19,12 @@ export interface MindmapNode {
   inX: number
   documentId: number | null
   branchQuery: string | null
+  sourceKind: SourceKind | null
+  path: string | null
+  allowLlm: boolean | null
+  hasChildren: boolean
+  collapsed: boolean
+  childCount: number
   children: MindmapNode[]
 }
 
@@ -73,6 +80,9 @@ interface RawTreeItem {
   kind: 'branch' | 'document'
   documentId: number | null
   branchQuery: string | null
+  sourceKind: SourceKind | null
+  path: string | null
+  allowLlm: boolean | null
   children: RawTreeItem[]
 }
 
@@ -86,6 +96,9 @@ function branchToRaw(branch: VisibleTopicBranch, path: string): RawTreeItem {
       kind: 'document' as const,
       documentId: doc.documentId,
       branchQuery: null,
+      sourceKind: doc.source.kind,
+      path: doc.path,
+      allowLlm: doc.allowLlm,
       children: [],
     })),
   ]
@@ -96,6 +109,9 @@ function branchToRaw(branch: VisibleTopicBranch, path: string): RawTreeItem {
     kind: 'branch',
     documentId: null,
     branchQuery: branch.label,
+    sourceKind: null,
+    path: null,
+    allowLlm: null,
     children,
   }
 }
@@ -105,9 +121,9 @@ function countLeaves(item: RawTreeItem): number {
   return item.children.reduce((sum, child) => sum + countLeaves(child), 0)
 }
 
-function subtreeHeight(item: RawTreeItem): number {
-  if (item.children.length === 0) return ROW_HEIGHT
-  const childrenSum = item.children.reduce((sum, child) => sum + subtreeHeight(child), 0)
+function subtreeHeight(item: RawTreeItem, collapsedIds?: ReadonlySet<string>): number {
+  if (item.children.length === 0 || collapsedIds?.has(item.id)) return ROW_HEIGHT
+  const childrenSum = item.children.reduce((sum, child) => sum + subtreeHeight(child, collapsedIds), 0)
   return Math.max(ROW_HEIGHT, childrenSum + Math.max(0, item.children.length - 1) * 4)
 }
 
@@ -119,24 +135,26 @@ function layoutSubtree(
   centerY: number,
   edges: MindmapEdge[],
   isTopLevel: boolean,
+  collapsedIds?: ReadonlySet<string>,
 ): MindmapNode {
   const width = estimateTextWidth(item.label)
   const gap = isTopLevel ? LEVEL_GAP_ROOT : LEVEL_GAP
   const hasChildren = item.children.length > 0
+  const collapsed = hasChildren && Boolean(collapsedIds?.has(item.id))
 
   const inX = side === 'right' ? parentOutX + gap : parentOutX - gap
   const x = side === 'right' ? inX : inX - width
   const outX = side === 'right' ? inX + width + 8 : inX - width - 8
 
   const children: MindmapNode[] = []
-  if (hasChildren) {
-    const totalH = subtreeHeight(item)
+  if (hasChildren && !collapsed) {
+    const totalH = subtreeHeight(item, collapsedIds)
     let cursorY = centerY - totalH / 2
     for (let i = 0; i < item.children.length; i++) {
       const child = item.children[i]!
-      const childH = subtreeHeight(child)
+      const childH = subtreeHeight(child, collapsedIds)
       const childCenterY = cursorY + childH / 2
-      const childNode = layoutSubtree(child, side, color, outX, childCenterY, edges, false)
+      const childNode = layoutSubtree(child, side, color, outX, childCenterY, edges, false, collapsedIds)
       children.push(childNode)
       edges.push({
         id: `${item.id}->${child.id}`,
@@ -164,6 +182,12 @@ function layoutSubtree(
     inX,
     documentId: item.documentId,
     branchQuery: item.branchQuery,
+    sourceKind: item.sourceKind,
+    path: item.path,
+    allowLlm: item.allowLlm,
+    hasChildren,
+    collapsed,
+    childCount: hasChildren ? countLeaves(item) : 0,
     children,
   }
 }
@@ -172,7 +196,11 @@ function layoutSubtree(
  * Builds a balanced left/right 2D horizontal mindmap layout from a partitioned
  * topic map, matching classic Markmap-style branching curves.
  */
-export function buildTopicMindmapLayout(topic: string, partitioned: PartitionedTopicMap): MindmapLayout {
+export function buildTopicMindmapLayout(
+  topic: string,
+  partitioned: PartitionedTopicMap,
+  collapsedIds?: ReadonlySet<string>,
+): MindmapLayout {
   const rootLabel = truncateLabel(topic)
   const rootWidth = estimateTextWidth(rootLabel, true)
   const rootLeftX = -rootWidth / 2
@@ -187,6 +215,9 @@ export function buildTopicMindmapLayout(topic: string, partitioned: PartitionedT
       kind: 'document' as const,
       documentId: doc.documentId,
       branchQuery: null,
+      sourceKind: doc.source.kind,
+      path: doc.path,
+      allowLlm: doc.allowLlm,
       children: [],
     })),
   ]
@@ -214,7 +245,7 @@ export function buildTopicMindmapLayout(topic: string, partitioned: PartitionedT
 
   const placeSide = (items: Array<{ item: RawTreeItem; color: string }>, side: MindmapSide): void => {
     if (items.length === 0) return
-    const heights = items.map((entry) => subtreeHeight(entry.item))
+    const heights = items.map((entry) => subtreeHeight(entry.item, collapsedIds))
     const totalH = heights.reduce((sum, h) => sum + h, 0) + Math.max(0, items.length - 1) * BRANCH_GAP
     let cursorY = -totalH / 2
     const originX = side === 'right' ? rootRightX : rootLeftX
@@ -222,7 +253,7 @@ export function buildTopicMindmapLayout(topic: string, partitioned: PartitionedT
     items.forEach((entry, idx) => {
       const h = heights[idx]!
       const cy = cursorY + h / 2
-      const node = layoutSubtree(entry.item, side, entry.color, originX, cy, edges, true)
+      const node = layoutSubtree(entry.item, side, entry.color, originX, cy, edges, true, collapsedIds)
       rootChildren.push(node)
       edges.push({
         id: `root->${entry.item.id}`,
@@ -253,6 +284,12 @@ export function buildTopicMindmapLayout(topic: string, partitioned: PartitionedT
     inX: rootLeftX,
     documentId: null,
     branchQuery: null,
+    sourceKind: null,
+    path: null,
+    allowLlm: null,
+    hasChildren: rootChildren.length > 0,
+    collapsed: false,
+    childCount: rootChildren.length,
     children: rootChildren,
   }
 

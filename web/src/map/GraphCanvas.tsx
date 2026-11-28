@@ -2,12 +2,19 @@ import { useMemo } from 'react'
 import type { GraphResponse } from '../api/graph'
 import { AtlasCanvas } from './AtlasCanvas'
 import { buildNetworkAtlasGraph } from './atlas3d'
+import { GraphCanvas2D } from './GraphCanvas2D'
+import {
+  DEFAULT_GRAPH_DISPLAY,
+  DEFAULT_GRAPH_FORCES,
+  type GraphDisplaySettings,
+  type GraphForceSettings,
+} from './graphControls'
 
 /**
- * Interactive 3D constellation graph for the Whole-Vault and Document Local
- * graphs (R20, T71): colour by source, size by links, click (tap) opens a
- * document, hover or tap shows a preview, drag rotates in 3D, scroll or pinch
- * zooms, and buttons zoom in, zoom out or reset the view.
+ * Interactive 2D/3D network graph for the Whole-Vault and Document Local
+ * graphs (R20, T71, T89, T90): colour by source, size by links, click (tap)
+ * opens a document, hover or tap shows a preview, zoom/pan/rotate, and
+ * real-time Display & Forces controls.
  */
 export function GraphCanvas({
   graph,
@@ -15,14 +22,38 @@ export function GraphCanvas({
   title = 'Knowledge Atlas',
   subtitle,
   heightClassName = 'h-88 md:h-112',
+  dimension = '3d',
+  display = DEFAULT_GRAPH_DISPLAY,
+  forces = DEFAULT_GRAPH_FORCES,
+  layoutVersion = 0,
 }: {
   graph: Pick<GraphResponse, 'nodes' | 'edges'>
   center?: string
   title?: string
   subtitle?: string
   heightClassName?: string
+  dimension?: '2d' | '3d'
+  display?: GraphDisplaySettings
+  forces?: GraphForceSettings
+  layoutVersion?: number
 }) {
   const atlas = useMemo(() => buildNetworkAtlasGraph(graph, center), [graph, center])
+
+  if (dimension === '2d') {
+    return (
+      <GraphCanvas2D
+        graph={graph}
+        center={center}
+        title={title}
+        subtitle={subtitle ?? `${graph.nodes.length} items · ${graph.edges.length} connections`}
+        ariaLabel={`2D graph with ${graph.nodes.length} items. The list view has the same items.`}
+        heightClassName={heightClassName}
+        display={display}
+        forces={forces}
+        layoutVersion={layoutVersion}
+      />
+    )
+  }
 
   return (
     <AtlasCanvas

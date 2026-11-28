@@ -1,4 +1,4 @@
-import { defaultSleep, LlmError, parseRetryAfter, type ChatModel, type FetchFn } from './llm.js'
+import { combineSignals, defaultSleep, LlmError, parseRetryAfter, type ChatModel, type ChatPrompt, type FetchFn } from './llm.js'
 
 /**
  * Gemini API client (`models.generateContent`, REST). Server-side only: the
@@ -35,7 +35,7 @@ interface GeminiPart {
   thought?: unknown
 }
 
-function extractText(body: unknown): string {
+function extractPartsText(body: unknown): { text: string; finishReason: string } {
   if (body === null || typeof body !== 'object') throw new LlmError('Gemini returned a body that is not an object')
   const feedback = 'promptFeedback' in body ? body.promptFeedback : undefined
   if (feedback !== null && typeof feedback === 'object' && 'blockReason' in feedback) {
@@ -51,13 +51,33 @@ function extractText(body: unknown): string {
         .filter((part) => part.thought !== true && typeof part.text === 'string')
         .map((part) => part.text as string)
         .join('')
-        .trim()
     : ''
-  if (text === '') {
-    const reason = 'finishReason' in first ? String(first.finishReason) : 'unknown'
-    throw new LlmError(`Gemini returned no answer text (finishReason ${reason})`)
+  const finishReason = 'finishReason' in first ? String(first.finishReason) : 'unknown'
+  return { text, finishReason }
+}
+
+function extractText(body: unknown): string {
+  const { text, finishReason } = extractPartsText(body)
+  const trimmed = text.trim()
+  if (trimmed === '') {
+    throw new LlmError(`Gemini returned no answer text (finishReason ${finishReason})`)
   }
-  return text
+  return trimmed
+}
+
+function buildRequestBody({ system, user, history }: ChatPrompt): string {
+  const contents = [
+    ...(history ?? []).flatMap((turn) => [
+      { role: 'user', parts: [{ text: turn.question }] },
+      { role: 'model', parts: [{ text: turn.answer }] },
+    ]),
+    { role: 'user', parts: [{ text: user }] },
+  ]
+  return JSON.stringify({
+    systemInstruction: { parts: [{ text: system }] },
+    contents,
+    generationConfig: { temperature: 0.2, maxOutputTokens: MAX_OUTPUT_TOKENS },
+  })
 }
 
 export function createGeminiModel(options: GeminiOptions): ChatModel {
@@ -69,24 +89,22 @@ export function createGeminiModel(options: GeminiOptions): ChatModel {
   const fetchFn: FetchFn = options.fetch ?? ((url, init) => fetch(url, init))
   const sleep = options.sleep ?? defaultSleep
   const url = `${baseUrl}/models/${encodeURIComponent(model)}:generateContent`
+  const streamUrl = `${baseUrl}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`
 
   if (options.apiKey.trim() === '') throw new RangeError('apiKey must not be empty')
   if (!Number.isInteger(retries) || retries < 0) throw new RangeError('retries must be a non-negative integer')
 
-  async function requestOnce(system: string, user: string): Promise<string> {
+  async function openResponse(targetUrl: string, prompt: ChatPrompt, signal?: AbortSignal): Promise<Response> {
     let response: Response
     try {
-      response = await fetchFn(url, {
+      response = await fetchFn(targetUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-goog-api-key': options.apiKey },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: system }] },
-          contents: [{ role: 'user', parts: [{ text: user }] }],
-          generationConfig: { temperature: 0.2, maxOutputTokens: MAX_OUTPUT_TOKENS },
-        }),
-        signal: AbortSignal.timeout(timeoutMs),
+        body: buildRequestBody(prompt),
+        signal: combineSignals(timeoutMs, signal),
       })
     } catch (error) {
+      if (signal?.aborted === true) throw error
       const reason = error instanceof Error && error.name === 'TimeoutError' ? `timed out after ${timeoutMs} ms` : 'network error'
       // Timeouts are not retried: the caller has a fallback and the user is waiting.
       throw new LlmError(`Gemini request failed: ${reason}`, { cause: error })
@@ -101,31 +119,86 @@ export function createGeminiModel(options: GeminiOptions): ChatModel {
         retryAfterMs: parseRetryAfter(response.headers.get('retry-after')),
       })
     }
+    return response
+  }
 
-    let body: unknown
-    try {
-      body = await response.json()
-    } catch (error) {
-      throw new LlmError('Gemini returned a body that is not JSON', { cause: error })
+  async function withRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await fn()
+      } catch (error) {
+        if (signal?.aborted === true) throw error
+        if (!(error instanceof LlmError) || !error.retryable || attempt >= retries) throw error
+        const backoff = retryDelayMs * 2 ** attempt
+        const wait = Math.max(backoff, error.retryAfterMs ?? 0)
+        if (wait > MAX_RETRY_WAIT_MS) throw error
+        await sleep(wait)
+      }
     }
-    return extractText(body)
   }
 
   return {
     engine: 'gemini',
     model,
-    async generate({ system, user }) {
-      for (let attempt = 0; ; attempt++) {
+    async generate(prompt) {
+      return withRetry(async () => {
+        const response = await openResponse(url, prompt)
+        let body: unknown
         try {
-          return await requestOnce(system, user)
+          body = await response.json()
         } catch (error) {
-          if (!(error instanceof LlmError) || !error.retryable || attempt >= retries) throw error
-          const backoff = retryDelayMs * 2 ** attempt
-          const wait = Math.max(backoff, error.retryAfterMs ?? 0)
-          if (wait > MAX_RETRY_WAIT_MS) throw error
-          await sleep(wait)
+          throw new LlmError('Gemini returned a body that is not JSON', { cause: error })
         }
+        return extractText(body)
+      })
+    },
+    async generateStream(prompt, onToken, signal) {
+      const response = await withRetry(() => openResponse(streamUrl, prompt, signal), signal)
+      if (response.body === null) {
+        let body: unknown
+        try {
+          body = await response.json()
+        } catch (error) {
+          throw new LlmError('Gemini returned a body that is not JSON', { cause: error })
+        }
+        const text = extractText(body)
+        onToken(text)
+        return text
       }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let full = ''
+      try {
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split(/\r?\n/)
+          buffer = lines.pop() ?? ''
+          for (const line of lines) {
+            if (!line.startsWith('data:')) continue
+            const payload = line.slice(5).trim()
+            if (payload === '' || payload === '[DONE]') continue
+            let chunk: unknown
+            try {
+              chunk = JSON.parse(payload)
+            } catch {
+              continue
+            }
+            const { text } = extractPartsText(chunk)
+            if (text === '') continue
+            full += text
+            onToken(text)
+          }
+        }
+      } finally {
+        reader.releaseLock()
+      }
+      const trimmed = full.trim()
+      if (trimmed === '') throw new LlmError('Gemini returned no answer text')
+      return trimmed
     },
   }
 }

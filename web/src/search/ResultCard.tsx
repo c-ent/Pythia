@@ -2,7 +2,7 @@ import { Lock } from 'lucide-react'
 import type { MouseEvent } from 'react'
 import type { SearchResult } from '../api/search'
 import { documentPath, followLink } from '../router'
-import { headingTrail } from './format'
+import { headingTrail, timeAgo } from './format'
 import { Highlighted } from './Highlighted'
 import { SourceBadge } from './SourceBadge'
 
@@ -21,16 +21,20 @@ export function ResultCard({
   result,
   preview = true,
   selected = false,
+  timeZone,
   onSelect,
 }: {
   result: SearchResult
   preview?: boolean
   selected?: boolean
+  timeZone?: string
   onSelect?: () => void
 }) {
   const trail = headingTrail(result)
   const href = documentPath(result.documentId)
   const code = isCode(result)
+  const timestamp = result.mtime ?? result.updatedAt
+  const age = timestamp != null ? timeAgo(timestamp, undefined, timeZone) : ''
 
   const onClick = (event: MouseEvent<HTMLAnchorElement>): void => {
     if (onSelect === undefined) {
@@ -51,6 +55,11 @@ export function ResultCard({
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
         <SourceBadge source={result.source} />
         {trail === null ? null : <span className="min-w-0 break-words">{trail}</span>}
+        {age === '' ? null : (
+          <time dateTime={timestamp ?? undefined} className="shrink-0">
+            {age}
+          </time>
+        )}
         {result.allowLlm ? null : (
           <span className="inline-flex items-center gap-1" title="Never sent to Gemini">
             <Lock aria-hidden="true" className="size-3.5" />

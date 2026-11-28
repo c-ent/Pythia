@@ -38,8 +38,18 @@ describe('TopicMindmap', () => {
     expect(screen.getByText('Courses', { selector: 'text' })).toBeTruthy()
     expect(screen.getByText('LYT Course MOC', { selector: 'text' })).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Courses' }))
+    // Clicking the fork toggle or branch collapses in-place and reveals the Explore action
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Courses' }))
+    expect(screen.queryByText('LYT Course MOC', { selector: 'text' })).toBeNull()
+    expect(onBranch).not.toHaveBeenCalled()
+
+    // Dedicated Explore action drills into the branch
+    fireEvent.click(screen.getByRole('button', { name: 'Explore Courses' }))
     expect(onBranch).toHaveBeenCalledWith('Courses')
+
+    // Expanding brings the leaves back
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Courses' }))
+    expect(screen.getByText('LYT Course MOC', { selector: 'text' })).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Full screen' }))
     expect(screen.getByRole('button', { name: 'Exit full screen' })).toBeTruthy()

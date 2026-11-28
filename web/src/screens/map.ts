@@ -20,6 +20,8 @@ export interface MapMemory {
   trail: string[]
   sources: SourceKind[]
   repo: string
+  aiLabels: boolean
+  nodeFilter: string
   attempt: number
   result: TopicMapResult | null
   viewOverride: { narrow: boolean; mode: TopicDisplayMode } | null
@@ -40,6 +42,8 @@ export const mapMemory: MapMemory = {
   trail: [],
   sources: [],
   repo: '',
+  aiLabels: false,
+  nodeFilter: '',
   attempt: 0,
   result: null,
   viewOverride: null,
@@ -55,6 +59,8 @@ export function resetMapMemory(): void {
   mapMemory.trail = []
   mapMemory.sources = []
   mapMemory.repo = ''
+  mapMemory.aiLabels = false
+  mapMemory.nodeFilter = ''
   mapMemory.attempt = 0
   mapMemory.result = null
   mapMemory.viewOverride = null

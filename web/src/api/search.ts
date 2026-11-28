@@ -31,6 +31,8 @@ export interface SearchResult {
   ftsRank: number | null
   vectorRank: number | null
   snippet: Snippet
+  mtime?: string | null
+  updatedAt?: string
 }
 
 export interface SearchResponse {

@@ -47,7 +47,7 @@ async function readError(res: Response): Promise<{ code: string; message: string
 /** Same-origin fetch that turns non-2xx answers into `ApiError`. */
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers)
-  headers.set('accept', 'application/json')
+  if (!headers.has('accept')) headers.set('accept', 'application/json')
   let res: Response
   try {
     res = await fetch(path, { ...init, headers, credentials: 'same-origin' })

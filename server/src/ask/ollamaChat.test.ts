@@ -53,6 +53,42 @@ describe('ollama chat model', () => {
       await expect(createOllamaChatModel({ baseUrl: 'http://x', fetch }).generate(prompt)).rejects.toBeInstanceOf(LlmError)
     }
   })
+
+  it('streams NDJSON tokens, strips <think> blocks across chunks, and sends history', async () => {
+    const chunks = [
+      `${JSON.stringify({ message: { content: '<thi' } })}\n`,
+      `${JSON.stringify({ message: { content: 'nk>reasoning</think>  ' } })}\n`,
+      `${JSON.stringify({ message: { content: 'Hello ' } })}\n`,
+      `${JSON.stringify({ message: { content: 'local.' }, done: true })}\n`,
+    ]
+    let sentBody = ''
+    const fetchFn: FetchFn = async (_url, init) => {
+      sentBody = String(init.body)
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            for (const c of chunks) controller.enqueue(new TextEncoder().encode(c))
+            controller.close()
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/x-ndjson' } },
+      )
+    }
+    const model = createOllamaChatModel({ baseUrl: 'http://x', fetch: fetchFn })
+    const tokens: string[] = []
+    const answer = await model.generateStream!(
+      { system: 'sys', user: 'follow-up', history: [{ question: 'q1', answer: 'a1' }] },
+      (delta) => tokens.push(delta),
+    )
+    expect(tokens).toEqual(['Hello ', 'local.'])
+    expect(answer).toBe('Hello local.')
+    expect(JSON.parse(sentBody).messages).toEqual([
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: 'a1' },
+      { role: 'user', content: 'follow-up' },
+    ])
+  })
 })
 
 describe('stripThinking', () => {

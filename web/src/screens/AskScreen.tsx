@@ -12,7 +12,7 @@ import {
   TriangleAlert,
 } from 'lucide-react'
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type RefObject } from 'react'
-import { askQuestion, type AskResponse } from '../api/ask'
+import { askQuestion, type AskHistoryTurn, type AskResponse } from '../api/ask'
 import { getRecentQueries } from '../api/recent'
 import type { SourceKind } from '../api/search'
 import { ScreenHeader } from '../components/Screen'
@@ -23,7 +23,7 @@ import { AnswerText, Source, type AnswerState } from '../search/AskAnswer'
 import { engineNote } from '../search/citations'
 import { askErrorMessage } from '../search/format'
 import { SourceChips } from '../search/SourceChips'
-import { answerForCopy, askMemory, ENGINE_STEPS, engineLabel, sourceCount, type AskTurn } from './ask'
+import { answerForCopy, askMemory, ENGINE_STEPS, engineLabel, historyFromTurns, sourceCount, type AskTurn } from './ask'
 import { TRY_ASKING_EXAMPLES } from './home'
 
 const SUGGESTIONS_SHOWN = 5
@@ -32,74 +32,89 @@ const outlineButton =
   'inline-flex min-h-11 items-center gap-1.5 rounded-control border border-line px-3.5 text-sm font-medium text-ink transition-colors hover:bg-raised disabled:cursor-not-allowed disabled:opacity-50'
 
 /**
- * The Ask page (R6, R8): one question at a time with its cited answer, the
+ * The Ask page (R6, R8): a conversation thread with cited answers, the
  * answer-engine chain and the sources beside it (below it on narrow screens),
- * and a box for the next question. The server keeps no conversation, so a
- * follow-up is a new question.
+ * and a follow-up box that carries the last 3 turns of context.
  */
 export function AskScreen() {
   const online = useOnline()
   const [draft, setDraft] = useState('')
   const [sources, setSources] = useState<SourceKind[]>(() => askMemory.sources)
-  const [turn, setTurn] = useState<AskTurn | null>(() => askMemory.turn)
+  const [turns, setTurns] = useState<AskTurn[]>(() => askMemory.turns)
   const [snippetsOnly, setSnippetsOnly] = useState(false)
   const pending = useRef<AbortController | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   // useId output can hold characters that are awkward in a fragment.
   const idBase = `ask-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
-  const sourceId = (n: number): string => `${idBase}-src-${n}`
+  const sourceId = (n: number, prefix = idBase): string => `${prefix}-src-${n}`
 
-  // Sends the question; the caller has already shown it as loading.
-  const request = useCallback((question: string, kinds: SourceKind[]): void => {
+  // Sends the question; the caller has already appended the loading turn.
+  const request = useCallback((question: string, kinds: SourceKind[], history: readonly AskHistoryTurn[]): void => {
     pending.current?.abort()
     const controller = new AbortController()
     pending.current = controller
     const settle = (state: AnswerState): void => {
-      if (!controller.signal.aborted) setTurn({ question, sources: kinds, state })
+      if (controller.signal.aborted) return
+      setTurns((prev) => (prev.length === 0 ? prev : [...prev.slice(0, -1), { question, sources: kinds, state }]))
     }
-    askQuestion({ question, ...(kinds.length > 0 ? { sources: kinds } : {}) }, controller.signal).then(
+    askQuestion(
+      {
+        question,
+        ...(history.length > 0 ? { history: [...history] } : {}),
+        ...(kinds.length > 0 ? { sources: kinds } : {}),
+      },
+      controller.signal,
+      (partial) => settle({ status: 'streaming', response: partial }),
+    ).then(
       (response) => settle({ status: 'done', response }),
       (error: unknown) => settle({ status: 'error', message: askErrorMessage(error, false) }),
     )
   }, [])
 
-  const ask = (question: string, kinds: SourceKind[]): void => {
-    setSnippetsOnly(false)
-    setTurn({ question, sources: kinds, state: { status: 'loading' } })
-    request(question, kinds)
-  }
+  const ask = useCallback(
+    (question: string, kinds: SourceKind[], priorTurns: readonly AskTurn[] = []): void => {
+      setSnippetsOnly(false)
+      const history = historyFromTurns(priorTurns)
+      setTurns([...priorTurns, { question, sources: kinds, state: { status: 'loading' } }])
+      request(question, kinds, history)
+    },
+    [request],
+  )
 
   // A recent question clicked in the sidebar is asked again with its own filter.
   useRerun('ask', ({ query: question, sources: kinds }) => {
     setSources(kinds)
-    ask(question, kinds)
+    ask(question, kinds, [])
   })
 
-  // Back from a source: a question that was still loading is asked again.
+  // Back from a source: a question that was still loading or streaming is asked again.
   useEffect(() => {
-    const kept = askMemory.turn
-    if (kept?.state.status === 'loading') request(kept.question, kept.sources)
+    const kept = askMemory.turns
+    const last = kept[kept.length - 1]
+    if (last !== undefined && (last.state.status === 'loading' || last.state.status === 'streaming')) {
+      request(last.question, last.sources, historyFromTurns(kept.slice(0, -1)))
+    }
     const controllers = pending
     return () => controllers.current?.abort()
   }, [request])
 
   useEffect(() => {
-    askMemory.turn = turn
+    askMemory.turns = turns
     askMemory.sources = sources
-  }, [turn, sources])
+  }, [turns, sources])
 
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
     const text = draft.trim()
     if (text === '' || !online) return
     setDraft('')
-    ask(text, sources)
+    ask(text, sources, turns)
   }
 
   const startOver = (): void => {
     pending.current?.abort()
     pending.current = null
-    setTurn(null)
+    setTurns([])
     setDraft('')
     requestAnimationFrame(() => inputRef.current?.focus())
   }
@@ -119,67 +134,89 @@ export function AskScreen() {
     />
   )
 
-  if (turn === null) {
+  if (turns.length === 0) {
     return (
       <div className="mx-auto max-w-4xl">
         <ScreenHeader title="Ask" description="Questions answered from your notes and repos, with sources." />
         {box('Ask a question about your notes and code', 'Ask a question about your notes and code…')}
-        <Suggestions online={online} onAsk={(question) => ask(question, sources)} />
+        <Suggestions online={online} onAsk={(question) => ask(question, sources, [])} />
       </div>
     )
   }
 
-  const response = turn.state.status === 'done' ? turn.state.response : null
+  const turn = turns[turns.length - 1]!
+  const priorTurns = turns.slice(0, -1)
+  const response = turn.state.status === 'done' || turn.state.status === 'streaming' ? turn.state.response : null
+  const streaming = turn.state.status === 'streaming'
+  const busy = turn.state.status === 'loading' || streaming
   // Snippets replace the answer when asked to, or when no model answered.
-  const showSnippets = response !== null && (snippetsOnly || response.answer === null)
+  const showSnippets = response !== null && !streaming && (snippetsOnly || response.answer === null)
 
   return (
     <>
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_19rem]">
-        <article aria-busy={turn.state.status === 'loading'} className="min-w-0">
-          <div className="flex items-start gap-3">
-            <h1 className="min-w-0 flex-1 text-2xl font-semibold tracking-tight break-words">{turn.question}</h1>
-            <button type="button" onClick={startOver} className={`${outlineButton} shrink-0`}>
-              <Plus aria-hidden="true" className="size-4" />
-              New question
-            </button>
-          </div>
-          {turn.state.status === 'loading' ? (
-            <p role="status" className="mt-4 flex items-center gap-2 text-sm text-muted">
-              <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />
-              Writing an answer…
-            </p>
-          ) : turn.state.status === 'error' ? (
-            <div
-              role="alert"
-              className="mt-4 flex items-start gap-2 rounded-card border border-danger/40 bg-surface px-4 py-3 text-sm text-danger"
-            >
-              <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-              <span className="flex-1">{turn.state.message}</span>
-              <button
-                type="button"
-                disabled={!online}
-                onClick={() => ask(turn.question, turn.sources)}
-                className="-my-2 inline-flex min-h-11 items-center gap-1.5 rounded-control px-3 text-ink hover:bg-raised disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <RotateCw aria-hidden="true" className="size-4" />
-                Retry
+        <div className="min-w-0 space-y-8">
+          {priorTurns.map((prior, idx) => (
+            <section key={`${idx}-${prior.question}`} className="min-w-0 border-b border-line/70 pb-6">
+              <h2 className="text-lg font-semibold tracking-tight break-words">{prior.question}</h2>
+              {prior.state.status === 'done' ? (
+                <AnswerView
+                  response={prior.state.response}
+                  showSnippets={prior.state.response.answer === null}
+                  snippetsOnly={false}
+                  onSnippetsOnly={() => {}}
+                  sourceId={(n) => sourceId(n, `${idBase}-p${idx}`)}
+                  compact
+                />
+              ) : null}
+            </section>
+          ))}
+          <article aria-busy={busy} className="min-w-0">
+            <div className="flex items-start gap-3">
+              <h1 className="min-w-0 flex-1 text-2xl font-semibold tracking-tight break-words">{turn.question}</h1>
+              <button type="button" onClick={startOver} className={`${outlineButton} shrink-0`}>
+                <Plus aria-hidden="true" className="size-4" />
+                New question
               </button>
             </div>
-          ) : (
-            <AnswerView
-              response={turn.state.response}
-              showSnippets={showSnippets}
-              snippetsOnly={snippetsOnly}
-              onSnippetsOnly={setSnippetsOnly}
-              sourceId={sourceId}
-            />
-          )}
-        </article>
+            {turn.state.status === 'loading' ? (
+              <p role="status" className="mt-4 flex items-center gap-2 text-sm text-muted">
+                <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />
+                Writing an answer…
+              </p>
+            ) : turn.state.status === 'error' ? (
+              <div
+                role="alert"
+                className="mt-4 flex items-start gap-2 rounded-card border border-danger/40 bg-surface px-4 py-3 text-sm text-danger"
+              >
+                <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+                <span className="flex-1">{turn.state.message}</span>
+                <button
+                  type="button"
+                  disabled={!online}
+                  onClick={() => ask(turn.question, turn.sources, priorTurns)}
+                  className="-my-2 inline-flex min-h-11 items-center gap-1.5 rounded-control px-3 text-ink hover:bg-raised disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <RotateCw aria-hidden="true" className="size-4" />
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <AnswerView
+                response={turn.state.response}
+                streaming={streaming}
+                showSnippets={showSnippets}
+                snippetsOnly={snippetsOnly}
+                onSnippetsOnly={setSnippetsOnly}
+                sourceId={(n) => sourceId(n)}
+              />
+            )}
+          </article>
+        </div>
         <div className="min-w-0 space-y-4 lg:sticky lg:top-4">
           <EnginePanel used={response?.engine ?? null} model={response?.model ?? null} />
           {response === null || showSnippets || response.citations.length === 0 ? null : (
-            <SourcesPanel response={response} sourceId={sourceId} />
+            <SourcesPanel response={response} sourceId={(n) => sourceId(n)} />
           )}
         </div>
       </div>
@@ -190,16 +227,20 @@ export function AskScreen() {
 
 function AnswerView({
   response,
+  streaming = false,
   showSnippets,
   snippetsOnly,
   onSnippetsOnly,
   sourceId,
+  compact = false,
 }: {
   response: AskResponse
+  streaming?: boolean
   showSnippets: boolean
   snippetsOnly: boolean
   onSnippetsOnly: (next: boolean) => void
   sourceId: (n: number) => string
+  compact?: boolean
 }) {
   const [copy, copyText] = useClipboard()
   const note = engineNote(response)
@@ -238,6 +279,12 @@ function AnswerView({
           <AnswerText answer={response.answer ?? ''} citations={response.citations} sourceId={sourceId} />
         </p>
       )}
+      {streaming ? (
+        <p className="mt-2 flex items-center gap-1.5 text-xs text-muted">
+          <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin" />
+          Writing…
+        </p>
+      ) : null}
       {note === null ? null : (
         <p className="mt-4 flex items-start gap-2 rounded-control bg-raised px-3 py-2.5 text-[0.8125rem] leading-snug text-ink/80">
           {response.withheld > 0 ? (
@@ -248,7 +295,7 @@ function AnswerView({
           {note}
         </p>
       )}
-      {response.answer === null ? null : (
+      {response.answer === null || streaming || compact ? null : (
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <button type="button" onClick={() => copyText(answerForCopy(response))} className={outlineButton}>
             {copy === 'copied' ? (

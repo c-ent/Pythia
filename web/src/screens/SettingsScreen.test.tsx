@@ -31,7 +31,7 @@ describe('SettingsScreen', () => {
     render(<SettingsScreen section="gemini" onSignOut={() => {}} />)
     expect(screen.getByRole('heading', { level: 2, name: 'Gemini access' })).toBeTruthy()
     expect(screen.getByRole('region', { name: 'API key' })).toBeTruthy()
-    expect(screen.getByRole('region', { name: 'Kept away from Gemini' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'Access & exclusions' })).toBeTruthy()
   })
 
   it('shows the Server section', () => {

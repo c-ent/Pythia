@@ -21,6 +21,7 @@ export interface TopicMapCandidate {
   embedding: number[]
   headingPaths: string[]
   text: string
+  tags?: string[]
 }
 
 export interface TopicMapSearchParams {
@@ -55,15 +56,15 @@ WITH q AS (SELECT websearch_to_tsquery('english', $1) AS tsq),
 fts AS (
   SELECT document_id, row_number() OVER (ORDER BY best_score DESC, document_id) AS rank
   FROM (
-    SELECT c.document_id, max(ts_rank_cd(c.fts, q.tsq)) AS best_score
+    SELECT c.document_id, max(ts_rank_cd(d.title_fts || c.fts, q.tsq)) AS best_score
     FROM chunks c
     JOIN documents d ON d.id = c.document_id
     JOIN document_vectors dv ON dv.document_id = d.id AND dv.embed_model = $7
     JOIN sources s ON s.id = d.source_id
     CROSS JOIN q
-    WHERE c.fts @@ q.tsq AND c.embedding IS NOT NULL AND c.embed_model = $7
+    WHERE (c.fts @@ q.tsq OR d.title_fts @@ q.tsq) AND (d.title_fts || c.fts) @@ q.tsq AND c.embedding IS NOT NULL AND c.embed_model = $7
       AND ($10::float8 IS NULL OR (c.embedding <=> $2::vector) <= $10::float8)
-      AND s.enabled AND s.kind <> 'work' AND NOT d.excluded AND NOT d.excluded
+      AND s.enabled AND s.kind <> 'work' AND NOT d.excluded
       AND ($3::text[] IS NULL OR s.kind = ANY ($3::text[]))
       AND ($4::text IS NULL OR (s.kind = 'repo' AND s.name = $4::text))
     GROUP BY c.document_id
@@ -123,7 +124,8 @@ fused AS (
 SELECT d.id AS document_id, s.kind, s.name AS source_name, d.path, d.title, d.allow_llm,
        dv.embedding::text AS embedding,
        content.heading_paths,
-       content.text
+       content.text,
+       tag_list.tags
 FROM fused f
 JOIN documents d ON d.id = f.document_id
 JOIN sources s ON s.id = d.source_id
@@ -139,6 +141,14 @@ JOIN LATERAL (
     LIMIT 8
   ) part
 ) content ON true
+LEFT JOIN LATERAL (
+  SELECT coalesce(array_agg(DISTINCT t ORDER BY t), '{}') AS tags
+  FROM (
+    SELECT unnest(d.tags) AS t
+    UNION
+    SELECT l.target AS t FROM links l WHERE l.document_id = d.id AND l.kind = 'tag'
+  ) all_tags
+) tag_list ON true
 WHERE s.enabled AND s.kind <> 'work' AND NOT d.excluded
 ORDER BY f.score DESC, d.id`
 
@@ -173,6 +183,7 @@ export function createPgTopicMapStore(pool: Pool): TopicMapStore {
             embedding: string
             heading_paths: string[]
             text: string
+            tags: string[]
           }>(TOPIC_MAP_SQL, [
             params.ftsQuery ?? params.query,
             `[${params.embedding.join(',')}]`,
@@ -198,6 +209,7 @@ export function createPgTopicMapStore(pool: Pool): TopicMapStore {
             embedding: toVector(row.embedding),
             headingPaths: row.heading_paths,
             text: row.text,
+            tags: row.tags ?? [],
           }))
         } catch (error) {
           await client.query('ROLLBACK')

@@ -10,6 +10,7 @@ import { SourceBadge } from './SourceBadge'
 
 export type AnswerState =
   | { status: 'loading' }
+  | { status: 'streaming'; response: AskResponse }
   | { status: 'done'; response: AskResponse }
   | { status: 'error'; message: string }
 
@@ -25,14 +26,17 @@ export function AskAnswer({ state }: { state: AnswerState }) {
 
   if (state.status === 'done' && state.response.answer === null && state.response.citations.length === 0) return null
 
+  const busy = state.status === 'loading' || state.status === 'streaming'
+  const ready = state.status === 'done' || state.status === 'streaming'
+
   return (
-    <section aria-labelledby={headingId} aria-busy={state.status === 'loading'} className="rounded-card border border-accent/40 bg-surface p-4">
+    <section aria-labelledby={headingId} aria-busy={busy} className="rounded-card border border-accent/40 bg-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 id={headingId} className="flex items-center gap-2 text-base font-medium">
           <Sparkles aria-hidden="true" className="size-4 text-accent-ink" />
           Answer
         </h2>
-        {state.status === 'done' ? <EngineBadge engine={state.response.engine} model={state.response.model} /> : null}
+        {ready ? <EngineBadge engine={state.response.engine} model={state.response.model} /> : null}
       </div>
       <AnswerBody state={state} sourceIdPrefix={sourceIdPrefix} />
     </section>
@@ -58,6 +62,7 @@ function AnswerBody({ state, sourceIdPrefix }: { state: AnswerState; sourceIdPre
   }
 
   const { response } = state
+  const streaming = state.status === 'streaming'
   const note = engineNote(response)
   const sourceId = (n: number): string => `${sourceIdPrefix}-${n}`
   return (
@@ -68,6 +73,12 @@ function AnswerBody({ state, sourceIdPrefix }: { state: AnswerState; sourceIdPre
           <AnswerText answer={response.answer} citations={response.citations} sourceId={sourceId} />
         </p>
       )}
+      {streaming ? (
+        <p className="mt-2 flex items-center gap-1.5 text-xs text-muted">
+          <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin" />
+          Writing…
+        </p>
+      ) : null}
       {response.citations.length === 0 ? null : (
         <>
           <h3 className="mt-4 text-sm font-medium text-muted">Sources</h3>

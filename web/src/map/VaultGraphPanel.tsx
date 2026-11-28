@@ -7,6 +7,16 @@ import { useOnline } from '../hooks/useOnline'
 import { documentPath, followLink, repoPath } from '../router'
 import { mapMemory, type VaultGraphResult } from '../screens/map'
 import { SOURCE_LABELS } from '../search/format'
+import {
+  DEFAULT_GRAPH_DISPLAY,
+  DEFAULT_GRAPH_FILTERS,
+  DEFAULT_GRAPH_FORCES,
+  filterGraph,
+  type GraphDisplaySettings,
+  type GraphFilters,
+  type GraphForceSettings,
+} from './graphControls'
+import { GraphControlPanels } from './GraphControlPanels'
 import { isGraphResponse, nodeTone, TONE_LABELS, TONE_SWATCH, tonesIn } from './graphModel'
 
 const GraphCanvas = lazy(() => import('./GraphCanvas').then((module) => ({ default: module.GraphCanvas })))
@@ -22,6 +32,11 @@ export function VaultGraphPanel({ sources, repo }: { sources: SourceKind[]; repo
   const [attempt, setAttempt] = useState(() => mapMemory.vaultAttempt)
   const requestKey = `${attempt}:${sources.join(',')}:${repo.trim()}`
   const [result, setResult] = useState<VaultGraphResult | null>(() => mapMemory.vaultResult)
+  const [dimension, setDimension] = useState<'2d' | '3d'>('3d')
+  const [filters, setFilters] = useState<GraphFilters>(DEFAULT_GRAPH_FILTERS)
+  const [display, setDisplay] = useState<GraphDisplaySettings>(DEFAULT_GRAPH_DISPLAY)
+  const [forces, setForces] = useState<GraphForceSettings>(DEFAULT_GRAPH_FORCES)
+  const [layoutVersion, setLayoutVersion] = useState(0)
 
   useEffect(() => {
     mapMemory.vaultAttempt = attempt
@@ -41,18 +56,43 @@ export function VaultGraphPanel({ sources, repo }: { sources: SourceKind[]; repo
 
   const state: State = !online ? { status: 'offline' } : result !== null && result.key === requestKey ? result : { status: 'loading' }
   const graph = state.status === 'done' && isGraphResponse(state.graph) ? state.graph : null
-  const tones = useMemo(() => graph ? tonesIn(graph) : [], [graph])
+  const filteredGraph = useMemo(() => (graph ? filterGraph(graph, filters) : null), [filters, graph])
+  const tones = useMemo(() => filteredGraph ? tonesIn(filteredGraph) : [], [filteredGraph])
   return <section aria-label="Whole-vault graph" className="mt-5 rounded-card border border-line bg-surface p-4 md:p-5">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
-      <div><p className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted"><Network aria-hidden="true" className="size-4" />Whole-vault graph</p><p className="mt-1 text-sm text-muted">{graph ? `${graph.nodes.length} items · ${graph.edges.length} connections` : 'Notes, tags and repositories connected across your index.'}</p></div>
-      {graph && graph.nodes.length > 0 ? <button type="button" aria-pressed={listView} onClick={() => setViewOverride({ narrow, listView: !listView })} className="inline-flex min-h-11 items-center rounded-control border border-line bg-surface px-4 text-sm text-ink hover:bg-raised">{listView ? 'Show graph' : 'Show list'}</button> : null}
+      <div><p className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted"><Network aria-hidden="true" className="size-4" />Whole-vault graph</p><p className="mt-1 text-sm text-muted">{filteredGraph ? `${filteredGraph.nodes.length} items · ${filteredGraph.edges.length} connections` : 'Notes, tags and repositories connected across your index.'}</p></div>
+      {graph && graph.nodes.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {!listView ? (
+            <div role="group" aria-label="Graph dimension" className="inline-flex rounded-control bg-raised p-1">
+              <button type="button" aria-pressed={dimension === '2d'} onClick={() => setDimension('2d')} className={`inline-flex min-h-11 items-center rounded-[0.5rem] px-3 text-sm ${dimension === '2d' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'}`}>2D</button>
+              <button type="button" aria-pressed={dimension === '3d'} onClick={() => setDimension('3d')} className={`inline-flex min-h-11 items-center rounded-[0.5rem] px-3 text-sm ${dimension === '3d' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'}`}>3D</button>
+            </div>
+          ) : null}
+          <button type="button" aria-pressed={listView} onClick={() => setViewOverride({ narrow, listView: !listView })} className="inline-flex min-h-11 items-center rounded-control border border-line bg-surface px-4 text-sm text-ink hover:bg-raised">{listView ? 'Show graph' : 'Show list'}</button>
+        </div>
+      ) : null}
     </header>
     {state.status === 'loading' ? <p role="status" className="flex h-44 items-center justify-center gap-2 text-sm text-muted"><LoaderCircle aria-hidden="true" className="size-4 animate-spin" />Loading whole-vault graph…</p> : null}
     {state.status === 'offline' ? <p className="py-8 text-center text-sm text-warning">The whole-vault graph needs the server.</p> : null}
     {state.status === 'error' ? <div role="alert" className="flex flex-wrap items-center gap-3 py-5 text-sm text-danger"><TriangleAlert aria-hidden="true" className="size-4" /><span className="flex-1">{state.message}</span><button type="button" onClick={() => setAttempt((n) => n + 1)} className="inline-flex min-h-11 items-center gap-2 rounded-control border border-line px-4 text-ink"><RotateCw aria-hidden="true" className="size-4" />Retry</button></div> : null}
-    {graph ? <>
-      {graph.nodes.length === 0 ? <p className="py-10 text-center text-sm text-muted">No map documents match these filters.</p> : listView ? <VaultGraphList nodes={graph.nodes} /> : <Suspense fallback={<p role="status" className="flex h-[62dvh] min-h-104 items-center justify-center gap-2 text-sm text-muted md:h-[68dvh]"><LoaderCircle aria-hidden="true" className="size-4 animate-spin" />Drawing the graph…</p>}><GraphCanvas graph={graph} title="Vault Atlas" heightClassName="h-[62dvh] min-h-104 md:h-[68dvh]" /></Suspense>}
-      {graph.nodes.length ? <ul aria-label="Graph colours" className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">{tones.map((tone) => <li key={tone} className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`size-2.5 rounded-full ${TONE_SWATCH[tone]}`} />{TONE_LABELS[tone]}</li>)}</ul> : null}
+    {graph && filteredGraph ? <>
+      {graph.nodes.length > 0 ? (
+        <div className="mt-3">
+          <GraphControlPanels
+            filters={filters}
+            onFiltersChange={setFilters}
+            display={display}
+            onDisplayChange={setDisplay}
+            forces={forces}
+            onForcesChange={setForces}
+            onAnimate={() => setLayoutVersion((n) => n + 1)}
+            showDisplayAndForces={!listView}
+          />
+        </div>
+      ) : null}
+      {filteredGraph.nodes.length === 0 ? <p className="py-10 text-center text-sm text-muted">No map documents match these filters.</p> : listView ? <VaultGraphList nodes={filteredGraph.nodes} /> : <Suspense fallback={<p role="status" className="flex h-[62dvh] min-h-104 items-center justify-center gap-2 text-sm text-muted md:h-[68dvh]"><LoaderCircle aria-hidden="true" className="size-4 animate-spin" />Drawing the graph…</p>}><GraphCanvas graph={filteredGraph} title={dimension === '2d' ? 'Vault Network' : 'Vault Atlas'} heightClassName="h-[62dvh] min-h-104 md:h-[68dvh]" dimension={dimension} display={display} forces={forces} layoutVersion={layoutVersion} /></Suspense>}
+      {filteredGraph.nodes.length ? <ul aria-label="Graph colours" className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">{tones.map((tone) => <li key={tone} className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`size-2.5 rounded-full ${TONE_SWATCH[tone]}`} />{TONE_LABELS[tone]}</li>)}</ul> : null}
       {graph.truncated ? <p className="mt-2 text-xs text-muted">The graph is showing the best-connected items; more are available.</p> : null}
     </> : null}
   </section>

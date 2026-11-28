@@ -99,6 +99,34 @@ export function createApiRouter(
 
   router.post('/ask', async (req, res) => {
     const input = parseInput(askInputSchema, req.body)
+    if (req.headers.accept?.includes('text/event-stream') === true && ask.askStream !== undefined) {
+      res.setHeader('content-type', 'text/event-stream; charset=utf-8')
+      res.setHeader('cache-control', 'no-store')
+      res.setHeader('x-accel-buffering', 'no')
+      res.flushHeaders()
+      const controller = new AbortController()
+      res.on('close', () => {
+        if (!res.writableEnded) controller.abort()
+      })
+      try {
+        await ask.askStream(
+          input,
+          (event) => {
+            if (!res.writableEnded) res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+          },
+          controller.signal,
+        )
+        await recent?.record('ask', input.question, queryFilters(input))
+      } catch (error) {
+        if (!controller.signal.aborted && !res.writableEnded) {
+          const message = error instanceof SearchInputError ? error.message : 'Ask failed'
+          res.write(`event: error\ndata: ${JSON.stringify({ message })}\n\n`)
+        }
+      } finally {
+        if (!res.writableEnded) res.end()
+      }
+      return
+    }
     const response = await ask.ask(input)
     await recent?.record('ask', input.question, queryFilters(input))
     res.json(response)

@@ -56,4 +56,29 @@ describe('buildTopicMindmapLayout', () => {
     expect(layout.root.children[0]?.documentId).toBe(10)
     expect(layout.edges).toHaveLength(1)
   })
+
+  it('hides child nodes and edges when a branch is collapsed in-place', () => {
+    const partitioned: PartitionedTopicMap = {
+      directDocuments: [],
+      branches: [
+        {
+          label: 'Interests',
+          locked: false,
+          documents: [
+            { documentId: 3, title: 'Interests MOC', path: 'Interests.md', source: { kind: 'obsidian', name: 'vault' }, allowLlm: true },
+            { documentId: 4, title: 'Futurism MOC', path: 'Futurism.md', source: { kind: 'obsidian', name: 'vault' }, allowLlm: true },
+          ],
+        },
+      ],
+    }
+
+    const expanded = buildTopicMindmapLayout('000 Home', partitioned)
+    expect(expanded.edges).toHaveLength(3)
+    expect(expanded.root.children[0]?.children).toHaveLength(2)
+
+    const collapsed = buildTopicMindmapLayout('000 Home', partitioned, new Set(['b0']))
+    expect(collapsed.edges).toHaveLength(1)
+    expect(collapsed.root.children[0]?.collapsed).toBe(true)
+    expect(collapsed.root.children[0]?.children).toHaveLength(0)
+  })
 })

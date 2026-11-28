@@ -174,4 +174,163 @@ describe('topic map service', () => {
       ftsMaxDistance: 1 - TOPIC_MAP_CONTEXT_MIN_SIMILARITY,
     })
   })
+
+  it('prefers shared #tag or folder labels for multi-document branches without calling an LLM', async () => {
+    const docs: TopicMapCandidate[] = [
+      {
+        documentId: 1,
+        sourceKind: 'obsidian',
+        sourceName: 'vault',
+        path: 'Health/Sleep.md',
+        title: 'Sleep Notes',
+        allowLlm: true,
+        embedding: [1, 0, 0],
+        headingPaths: ['Rest'],
+        text: 'circadian rhythm',
+        tags: ['sleep'],
+      },
+      {
+        documentId: 2,
+        sourceKind: 'obsidian',
+        sourceName: 'vault',
+        path: 'Health/Nap.md',
+        title: 'Afternoon Naps',
+        allowLlm: true,
+        embedding: [0.99, 0.05, 0],
+        headingPaths: ['Rest'],
+        text: 'power nap',
+        tags: ['sleep'],
+      },
+      {
+        documentId: 3,
+        sourceKind: 'obsidian',
+        sourceName: 'vault',
+        path: 'Finance/Budget.md',
+        title: 'Monthly Budget',
+        allowLlm: true,
+        embedding: [0, 1, 0],
+        headingPaths: ['Spending'],
+        text: 'expenses',
+      },
+      {
+        documentId: 4,
+        sourceKind: 'obsidian',
+        sourceName: 'vault',
+        path: 'Finance/Taxes.md',
+        title: 'Tax Prep',
+        allowLlm: true,
+        embedding: [0.02, 0.99, 0],
+        headingPaths: ['Filing'],
+        text: 'deductions',
+      },
+      {
+        documentId: 5,
+        sourceKind: 'obsidian',
+        sourceName: 'vault',
+        path: 'Cooking.md',
+        title: 'Sourdough Starter',
+        allowLlm: true,
+        embedding: [0, 0, 1],
+        headingPaths: ['Bread'],
+        text: 'flour water',
+      },
+    ]
+    const { store } = fixtureStore(docs)
+    const response = await createTopicMapService({ store, embedder }).map({ topic: 'life' })
+    const labels = response.branches.map((branch) => branch.label)
+    expect(labels).toContain('#sleep')
+    expect(labels).toContain('Finance')
+    expect(labels).toContain('Sourdough Starter')
+  })
+
+  it('uses Gemini for AI labels only on branches where all documents allow LLM, and never sends locked docs to Gemini', async () => {
+    const docs: TopicMapCandidate[] = [
+      {
+        documentId: 1,
+        sourceKind: 'obsidian',
+        sourceName: 'vault',
+        path: 'Public/A.md',
+        title: 'Public Alpha',
+        allowLlm: true,
+        embedding: [1, 0, 0],
+        headingPaths: ['A'],
+        text: 'alpha',
+      },
+      {
+        documentId: 2,
+        sourceKind: 'obsidian',
+        sourceName: 'vault',
+        path: 'Public/B.md',
+        title: 'Public Beta',
+        allowLlm: true,
+        embedding: [0.99, 0.04, 0],
+        headingPaths: ['B'],
+        text: 'beta',
+      },
+      {
+        documentId: 3,
+        sourceKind: 'obsidian',
+        sourceName: 'vault',
+        path: 'Private/SecretA.md',
+        title: 'Secret Medical Log',
+        allowLlm: false,
+        embedding: [0, 1, 0],
+        headingPaths: ['Private'],
+        text: 'private',
+      },
+      {
+        documentId: 4,
+        sourceKind: 'obsidian',
+        sourceName: 'vault',
+        path: 'Private/SecretB.md',
+        title: 'Secret Bank Note',
+        allowLlm: false,
+        embedding: [0.02, 0.99, 0],
+        headingPaths: ['Private'],
+        text: 'private',
+      },
+      {
+        documentId: 5,
+        sourceKind: 'obsidian',
+        sourceName: 'vault',
+        path: 'Solo.md',
+        title: 'Solo Note',
+        allowLlm: true,
+        embedding: [0, 0, 1],
+        headingPaths: ['Solo'],
+        text: 'solo',
+      },
+    ]
+    const geminiPrompts: string[] = []
+    const localPrompts: string[] = []
+    const { store } = fixtureStore(docs)
+    const response = await createTopicMapService({
+      store,
+      embedder,
+      gemini: async () => ({
+        engine: 'gemini',
+        model: 'gemini-test',
+        async generate(prompt) {
+          geminiPrompts.push(prompt.user)
+          return 'Public Foundations'
+        },
+      }),
+      local: {
+        engine: 'ollama',
+        model: 'local-test',
+        async generate(prompt) {
+          localPrompts.push(prompt.user)
+          return 'Private Personal Records'
+        },
+      },
+    }).map({ topic: 'overview', aiLabels: true })
+
+    const labels = response.branches.map((branch) => branch.label)
+    expect(labels).toContain('Public Foundations')
+    expect(labels).toContain('Private Personal Records')
+    expect(geminiPrompts).toHaveLength(1)
+    expect(geminiPrompts[0]).not.toContain('Secret')
+    expect(localPrompts).toHaveLength(1)
+    expect(localPrompts[0]).toContain('Secret Medical Log')
+  })
 })

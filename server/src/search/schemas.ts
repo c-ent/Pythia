@@ -9,6 +9,8 @@ import { MAX_SEARCH_LIMIT } from './searchService.js'
 // transports accept exactly the same requests.
 
 export const MAX_QUERY_CHARS = 1000
+export const MAX_ASK_HISTORY = 3
+export const MAX_ASK_HISTORY_ANSWER_CHARS = 2000
 export const MAX_RECENT_DAYS = 365
 export const MAX_RECENT_LIMIT = 200
 export const DEFAULT_LIST_DOCUMENTS_LIMIT = 2000
@@ -23,8 +25,14 @@ export const searchInputSchema = z.object({
   limit: z.number().int().min(1).max(MAX_SEARCH_LIMIT).optional(),
 })
 
+export const askHistoryTurnSchema = z.object({
+  question: z.string().trim().min(1).max(MAX_QUERY_CHARS),
+  answer: z.string().trim().min(1).max(MAX_ASK_HISTORY_ANSWER_CHARS),
+})
+
 export const askInputSchema = z.object({
   question: z.string().trim().min(1, 'question must not be empty').max(MAX_QUERY_CHARS),
+  history: z.array(askHistoryTurnSchema).max(MAX_ASK_HISTORY).optional(),
   sources: z.array(sourceKindSchema).min(1).max(SEARCHABLE_KINDS.length).optional(),
   repo: z.string().trim().min(1).max(200).optional(),
   limit: z.number().int().min(1).max(MAX_ASK_PASSAGES).optional(),
@@ -50,6 +58,7 @@ export const topicMapInputSchema = z.object({
   context: z.string().trim().min(1).max(MAX_QUERY_CHARS).optional(),
   sources: z.array(sourceKindSchema).min(1).max(SEARCHABLE_KINDS.length).optional(),
   repo: z.string().trim().min(1).max(200).optional(),
+  aiLabels: z.boolean().optional(),
 })
 
 export const relatedInputSchema = z.object({

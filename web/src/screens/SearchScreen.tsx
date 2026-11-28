@@ -112,6 +112,9 @@ export function SearchScreen() {
       const response = await askQuestion(
         { question: text, ...(kinds.length > 0 ? { sources: kinds } : {}) },
         controller.signal,
+        (partial) => {
+          if (!controller.signal.aborted) setAnswer({ status: 'streaming', response: partial })
+        },
       )
       if (!controller.signal.aborted) setAnswer({ status: 'done', response })
     } catch (error) {
@@ -322,6 +325,13 @@ export function SearchScreen() {
           matchesOpen={matchesOpen}
           onToggleMatches={() => setShowMatches((open) => !open)}
           preview={profile.notePreviews}
+          timeZone={profile.timeZone}
+          online={online}
+          onAskResults={(text) => {
+            setMode('ask')
+            setShowMatches(false)
+            void runAsk(text, sources)
+          }}
           selectedId={selected?.chunkId ?? null}
           onSelect={wide ? setSelectedId : undefined}
         />
@@ -345,6 +355,9 @@ function Results({
   matchesOpen,
   onToggleMatches,
   preview,
+  timeZone,
+  online,
+  onAskResults,
   selectedId,
   onSelect,
 }: {
@@ -353,6 +366,9 @@ function Results({
   matchesOpen: boolean
   onToggleMatches: () => void
   preview: boolean
+  timeZone: string
+  online: boolean
+  onAskResults: (query: string) => void
   selectedId: ChunkId | null
   onSelect: ((chunkId: ChunkId) => void) | undefined
 }) {
@@ -435,9 +451,21 @@ function Results({
                   </button>
                 </div>
               ) : (
-                <h2 aria-live="polite" className="text-sm font-medium text-muted">
-                  {resultCount(results.length)}
-                </h2>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 aria-live="polite" className="text-sm font-medium text-muted">
+                    {resultCount(results.length)}
+                  </h2>
+                  <button
+                    type="button"
+                    disabled={!online}
+                    title={online ? undefined : 'Ask needs a connection'}
+                    onClick={() => onAskResults(outcome.query)}
+                    className="inline-flex min-h-11 items-center gap-1.5 rounded-control border border-line bg-surface px-3 text-sm font-medium text-ink transition-colors hover:border-accent/60 hover:bg-raised disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Sparkles aria-hidden="true" className="size-4 text-accent-ink" />
+                    Ask about these results
+                  </button>
+                </div>
               )}
               {matchesOpen ? (
                 <ol id={matchesListId} className="space-y-3">
@@ -446,6 +474,7 @@ function Results({
                       <ResultCard
                         result={result}
                         preview={preview}
+                        timeZone={timeZone}
                         selected={result.chunkId === selectedId}
                         {...(onSelect === undefined ? {} : { onSelect: () => onSelect(result.chunkId) })}
                       />

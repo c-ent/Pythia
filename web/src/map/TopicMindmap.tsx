@@ -1,13 +1,22 @@
-import { Maximize2, Minimize2, Minus, Plus, RotateCcw } from 'lucide-react'
+import { Compass, Lock, Maximize2, Minimize2, Minus, Plus, RotateCcw } from 'lucide-react'
 import type { KeyboardEvent, PointerEvent, ReactNode, WheelEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { SourceKind } from '../api/search'
 import { documentPath, navigate } from '../router'
+import { SOURCE_LABELS } from '../search/format'
 import { buildTopicMindmapLayout, type MindmapNode } from './mindmapLayout'
 import { topicMapDocuments, type PartitionedTopicMap, type VisibleTopicBranch } from './topicMapModel'
 
 const ZOOM_STEP = 1.25
 const MIN_ZOOM = 0.35
 const MAX_ZOOM = 3.2
+
+const SOURCE_DOT_COLORS: Record<SourceKind, string> = {
+  obsidian: '#b794f6',
+  keep: '#f5b454',
+  gdrive: '#7ab4ff',
+  repo: '#5fd3a8',
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
@@ -45,8 +54,15 @@ export function TopicMindmap({
   onBranch: (label: string) => void
 }) {
   const wrapperRef = useRef<HTMLDivElement>(null)
-  const layout = useMemo(() => buildTopicMindmapLayout(topic, partitioned), [partitioned, topic])
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set())
+  const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null)
+  const [hoveredDoc, setHoveredDoc] = useState<MindmapNode | null>(null)
+  const layout = useMemo(() => buildTopicMindmapLayout(topic, partitioned, collapsedIds), [collapsedIds, partitioned, topic])
   const allNodes = useMemo(() => collectNodes(layout.root), [layout.root])
+  const selectedBranch = useMemo(
+    () => (selectedBranchId === null ? null : allNodes.find((node) => node.id === selectedBranchId && node.branchQuery !== null) ?? null),
+    [allNodes, selectedBranchId],
+  )
   const docCount = useMemo(() => topicMapDocuments(branches).length, [branches])
   const branchCount = partitioned.branches.length
   const docLabel = `${docCount} ${docCount === 1 ? 'document' : 'documents'}`
@@ -201,12 +217,22 @@ export function TopicMindmap({
     }
   }
 
+  const toggleCollapse = (nodeId: string): void => {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(nodeId)) next.delete(nodeId)
+      else next.add(nodeId)
+      return next
+    })
+  }
+
   const activateNode = (node: MindmapNode): void => {
     if (dragRef.current.moved) return
     if (node.documentId !== null) {
       navigate(documentPath(node.documentId))
-    } else if (node.branchQuery !== null) {
-      onBranch(node.branchQuery)
+    } else if (node.kind === 'branch') {
+      setSelectedBranchId(node.id)
+      if (node.hasChildren) toggleCollapse(node.id)
     }
   }
 
@@ -274,20 +300,26 @@ export function TopicMindmap({
               )
             }
 
-            const isClickable = node.documentId !== null || node.branchQuery !== null
+            const isClickable = node.documentId !== null || node.kind === 'branch'
             const isLeafDoc = node.kind === 'document'
             const underlineY = node.y + 8
             const underlineX1 = node.side === 'right' ? node.inX : node.x
             const underlineX2 = node.side === 'right' ? node.x + node.width : node.inX
-            const textX = node.side === 'right' ? node.x + 5 : node.inX - 5
+            const dotOffset = isLeafDoc && node.sourceKind !== null ? 10 : 0
+            const textX = node.side === 'right' ? node.x + 5 + dotOffset : node.inX - 5 - dotOffset
+            const dotX = node.side === 'right' ? node.x + 7 : node.inX - 7
+            const forkX = node.outX
 
             return (
               <g
                 key={node.id}
                 role={isClickable ? 'button' : undefined}
                 tabIndex={isClickable ? 0 : undefined}
-                aria-label={isClickable ? node.fullLabel : undefined}
+                aria-label={isClickable ? (node.kind === 'branch' && node.hasChildren ? `${node.fullLabel} (${node.collapsed ? 'collapsed' : 'expanded'})` : node.fullLabel) : undefined}
+                aria-expanded={node.kind === 'branch' && node.hasChildren ? !node.collapsed : undefined}
                 onClick={isClickable ? () => activateNode(node) : undefined}
+                onMouseEnter={isLeafDoc ? () => setHoveredDoc(node) : undefined}
+                onMouseLeave={isLeafDoc ? () => setHoveredDoc((prev) => (prev?.id === node.id ? null : prev)) : undefined}
                 onKeyDown={
                   isClickable
                     ? (event) => {
@@ -310,8 +342,59 @@ export function TopicMindmap({
                   strokeWidth={2}
                   strokeLinecap="round"
                 />
-                {node.children.length > 0 ? (
-                  <circle cx={node.outX} cy={node.y} r={3.5} fill={node.color} />
+                {isLeafDoc && node.sourceKind !== null ? (
+                  <circle
+                    cx={dotX}
+                    cy={node.y - 6}
+                    r={3.2}
+                    fill={SOURCE_DOT_COLORS[node.sourceKind]}
+                  />
+                ) : null}
+                {node.hasChildren ? (
+                  <g
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${node.collapsed ? 'Expand' : 'Collapse'} ${node.fullLabel}`}
+                    aria-expanded={!node.collapsed}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      if (!dragRef.current.moved) {
+                        setSelectedBranchId(node.id)
+                        toggleCollapse(node.id)
+                      }
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        setSelectedBranchId(node.id)
+                        toggleCollapse(node.id)
+                      }
+                    }}
+                    className="cursor-pointer"
+                  >
+                    <circle
+                      cx={forkX}
+                      cy={node.y}
+                      r={5}
+                      fill={node.collapsed ? '#0f1218' : node.color}
+                      stroke={node.color}
+                      strokeWidth={1.75}
+                    />
+                    {node.collapsed ? (
+                      <text
+                        x={forkX}
+                        y={node.y + 0.5}
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        fill={node.color}
+                        fontSize={9}
+                        fontWeight={700}
+                      >
+                        +
+                      </text>
+                    ) : null}
+                  </g>
                 ) : null}
                 <text
                   x={textX}
@@ -375,6 +458,43 @@ export function TopicMindmap({
           </MindmapButton>
         </div>
       </div>
+
+      {/* Bottom-left branch action / document preview HUD */}
+      {hoveredDoc !== null ? (
+        <div className="pointer-events-none absolute bottom-3 left-3.5 max-w-sm rounded-control border border-nav-line bg-nav/90 px-3 py-2 text-xs text-nav-ink backdrop-blur-sm">
+          <p className="truncate font-medium">{hoveredDoc.fullLabel}</p>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-nav-muted">
+            {hoveredDoc.sourceKind !== null ? <span>{SOURCE_LABELS[hoveredDoc.sourceKind]}</span> : null}
+            {hoveredDoc.path !== null ? <span className="truncate font-mono">{hoveredDoc.path}</span> : null}
+            {hoveredDoc.allowLlm === false ? (
+              <span className="inline-flex items-center gap-1"><Lock aria-hidden="true" className="size-3" />Local only</span>
+            ) : null}
+          </p>
+        </div>
+      ) : selectedBranch !== null && selectedBranch.branchQuery !== null ? (
+        <div className="absolute bottom-3 left-3.5 flex flex-wrap items-center gap-2 rounded-control border border-nav-line bg-nav/90 px-3 py-2 text-xs text-nav-ink backdrop-blur-sm">
+          <span className="font-medium">{selectedBranch.fullLabel}</span>
+          <span className="text-nav-muted">{selectedBranch.childCount} {selectedBranch.childCount === 1 ? 'item' : 'items'}</span>
+          {selectedBranch.hasChildren ? (
+            <button
+              type="button"
+              onClick={() => toggleCollapse(selectedBranch.id)}
+              className="inline-flex min-h-9 items-center rounded-control border border-nav-line bg-nav-raised px-2.5 text-xs font-medium text-nav-ink hover:bg-nav"
+            >
+              {selectedBranch.collapsed ? 'Expand' : 'Collapse'}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => onBranch(selectedBranch.branchQuery!)}
+            aria-label={`Explore ${selectedBranch.fullLabel}`}
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-control bg-accent px-2.5 text-xs font-medium text-on-accent hover:opacity-90"
+          >
+            <Compass aria-hidden="true" className="size-3.5" />
+            Explore
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }

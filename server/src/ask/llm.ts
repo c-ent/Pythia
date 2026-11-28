@@ -2,9 +2,15 @@
 
 export type FetchFn = (url: string, init: RequestInit) => Promise<Response>
 
+export interface AskHistoryTurn {
+  question: string
+  answer: string
+}
+
 export interface ChatPrompt {
   system: string
   user: string
+  history?: readonly AskHistoryTurn[]
 }
 
 export interface ChatModel {
@@ -12,6 +18,13 @@ export interface ChatModel {
   readonly model: string
   /** Returns the answer text. Throws `LlmError` on any failure. */
   generate(prompt: ChatPrompt): Promise<string>
+  /** Streams answer tokens as they arrive and returns the full answer text. */
+  generateStream?(prompt: ChatPrompt, onToken: (delta: string) => void, signal?: AbortSignal): Promise<string>
+}
+
+export function combineSignals(timeoutMs: number, signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs)
+  return signal === undefined ? timeout : AbortSignal.any([signal, timeout])
 }
 
 /**

@@ -32,6 +32,7 @@ export interface TopicMapParams {
   context?: string
   sources?: SourceKind[]
   repo?: string
+  aiLabels?: boolean
 }
 
 export async function buildTopicMap(params: TopicMapParams, signal?: AbortSignal): Promise<TopicMapResponse> {

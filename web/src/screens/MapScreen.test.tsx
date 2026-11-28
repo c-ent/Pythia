@@ -102,7 +102,7 @@ describe('MapScreen', () => {
     setNarrow(true)
     fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'focus' } })
     fireEvent.click(screen.getByRole('button', { name: 'Build map' }))
-    fireEvent.click(await screen.findByRole('button', { name: /Deep work/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Explore Deep work' }))
     await screen.findByRole('region', { name: /Map for Deep work/ })
     expect((screen.getByLabelText('Topic') as HTMLInputElement).value).toBe('Deep work')
     expect(screen.getByText('Inside focus')).toBeTruthy()
@@ -118,24 +118,37 @@ describe('MapScreen', () => {
     expect(screen.getByText('The whole-vault graph needs the server.')).toBeTruthy()
   })
 
-  it('shows the 3D topic atlas with zoom controls on wide screens and lets the user switch to the outline list', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => json(200, {
-      topic: 'job',
-      branches: [
-        {
-          label: 'just · not',
-          documents: [{ documentId: 1, title: 'Job Search Strategy', path: 'Job Search Strategy.md', source: { kind: 'obsidian', name: 'vault' }, allowLlm: true }],
-        },
-      ],
-    })))
+  it('defaults to the 2D mindmap on wide screens, supports 2D/3D/List switching, AI labels, and node filtering', async () => {
+    const calls = stubFetch()
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit = {}) => {
+      const body = init.body ? JSON.parse(String(init.body)) as { topic?: string; aiLabels?: boolean } : null
+      calls.push({ url, body })
+      return json(200, {
+        topic: body?.topic ?? 'job',
+        branches: [
+          {
+            label: body?.aiLabels ? 'Career Planning' : 'just · not',
+            documents: [
+              { documentId: 1, title: 'Job Search Strategy', path: 'Job Search Strategy.md', source: { kind: 'obsidian', name: 'vault' }, allowLlm: true },
+              { documentId: 3, title: 'Resume Checklist', path: 'Resume.md', source: { kind: 'obsidian', name: 'vault' }, allowLlm: true },
+            ],
+          },
+          {
+            label: 'Interviews',
+            documents: [
+              { documentId: 2, title: 'System Design Prep', path: 'Prep.md', source: { kind: 'obsidian', name: 'vault' }, allowLlm: true },
+              { documentId: 4, title: 'Behavioral Questions', path: 'Behavioral.md', source: { kind: 'obsidian', name: 'vault' }, allowLlm: true },
+            ],
+          },
+        ],
+      })
+    }))
     setNarrow(false)
     render(<MapScreen />)
     fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'job' } })
     fireEvent.click(screen.getByRole('button', { name: 'Build map' }))
 
-    await screen.findByRole('img', { name: /3D topic map for job/ })
-    expect(screen.getAllByText('1 document')).toHaveLength(2)
-    expect(screen.queryByText(/\d+ branch/)).toBeNull()
+    await screen.findByRole('img', { name: /2D mindmap for job/ })
     expect(screen.getByRole('button', { name: 'Full screen' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Zoom in' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Zoom out' })).toBeTruthy()
@@ -144,12 +157,49 @@ describe('MapScreen', () => {
     fireEvent.click(screen.getByText('Where these branches come from'))
     expect(screen.getByRole('link', { name: /Job Search Strategy/ }).getAttribute('href')).toBe('/doc/1')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Mindmap' }))
-    expect(await screen.findByRole('img', { name: /2D mindmap for job/ })).toBeTruthy()
+    // Switch to 3D and List
+    fireEvent.click(screen.getByRole('button', { name: '3D' }))
+    expect(await screen.findByRole('img', { name: /3D topic map for job/ })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'List' }))
     expect(screen.getByRole('list', { name: 'Topic map outline' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '3D map' }))
-    expect(screen.getByRole('img', { name: /3D topic map for job/ })).toBeTruthy()
+
+    // Quick node filter on Topic Map
+    fireEvent.change(screen.getByLabelText('Filter nodes'), { target: { value: 'System Design' } })
+    expect(screen.queryByRole('link', { name: /Job Search Strategy/ })).toBeNull()
+    expect(screen.getByRole('link', { name: /System Design Prep/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filter' }))
+
+    // AI labels toggle
+    fireEvent.click(screen.getByRole('button', { name: 'AI labels' }))
+    expect(await screen.findByText('Career Planning')).toBeTruthy()
+    expect(calls.at(-1)).toMatchObject({ url: '/api/topic-map', body: { topic: 'job', aiLabels: true } })
+
+    fireEvent.click(screen.getByRole('button', { name: '2D' }))
+    expect(await screen.findByRole('img', { name: /2D mindmap for job/ })).toBeTruthy()
+  })
+
+  it('provides Filters, Display, Forces, and 2D/3D switcher on Whole Vault', async () => {
+    stubFetch()
+    setNarrow(false)
+    render(<MapScreen />)
+    fireEvent.click(screen.getByRole('button', { name: 'Whole vault' }))
+    await screen.findByTestId('vault-canvas')
+
+    fireEvent.click(screen.getByRole('button', { name: '2D' }))
+    expect(screen.getByRole('button', { name: '2D' }).getAttribute('aria-pressed')).toBe('true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    expect(screen.getByRole('region', { name: 'Graph filters' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Tags' }))
+    expect(screen.getByText('2 nodes')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Display' }))
+    expect(screen.getByRole('region', { name: 'Graph display settings' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Arrows' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Forces' }))
+    expect(screen.getByRole('region', { name: 'Graph force settings' })).toBeTruthy()
+    expect(screen.getByLabelText('Center force')).toBeTruthy()
   })
 
   it('restores the topic map, drill-down trail, and whole-vault view after remounting without refetching', async () => {
@@ -181,7 +231,7 @@ describe('MapScreen', () => {
     const first = render(<MapScreen />)
     fireEvent.change(screen.getByLabelText('Topic'), { target: { value: 'ikigai' } })
     fireEvent.click(screen.getByRole('button', { name: 'Build map' }))
-    fireEvent.click(await screen.findByRole('button', { name: /Purpose/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Explore Purpose' }))
     await screen.findByRole('region', { name: /Map for Purpose/ })
     expect(calls).toHaveBeenCalledTimes(2)
 

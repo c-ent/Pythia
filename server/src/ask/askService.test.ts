@@ -432,3 +432,60 @@ describe('buildPrompt', () => {
     expect(prompt.user.length).toBeLessThan(5_000)
   })
 })
+
+describe('askStream and follow-up history', () => {
+  it('streams meta on the first token and falls back cleanly before tokens start', async () => {
+    const { search } = fakeSearch([publicHit])
+    const gemini: ChatModel = {
+      engine: 'gemini',
+      model: 'gemini-test',
+      async generate() {
+        throw new LlmError('rate limit', { status: 429 })
+      },
+      async generateStream() {
+        throw new LlmError('rate limit', { status: 429 })
+      },
+    }
+    const local: ChatModel = {
+      engine: 'ollama',
+      model: 'local-test',
+      async generate() {
+        return 'Part 1 Part 2'
+      },
+      async generateStream(_prompt, onToken) {
+        onToken('Part 1 ')
+        onToken('Part 2')
+        return 'Part 1 Part 2'
+      },
+    }
+    const ask = createAskService({ search, chunks: loader(defaultTexts), gemini, local, log: quiet })
+    const events: unknown[] = []
+    const response = await ask.askStream!({ question: 'Goal?' }, (event) => events.push(event))
+
+    expect(response).toMatchObject({ engine: 'ollama', answer: 'Part 1 Part 2', fallbacks: ['gemini_failed'] })
+    expect(events).toEqual([
+      expect.objectContaining({ type: 'meta', engine: 'ollama', fallbacks: ['gemini_failed'] }),
+      { type: 'token', text: 'Part 1 ' },
+      { type: 'token', text: 'Part 2' },
+      { type: 'done', answer: 'Part 1 Part 2' },
+    ])
+  })
+
+  it('passes follow-up history and still enforces allow_llm on retrieved passages', async () => {
+    const { search, calls } = fakeSearch([privateHit])
+    const gemini = fakeModel('gemini')
+    const local = fakeModel('ollama', 'Local follow-up.')
+    const ask = createAskService({ search, chunks: loader(defaultTexts), gemini: gemini.model, local: local.model, log: quiet })
+
+    const response = await ask.ask({
+      question: 'which file had that?',
+      history: [{ question: 'what is my salary?', answer: '123456' }],
+    })
+
+    expect(response.engine).toBe('ollama')
+    expect(response.fallbacks).toEqual(['all_private'])
+    expect(gemini.prompts).toHaveLength(0)
+    expect(local.prompts[0]?.history).toEqual([{ question: 'what is my salary?', answer: '123456' }])
+    expect(calls.map((c) => c.query)).toEqual(['which file had that?', 'what is my salary?'])
+  })
+})

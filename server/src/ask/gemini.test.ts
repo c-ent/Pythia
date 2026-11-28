@@ -118,6 +118,45 @@ describe('gemini model', () => {
     await createGeminiModel({ apiKey: KEY, fetch, model: 'gemini-4-hydrogen', baseUrl: 'https://proxy.test/v1beta/' }).generate(prompt)
     expect(calls[0]?.url).toBe('https://proxy.test/v1beta/models/gemini-4-hydrogen:generateContent')
   })
+
+  it('streams non-thought SSE chunks and passes conversation history', async () => {
+    const sse = [
+      'data: {"candidates":[{"content":{"parts":[{"text":"thinking","thought":true}]}}]}',
+      '',
+      'data: {"candidates":[{"content":{"parts":[{"text":"Hello "}]}}]}',
+      '',
+      'data: {"candidates":[{"content":{"parts":[{"text":"world [1]."}]}}]}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n')
+    let sentBody = ''
+    const fetchFn: FetchFn = async (_url, init) => {
+      sentBody = String(init.body)
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(sse))
+            controller.close()
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      )
+    }
+    const gemini = createGeminiModel({ apiKey: KEY, fetch: fetchFn, retries: 0 })
+    const tokens: string[] = []
+    const text = await gemini.generateStream!(
+      { system: 'sys', user: 'follow-up', history: [{ question: 'q1', answer: 'a1' }] },
+      (delta) => tokens.push(delta),
+    )
+    expect(tokens).toEqual(['Hello ', 'world [1].'])
+    expect(text).toBe('Hello world [1].')
+    expect(JSON.parse(sentBody).contents).toEqual([
+      { role: 'user', parts: [{ text: 'q1' }] },
+      { role: 'model', parts: [{ text: 'a1' }] },
+      { role: 'user', parts: [{ text: 'follow-up' }] },
+    ])
+  })
 })
 
 describe('parseRetryAfter', () => {

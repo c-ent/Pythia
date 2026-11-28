@@ -1,8 +1,11 @@
-import type { AskEngine, AskResponse } from '../api/ask'
+import type { AskEngine, AskHistoryTurn, AskResponse } from '../api/ask'
 import type { SourceKind } from '../api/search'
 import type { AnswerState } from '../search/AskAnswer'
 
 // Ask page (T33) helpers, kept apart from AskScreen.tsx so that file exports only components.
+
+export const MAX_ASK_HISTORY = 3
+const MAX_HISTORY_ANSWER_CHARS = 2000
 
 export interface AskTurn {
   question: string
@@ -11,15 +14,27 @@ export interface AskTurn {
 }
 
 /**
- * The last question and source filter, kept in memory while the app is open:
+ * The conversation turns and source filter, kept in memory while the app is open:
  * a source link opens the document in place of the Ask page, and Back should
  * come back to the same answer. A question still loading is asked again.
  */
-export const askMemory: { turn: AskTurn | null; sources: SourceKind[] } = { turn: null, sources: [] }
+export const askMemory: { turns: AskTurn[]; sources: SourceKind[] } = { turns: [], sources: [] }
 
 export function resetAskMemory(): void {
-  askMemory.turn = null
+  askMemory.turns = []
   askMemory.sources = []
+}
+
+export function historyFromTurns(turns: readonly AskTurn[]): AskHistoryTurn[] {
+  return turns
+    .filter((turn): turn is AskTurn & { state: { status: 'done'; response: AskResponse } } =>
+      turn.state.status === 'done' && turn.state.response.answer !== null && turn.state.response.answer.trim() !== '',
+    )
+    .slice(-MAX_ASK_HISTORY)
+    .map((turn) => ({
+      question: turn.question,
+      answer: turn.state.response.answer!.slice(0, MAX_HISTORY_ANSWER_CHARS),
+    }))
 }
 
 /** The Gemini → local model → snippets chain, in order, for the Answer engine panel. */

@@ -1,4 +1,4 @@
-import { ArrowLeft, Copy, LoaderCircle, Map, RotateCw, TriangleAlert } from 'lucide-react'
+import { ArrowLeft, ChevronDown, ChevronRight, Compass, Copy, LoaderCircle, Map, RotateCw, Sparkles, TriangleAlert } from 'lucide-react'
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { buildTopicMap, type TopicMapResponse } from '../api/topicMap'
@@ -27,6 +27,25 @@ function drillContext(trail: readonly string[]): string | undefined {
   return `${trail[0]} · ${trail[trail.length - 1]}`
 }
 
+function filterTopicBranches(branches: readonly VisibleTopicBranch[], query: string): VisibleTopicBranch[] {
+  const q = query.trim().toLocaleLowerCase()
+  if (q === '') return [...branches]
+  const filterBranch = (branch: VisibleTopicBranch): VisibleTopicBranch | null => {
+    if (branch.label.toLocaleLowerCase().includes(q)) return branch
+    const docs = branch.documents.filter(
+      (doc) => doc.title.toLocaleLowerCase().includes(q) || doc.path.toLocaleLowerCase().includes(q),
+    )
+    const subbranches = branch.branches?.map(filterBranch).filter((child): child is VisibleTopicBranch => child !== null)
+    if (docs.length === 0 && (subbranches === undefined || subbranches.length === 0)) return null
+    return {
+      ...branch,
+      documents: docs,
+      ...(subbranches !== undefined && subbranches.length > 0 ? { branches: subbranches } : {}),
+    }
+  }
+  return branches.map(filterBranch).filter((branch): branch is VisibleTopicBranch => branch !== null)
+}
+
 export function MapScreen() {
   const online = useOnline()
   const narrow = useMediaQuery('(max-width: 639px)')
@@ -35,9 +54,11 @@ export function MapScreen() {
   const [trail, setTrail] = useState<string[]>(() => mapMemory.trail)
   const [sources, setSources] = useState<SourceKind[]>(() => mapMemory.sources)
   const [repo, setRepo] = useState(() => mapMemory.repo)
+  const [aiLabels, setAiLabels] = useState(() => mapMemory.aiLabels)
+  const [nodeFilter, setNodeFilter] = useState(() => mapMemory.nodeFilter)
   const [result, setResult] = useState<TopicMapResult | null>(() => mapMemory.result)
   const [viewOverride, setViewOverride] = useState<{ narrow: boolean; mode: TopicDisplayMode } | null>(() => mapMemory.viewOverride)
-  const displayMode: TopicDisplayMode = viewOverride !== null && viewOverride.narrow === narrow ? viewOverride.mode : (narrow ? 'list' : 'atlas')
+  const displayMode: TopicDisplayMode = viewOverride !== null && viewOverride.narrow === narrow ? viewOverride.mode : (narrow ? 'list' : 'mindmap')
   const [attempt, setAttempt] = useState(() => mapMemory.attempt)
   const [copied, copy] = useClipboard()
   const [view, setView] = useState<MapView>(() => mapMemory.view)
@@ -45,7 +66,7 @@ export function MapScreen() {
   const trimmedTopic = submittedTopic.trim()
   const contextText = drillContext(trail)
   const activeKey = attempt > 0 && online && trimmedTopic !== ''
-    ? `${attempt}:${trimmedTopic}:${contextText ?? ''}:${sources.join(',')}:${repo.trim()}`
+    ? `${attempt}:${trimmedTopic}:${contextText ?? ''}:${sources.join(',')}:${repo.trim()}:${aiLabels ? 'ai' : 'local'}`
     : null
 
   useEffect(() => {
@@ -55,10 +76,12 @@ export function MapScreen() {
     mapMemory.trail = trail
     mapMemory.sources = sources
     mapMemory.repo = repo
+    mapMemory.aiLabels = aiLabels
+    mapMemory.nodeFilter = nodeFilter
     mapMemory.attempt = attempt
     mapMemory.result = result
     mapMemory.viewOverride = viewOverride
-  }, [attempt, repo, result, sources, submittedTopic, topic, trail, view, viewOverride])
+  }, [aiLabels, attempt, nodeFilter, repo, result, sources, submittedTopic, topic, trail, view, viewOverride])
 
   useEffect(() => {
     if (activeKey === null) return
@@ -70,6 +93,7 @@ export function MapScreen() {
         ...(contextText ? { context: contextText } : {}),
         ...(sources.length ? { sources } : {}),
         ...(repo.trim() ? { repo: repo.trim() } : {}),
+        ...(aiLabels ? { aiLabels: true } : {}),
       },
       controller.signal,
     )
@@ -78,7 +102,7 @@ export function MapScreen() {
         if (!controller.signal.aborted) setResult({ key: activeKey, status: 'error', message: error instanceof Error ? error.message : 'The topic map could not be built.' })
       })
     return () => controller.abort()
-  }, [activeKey, contextText, repo, result, sources, trimmedTopic])
+  }, [activeKey, aiLabels, contextText, repo, result, sources, trimmedTopic])
 
   const state: LoadState = useMemo(
     () => activeKey !== null
@@ -86,9 +110,11 @@ export function MapScreen() {
       : (result ?? { status: 'idle' }),
     [activeKey, result],
   )
-  const branches = useMemo(() => state.status === 'done' ? safeTopicBranches(state.response.branches) : [], [state])
+  const allBranches = useMemo(() => state.status === 'done' ? safeTopicBranches(state.response.branches) : [], [state])
+  const branches = useMemo(() => filterTopicBranches(allBranches, nodeFilter), [allBranches, nodeFilter])
   const partitioned = useMemo(() => partitionTopicMap(branches), [branches])
   const documents = useMemo(() => topicMapDocuments(branches), [branches])
+  const totalDocuments = useMemo(() => topicMapDocuments(allBranches).length, [allBranches])
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
     const next = topic.trim()
@@ -157,9 +183,23 @@ export function MapScreen() {
           </div>
           <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div className="min-w-0 flex-1"><SourceChips value={sources} onChange={setSources} /></div>
-            <div className="w-full min-w-0 sm:w-56 sm:shrink-0">
-              <label htmlFor="repo-filter" className="block text-sm font-medium">Repository <span className="font-normal text-muted">(optional)</span></label>
-              <input id="repo-filter" value={repo} onChange={(event) => setRepo(event.target.value)} maxLength={200} placeholder="Filter to a repo name" className="mt-1.5 min-h-11 w-full rounded-control border border-line bg-canvas px-3 text-base text-ink placeholder:text-muted" />
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="w-full min-w-0 sm:w-52 sm:shrink-0">
+                <label htmlFor="repo-filter" className="block text-sm font-medium">Repository <span className="font-normal text-muted">(optional)</span></label>
+                <input id="repo-filter" value={repo} onChange={(event) => setRepo(event.target.value)} maxLength={200} placeholder="Filter to a repo name" className="mt-1.5 min-h-11 w-full rounded-control border border-line bg-canvas px-3 text-base text-ink placeholder:text-muted" />
+              </div>
+              <button
+                type="button"
+                aria-pressed={aiLabels}
+                disabled={!online}
+                onClick={() => setAiLabels((prev) => !prev)}
+                className={`inline-flex min-h-11 items-center gap-2 rounded-control border px-3.5 text-sm font-medium transition-colors disabled:opacity-50 ${
+                  aiLabels ? 'border-strong bg-strong text-on-strong' : 'border-line bg-canvas text-ink hover:bg-raised'
+                }`}
+              >
+                <Sparkles aria-hidden="true" className="size-4" />
+                AI labels
+              </button>
             </div>
           </div>
         </div>
@@ -186,16 +226,34 @@ export function MapScreen() {
             <div className="flex flex-wrap gap-2">
               {trail.length > 0 ? <button type="button" onClick={stepBack} className={BUTTON}><ArrowLeft aria-hidden="true" className="size-4" />Back to {trail.at(-1)}</button> : null}
               <button type="button" onClick={() => void copyOutline()} className={BUTTON}><Copy aria-hidden="true" className="size-4" />{copied === 'copied' ? 'Copied' : copied === 'failed' ? 'Copy failed' : 'Copy as Markdown'}</button>
-              {documents.length > 0 ? (
+              {totalDocuments > 0 ? (
                 <div role="group" aria-label="Topic display" className="inline-flex rounded-control bg-raised p-1">
-                  <button type="button" aria-pressed={displayMode === 'atlas'} onClick={() => setViewOverride({ narrow, mode: 'atlas' })} className={`inline-flex min-h-11 items-center rounded-[0.5rem] px-3.5 text-sm ${displayMode === 'atlas' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'}`}>3D map</button>
-                  <button type="button" aria-pressed={displayMode === 'mindmap'} onClick={() => setViewOverride({ narrow, mode: 'mindmap' })} className={`inline-flex min-h-11 items-center rounded-[0.5rem] px-3.5 text-sm ${displayMode === 'mindmap' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'}`}>Mindmap</button>
+                  <button type="button" aria-pressed={displayMode === 'mindmap'} onClick={() => setViewOverride({ narrow, mode: 'mindmap' })} className={`inline-flex min-h-11 items-center rounded-[0.5rem] px-3.5 text-sm ${displayMode === 'mindmap' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'}`}>2D</button>
+                  <button type="button" aria-pressed={displayMode === 'atlas'} onClick={() => setViewOverride({ narrow, mode: 'atlas' })} className={`inline-flex min-h-11 items-center rounded-[0.5rem] px-3.5 text-sm ${displayMode === 'atlas' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'}`}>3D</button>
                   <button type="button" aria-pressed={displayMode === 'list'} onClick={() => setViewOverride({ narrow, mode: 'list' })} className={`inline-flex min-h-11 items-center rounded-[0.5rem] px-3.5 text-sm ${displayMode === 'list' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'}`}>List</button>
                 </div>
               ) : null}
             </div>
           </header>
-          {documents.length === 0 ? <p className="py-10 text-center text-sm text-muted">No matching map documents were found. Try another topic or filter.</p> : displayMode === 'list' ? <TopicList partitioned={partitioned} onBranch={chooseBranch} /> : <>
+          {totalDocuments > 0 ? (
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <input
+                type="search"
+                aria-label="Filter nodes"
+                value={nodeFilter}
+                onChange={(event) => setNodeFilter(event.target.value)}
+                maxLength={120}
+                placeholder="Filter nodes by title or path"
+                className="min-h-11 w-full rounded-control border border-line bg-canvas px-3 text-base text-ink placeholder:text-muted sm:max-w-xs"
+              />
+              {nodeFilter.trim() !== '' ? (
+                <button type="button" onClick={() => setNodeFilter('')} className="min-h-11 rounded-control px-3 text-sm text-muted hover:bg-raised hover:text-ink">
+                  Clear filter
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {documents.length === 0 ? <p className="py-10 text-center text-sm text-muted">{totalDocuments > 0 ? 'No nodes match this filter.' : 'No matching map documents were found. Try another topic or filter.'}</p> : displayMode === 'list' ? <TopicList partitioned={partitioned} onBranch={chooseBranch} /> : <>
             {displayMode === 'mindmap' ? (
               <Suspense fallback={<p role="status" className="flex h-104 items-center justify-center gap-2 text-sm text-muted md:h-136"><LoaderCircle aria-hidden="true" className="size-4 animate-spin" />Drawing the mindmap…</p>}>
                 <TopicMindmap topic={state.response.topic} branches={branches} partitioned={partitioned} onBranch={chooseBranch} />
@@ -249,10 +307,34 @@ function TopicList({ partitioned, onBranch }: { partitioned: PartitionedTopicMap
 }
 
 function BranchList({ branch, depth, onBranch }: { branch: VisibleTopicBranch; depth: number; onBranch: (label: string) => void }) {
+  const [expanded, setExpanded] = useState(true)
+  const count = branch.branches?.length ?? branch.documents.length
   return <div className={depth ? 'ml-4 mt-3 border-l border-line pl-3' : ''}>
-    <button type="button" onClick={() => onBranch(branch.label)} className="min-h-11 rounded-control px-2 text-left font-medium text-accent-ink hover:bg-raised">{branch.label}<span className="ml-2 text-xs font-normal text-muted">{branch.branches?.length ?? branch.documents.length}</span></button>
-    {branch.branches?.map((child) => <BranchList key={child.label} branch={child} depth={depth + 1} onBranch={onBranch} />)}
-    {branch.documents.map((document) => <DocumentLink key={document.documentId} document={document} />)}
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((prev) => !prev)}
+        className="inline-flex min-h-11 items-center gap-1.5 rounded-control px-2 text-left font-medium text-ink hover:bg-raised"
+      >
+        {expanded ? <ChevronDown aria-hidden="true" className="size-4 text-muted" /> : <ChevronRight aria-hidden="true" className="size-4 text-muted" />}
+        <span>{branch.label}</span>
+        <span className="ml-1 text-xs font-normal text-muted">{count}</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => onBranch(branch.label)}
+        aria-label={`Explore ${branch.label}`}
+        className="inline-flex min-h-11 items-center gap-1.5 rounded-control px-3 text-xs font-medium text-accent-ink hover:bg-raised"
+      >
+        <Compass aria-hidden="true" className="size-3.5" />
+        Explore
+      </button>
+    </div>
+    {expanded ? <>
+      {branch.branches?.map((child) => <BranchList key={child.label} branch={child} depth={depth + 1} onBranch={onBranch} />)}
+      {branch.documents.map((document) => <DocumentLink key={document.documentId} document={document} />)}
+    </> : null}
   </div>
 }
 

@@ -1,3 +1,4 @@
+import type { ChatModel } from '../ask/llm.js'
 import {
   TOPIC_MAP_CONTEXT_MIN_SIMILARITY,
   TOPIC_MAP_DOC_MIN_SIMILARITY,
@@ -22,6 +23,8 @@ export interface TopicMapRequest {
   context?: string
   sources?: readonly SearchableKind[]
   repo?: string
+  /** When true, request short natural-language branch labels via LLM (respecting allowLlm). */
+  aiLabels?: boolean
 }
 
 export interface TopicMapLeaf {
@@ -56,6 +59,8 @@ export interface TopicMapService {
 export interface TopicMapServiceOptions {
   store: TopicMapStore
   embedder: Embedder
+  gemini?: () => Promise<ChatModel | null>
+  local?: ChatModel | null
 }
 
 const STOP_WORDS = new Set(
@@ -120,11 +125,58 @@ function documentTermWeights(document: TopicMapCandidate): Map<string, number> {
 }
 
 const GENERIC_TITLES = new Set(['readme', 'readme.md', 'index', 'index.md', 'changelog', 'changelog.md'])
+const GENERIC_FOLDERS = new Set(['.', '..', 'doc', 'docs', 'notes', 'note'])
 
 function singleDocumentLabel(document: TopicMapCandidate): string | null {
   const trimmed = document.title.trim()
   if (trimmed === '' || GENERIC_TITLES.has(trimmed.toLocaleLowerCase())) return null
   return trimmed
+}
+
+function sharedTagLabel(documents: readonly TopicMapCandidate[]): { label: string; count: number } | null {
+  const threshold = Math.max(2, Math.ceil(documents.length * 0.6))
+  const counts = new Map<string, number>()
+  for (const doc of documents) {
+    const docTags = new Set(
+      (doc.tags ?? [])
+        .map((tag) => tag.trim().replace(/^#/, '').toLocaleLowerCase())
+        .filter((tag) => tag.length > 0),
+    )
+    for (const tag of docTags) {
+      counts.set(tag, (counts.get(tag) ?? 0) + 1)
+    }
+  }
+  const best = [...counts.entries()]
+    .filter(([, count]) => count >= threshold)
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))[0]
+  return best === undefined ? null : { label: `#${best[0]}`, count: best[1] }
+}
+
+function sharedFolderLabel(documents: readonly TopicMapCandidate[]): { label: string; count: number } | null {
+  const threshold = Math.max(2, Math.ceil(documents.length * 0.6))
+  const counts = new Map<string, { label: string; count: number; depth: number }>()
+  for (const doc of documents) {
+    const segments = doc.path.split('/').filter(Boolean)
+    segments.pop() // drop filename
+    const seen = new Set<string>()
+    segments.forEach((segment, index) => {
+      const clean = segment.trim()
+      const lower = clean.toLocaleLowerCase()
+      if (clean === '' || GENERIC_FOLDERS.has(lower) || seen.has(lower)) return
+      seen.add(lower)
+      const prev = counts.get(lower)
+      if (prev === undefined) {
+        counts.set(lower, { label: clean, count: 1, depth: index })
+      } else {
+        prev.count += 1
+        prev.depth = Math.max(prev.depth, index)
+      }
+    })
+  }
+  const best = [...counts.values()]
+    .filter((entry) => entry.count >= threshold)
+    .sort((a, b) => b.count - a.count || b.depth - a.depth || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0))[0]
+  return best === undefined ? null : { label: best.label, count: best.count }
 }
 
 interface LabelContext {
@@ -133,11 +185,20 @@ interface LabelContext {
   queryTerms: ReadonlySet<string>
 }
 
-/** Stable keyword labels: 1-doc branches keep their title; multi-doc branches use distinctive terms. */
+/** Instant branch labels: 1-doc branches keep their title; multi-doc branches prefer shared tag/folder, then TF-IDF. */
 function labelFor(documents: readonly TopicMapCandidate[], fallback: string, ctx: LabelContext): string {
   if (documents.length === 1) {
     const title = singleDocumentLabel(documents[0]!)
     if (title !== null) return title
+  }
+  if (documents.length > 1) {
+    const tagMatch = sharedTagLabel(documents)
+    const folderMatch = sharedFolderLabel(documents)
+    if (tagMatch !== null && folderMatch !== null) {
+      return tagMatch.count >= folderMatch.count ? tagMatch.label : folderMatch.label
+    }
+    if (tagMatch !== null) return tagMatch.label
+    if (folderMatch !== null) return folderMatch.label
   }
   const scores = new Map<string, number>()
   for (const document of documents) {
@@ -235,21 +296,72 @@ const toLeaf = (doc: TopicMapCandidate): TopicMapLeaf => ({
   allowLlm: doc.allowLlm,
 })
 
-function makeBranch(documents: readonly TopicMapCandidate[], index: number, ctx: LabelContext): TopicMapBranch {
-  const label = labelFor(documents, `Topic ${index + 1}`, ctx)
+const AI_LABEL_SYSTEM =
+  'You label branches of a personal knowledge map. Reply with only a concise 2 to 5 word subtopic label in plain text. No quotes, no markdown, no bullet points, no trailing punctuation.'
+
+function cleanAiLabel(raw: string): string | null {
+  const firstLine = raw.split(/\r?\n/, 1)[0] ?? ''
+  const cleaned = firstLine
+    .replace(/^["'`*#\-\s]+|["'`*.\s]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (cleaned.length < 2 || cleaned.length > 60) return null
+  return cleaned
+}
+
+async function aiLabelFor(
+  documents: readonly TopicMapCandidate[],
+  fallback: string,
+  topic: string,
+  options: Pick<TopicMapServiceOptions, 'gemini' | 'local'>,
+): Promise<string> {
+  if (documents.length <= 1) return fallback
+  const allAllowLlm = documents.every((doc) => doc.allowLlm)
+  // Never send allow_llm = false document titles or text to Gemini (R8, D4).
+  const model = allAllowLlm ? ((await options.gemini?.()) ?? options.local ?? null) : (options.local ?? null)
+  if (model === null) return fallback
+  const list = documents
+    .slice(0, 8)
+    .map((doc) => `- ${doc.title}${doc.headingPaths[0] ? ` (${doc.headingPaths[0]})` : ''}`)
+    .join('\n')
+  try {
+    const raw = await model.generate({
+      system: AI_LABEL_SYSTEM,
+      user: `Topic: ${topic}\nCurrent label: ${fallback}\nDocuments:\n${list}`,
+    })
+    return cleanAiLabel(raw) ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+async function makeBranch(
+  documents: readonly TopicMapCandidate[],
+  index: number,
+  ctx: LabelContext,
+  topic: string,
+  aiLabels: boolean,
+  options: Pick<TopicMapServiceOptions, 'gemini' | 'local'>,
+): Promise<TopicMapBranch> {
+  const baseLabel = labelFor(documents, `Topic ${index + 1}`, ctx)
+  const label = aiLabels ? await aiLabelFor(documents, baseLabel, topic, options) : baseLabel
   if (documents.length <= MAX_TOPIC_BRANCH_DOCUMENTS) {
     return { label, documents: documents.map(toLeaf) }
   }
   const childCount = Math.ceil(documents.length / MAX_TOPIC_BRANCH_DOCUMENTS)
-  const children = cluster(documents, childCount).flatMap((group, groupIndex) => {
+  const childGroups = cluster(documents, childCount).flatMap((group) => {
     const ordered = [...group].sort((a, b) => a.documentId - b.documentId)
     const parts: TopicMapCandidate[][] = []
     for (let i = 0; i < ordered.length; i += MAX_TOPIC_BRANCH_DOCUMENTS) parts.push(ordered.slice(i, i + MAX_TOPIC_BRANCH_DOCUMENTS))
-    return parts.map((part, partIndex) => ({
-      label: labelFor(part, `${label} ${groupIndex + 1}.${partIndex + 1}`, ctx),
-      documents: part.map(toLeaf),
-    }))
+    return parts
   })
+  const children = await Promise.all(
+    childGroups.map(async (part, partIndex) => {
+      const subBase = labelFor(part, `${label} ${partIndex + 1}`, ctx)
+      const subLabel = aiLabels ? await aiLabelFor(part, subBase, topic, options) : subBase
+      return { label: subLabel, documents: part.map(toLeaf) }
+    }),
+  )
   return { label, documents: [], branches: children }
 }
 
@@ -300,7 +412,11 @@ export function createTopicMapService(options: TopicMapServiceOptions): TopicMap
 
       const branchCount = Math.min(MAX_TOPIC_BRANCHES, Math.max(MIN_TOPIC_BRANCHES, Math.ceil(documents.length / 6)))
       const groups = cluster(documents, branchCount)
-      return { topic, branches: groups.map((group, index) => makeBranch(group, index, labelContext)) }
+      const aiLabels = request.aiLabels === true
+      const branches = await Promise.all(
+        groups.map((group, index) => makeBranch(group, index, labelContext, cleanTopic, aiLabels, options)),
+      )
+      return { topic, branches }
     },
   }
 }

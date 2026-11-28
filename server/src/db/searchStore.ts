@@ -288,12 +288,12 @@ q AS (
 fts AS (
   SELECT id, row_number() OVER (ORDER BY score DESC, id) AS rank
   FROM (
-    SELECT c.id, ts_rank_cd(c.fts, q.tsq) AS score
+    SELECT c.id, ts_rank_cd(d.title_fts || c.fts, q.tsq) AS score
     FROM chunks c
     JOIN documents d ON d.id = c.document_id
     JOIN sources s ON s.id = d.source_id
     CROSS JOIN q
-    WHERE c.fts @@ q.tsq AND ${SOURCE_FILTER}
+    WHERE (c.fts @@ q.tsq OR d.title_fts @@ q.tsq) AND (d.title_fts || c.fts) @@ q.tsq AND ${SOURCE_FILTER}
     ORDER BY score DESC, c.id
     LIMIT $5
   ) t
