@@ -1,7 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import type { SourceHealth } from '../api/status'
 import { MobileTopBar } from './Navigation'
 import { StatusMenu } from './StatusMenu'
+import { SyncMenu } from './SyncMenu'
 import { TopBar } from './TopBar'
 
 const json = (status: number, body: unknown) =>
@@ -89,6 +91,7 @@ describe('StatusMenu', () => {
     expect(within(panel).getByText('KeyUnavailable')).toBeTruthy()
     expect(within(panel).getByText('GitHub token')).toBeTruthy()
     expect(within(panel).getByText('4,990 GitHub requests remaining')).toBeTruthy()
+    expect(within(panel).queryByText('Sources')).toBeNull()
     expect(within(panel).getByRole('link', { name: 'Server details' }).getAttribute('href')).toBe('/settings/server')
     expect(within(panel).getByRole('link', { name: 'Gemini access' }).getAttribute('href')).toBe('/settings/gemini')
 
@@ -154,5 +157,66 @@ describe('StatusMenu', () => {
     expect(await screen.findByText(/Oracle Cloud plan has a warning/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Refresh status' }))
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+  })
+})
+
+const sampleSources: SourceHealth[] = [
+  {
+    id: 'obsidian',
+    kind: 'obsidian',
+    state: 'healthy',
+    reason: null,
+    lastSyncAt: '2026-11-28T00:00:00.000Z',
+    schedule: { kind: 'watch', everyMinutes: null },
+    documents: 10,
+    chunks: 40,
+    syncing: false,
+  },
+  {
+    id: 'gdrive',
+    kind: 'gdrive',
+    state: 'error',
+    reason: 'Drive round failed: DrivePullError',
+    lastSyncAt: null,
+    schedule: { kind: 'interval', everyMinutes: 60 },
+    documents: 0,
+    chunks: 0,
+    syncing: false,
+  },
+]
+
+describe('SyncMenu', () => {
+  it('renders Synced, Syncing, and Sync issue states and hides when offline or unreachable', () => {
+    const healthySources = sampleSources.map((s) => ({ ...s, state: 'healthy' as const, reason: null }))
+    const { rerender } = render(<SyncMenu online reachable sources={healthySources} />)
+    expect(screen.getByRole('button', { name: 'Sync: Synced' }).textContent).toBe('Synced')
+
+    rerender(<SyncMenu online reachable sources={healthySources} syncing />)
+    expect(screen.getByRole('button', { name: 'Sync: Syncing' }).textContent).toBe('Syncing')
+
+    rerender(<SyncMenu online reachable sources={sampleSources} />)
+    expect(screen.getByRole('button', { name: 'Sync issue: Google Drive' }).textContent).toBe('Sync issue')
+
+    rerender(<SyncMenu online={false} reachable sources={sampleSources} />)
+    expect(screen.queryByRole('button', { name: /Sync/ })).toBeNull()
+
+    rerender(<SyncMenu online reachable={false} sources={sampleSources} />)
+    expect(screen.queryByRole('button', { name: /Sync/ })).toBeNull()
+  })
+
+  it('opens a popover listing each source state and links to Sources and sync', () => {
+    render(<SyncMenu online reachable sources={sampleSources} />)
+    const trigger = screen.getByRole('button', { name: 'Sync issue: Google Drive' })
+    fireEvent.click(trigger)
+
+    const panel = screen.getByRole('region', { name: 'Sync issue' })
+    expect(within(panel).getByText('Obsidian vault')).toBeTruthy()
+    expect(within(panel).getByText('Google Drive')).toBeTruthy()
+    expect(within(panel).getByText('Error · Drive round failed: DrivePullError')).toBeTruthy()
+    expect(within(panel).getByRole('link', { name: 'Sources and sync' }).getAttribute('href')).toBe('/sources')
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('region', { name: 'Sync issue' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
   })
 })

@@ -187,14 +187,18 @@ const status = createStatusService({
   activity,
   devices: async () => (await auth.login?.sessions.list())?.length ?? 0,
   gemini: () => gemini.available(),
-  vault: vault?.rescan === undefined ? null : { watching: vault.watching },
+  vault: vault?.rescan === undefined ? null : { watching: vault.watching, ...(vault.progress === undefined ? {} : { progress: vault.progress }) },
   repos:
     repos === undefined ? null : { names: repos.names, intervalMs: repos.intervalMs, configError: repos.configError },
   syncing: () => syncNow.state(),
   // The startup round and the 30-minute rounds show as syncing too, not only Sync now (T52).
-  ...(repos?.state === undefined ? {} : { repoRound: repos.state }),
+  ...(repos?.state === undefined
+    ? {}
+    : { repoRound: () => ({ ...repos.state!(), ...(repos.progress === undefined ? {} : { progress: repos.progress() }) }) }),
   drive: drive?.runNow === undefined ? null : { intervalMs: drive.intervalMs },
-  ...(drive?.state === undefined ? {} : { driveRound: drive.state }),
+  ...(drive?.state === undefined
+    ? {}
+    : { driveRound: () => ({ ...drive.state!(), ...(drive.progress === undefined ? {} : { progress: drive.progress() }) }) }),
 })
 console.log(config.webDir === null ? 'PYTHIA_WEB_DIR is not set; serving the API only' : `web: ${config.webDir}`)
 const related = createRelatedService({ store: createPgRelatedStore(pool) })

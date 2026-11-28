@@ -58,6 +58,8 @@ export interface RepoScheduler {
    * right now, in a round or a single fetch; null between repos.
    */
   state(): { running: boolean; repo: string | null }
+  /** Live progress during a round or single fetch, or null when idle. */
+  progress(): { stage: 'fetching' | 'indexing'; done: number; total: number; item: string | null } | null
   close(): Promise<void>
 }
 
@@ -89,12 +91,15 @@ export function startRepoScheduler(options: RepoSchedulerOptions): RepoScheduler
 
   // Only one repo is ever fetched at a time (see `exclusive`), so one name is enough.
   let active: string | null = null
+  let progress: { stage: 'fetching' | 'indexing'; done: number; total: number; item: string | null } | null = null
 
-  async function syncOne(spec: RepoSpec, result: RepoRoundResult): Promise<void> {
+  async function syncOne(spec: RepoSpec, result: RepoRoundResult, done: number, total: number): Promise<void> {
     active = spec.name
+    progress = { stage: 'fetching', done, total, item: spec.name }
     try {
       const synced = await sync(spec, options)
       result.synced.push(synced)
+      progress = { stage: 'indexing', done, total, item: spec.name }
       await options.onSynced?.(synced, spec)
     } catch (error) {
       result.failed.push({ name: spec.name, error: error instanceof Error ? error.message : 'unknown error' })
@@ -107,9 +112,16 @@ export function startRepoScheduler(options: RepoSchedulerOptions): RepoScheduler
   async function round(): Promise<RepoRoundResult> {
     const result: RepoRoundResult = { synced: [], failed: [] }
     await discoverNew()
-    for (const spec of [...specs]) {
-      if (closed) break
-      await syncOne(spec, result)
+    const snapshot = [...specs]
+    let done = 0
+    try {
+      for (const spec of snapshot) {
+        if (closed) break
+        await syncOne(spec, result, done, snapshot.length)
+        done++
+      }
+    } finally {
+      progress = null
     }
     await report(() => onRound(result))
     return result
@@ -164,7 +176,11 @@ export function startRepoScheduler(options: RepoSchedulerOptions): RepoScheduler
     const single = exclusive(async () => {
       const result: RepoRoundResult = { synced: [], failed: [] }
       if (closed) return result
-      await syncOne(spec, result)
+      try {
+        await syncOne(spec, result, 0, 1)
+      } finally {
+        progress = null
+      }
       await report(() => options.onSingle?.(name, result))
       return result
     }).finally(() => {
@@ -187,6 +203,7 @@ export function startRepoScheduler(options: RepoSchedulerOptions): RepoScheduler
     runNow,
     runOne,
     state: () => ({ running: current !== null, repo: active }),
+    progress: () => progress,
     async close() {
       closed = true
       if (timer !== null) clearTimeout(timer)

@@ -20,6 +20,8 @@ export interface RunningVault {
   rescan?: () => Promise<void>
   /** Re-applies the Gemini exclusion list without embedding; absent when the source is disabled. */
   refreshAllowLlm?: () => Promise<void>
+  /** Live progress during a full scan, or null when idle. */
+  progress?: () => { stage: string; done: number | null; total: number | null } | null
   /** Whether the watcher runs (PYTHIA_VAULT_WATCH). */
   watching: boolean
   close(): Promise<void>
@@ -83,6 +85,7 @@ export async function startVault(
     async refreshAllowLlm() {
       console.log('vault allow_llm refresh', await indexer.refreshAllowLlm())
     },
+    progress: () => indexer.progress?.() ?? null,
     watching: vault.watch,
     async close() {
       await watcher?.close()

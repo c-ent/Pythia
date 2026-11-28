@@ -97,7 +97,19 @@ describe('connection checks', () => {
     const result = await createConnectionChecks(setup.options).read()
     expect(result.checks.github).toMatchObject({ state: 'broken', reason: 'Http403' })
     expect(result.checks.sources).toMatchObject({ state: 'broken', reason: '1 source(s) error' })
+    expect(result.health).toBe('broken')
     expect(JSON.stringify(result)).not.toContain('secret-token')
+  })
+
+  it('does not mark overall server health broken when only a source is in error', async () => {
+    const setup = deps()
+    setup.status.status.mockResolvedValue({
+      ...emptyStatus,
+      sources: [{ id: 'gdrive', state: 'error', reason: 'DrivePullError' }],
+    } as unknown as ServerStatus)
+    const result = await createConnectionChecks(setup.options).read()
+    expect(result.checks.sources).toMatchObject({ state: 'broken', reason: '1 source(s) error' })
+    expect(result.health).toBe('ok')
   })
 
   it('reports Oracle off when unset and includes Oracle ok/broken/timeout in health', async () => {

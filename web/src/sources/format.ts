@@ -1,5 +1,5 @@
 import { ApiError } from '../api/client'
-import type { ActivityEvent, Schedule, SourceHealth, StatusSourceId } from '../api/status'
+import type { ActivityEvent, Schedule, SourceHealth, StatusSourceId, SyncProgress } from '../api/status'
 import { formatBytes, type CacheCounts } from '../offline/storage'
 import { plural } from '../repos/format'
 
@@ -89,9 +89,61 @@ export function sourceDetail(source: SourceHealth, repoCount: number, now: Date 
   return parts.filter((part) => part !== null).join(' · ')
 }
 
+const STAGE_LABELS: Record<string, string> = {
+  scanning: 'Scanning',
+  fetching: 'Fetching',
+  pulling: 'Pulling',
+  indexing: 'Indexing',
+}
+
+/** Formats live sync progress into a short label and optional percentage (0–100). */
+export function formatSyncProgress(
+  progress: SyncProgress,
+  includeItem = false,
+): { label: string; percent: number | null } {
+  const stage = STAGE_LABELS[progress.stage] ?? 'Syncing'
+  const { done, total } = progress
+  if (done !== null && total !== null && total > 0) {
+    const percent = Math.min(100, Math.round((done / total) * 100))
+    const item = includeItem && progress.item ? ` · ${progress.item}` : ''
+    return { label: `${stage} · ${percent}% (${done}/${total})${item}`, percent }
+  }
+  const item = includeItem && progress.item ? ` · ${progress.item}` : ''
+  return { label: `${stage}${item}…`, percent: null }
+}
+
+/** Overall percentage across syncing sources that have determinate counts, or null. */
+export function overallSyncPercent(sources: readonly SourceHealth[]): number | null {
+  let done = 0
+  let total = 0
+  for (const source of sources) {
+    if (!source.syncing || !source.progress) continue
+    if (source.progress.done !== null && source.progress.total !== null && source.progress.total > 0) {
+      done += source.progress.done
+      total += source.progress.total
+    }
+  }
+  return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null
+}
+
+/** Short summary of active server sync progress across sources, or null when none have details. */
+export function serverSyncSummary(sources: readonly SourceHealth[]): string | null {
+  const parts: string[] = []
+  for (const source of sources) {
+    if (!source.syncing || !source.progress) continue
+    parts.push(`${sourceTitle(source.id)}: ${formatSyncProgress(source.progress, true).label}`)
+  }
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
 /** The health pill: "Healthy · 7:42 AM", "Error · fetch failed", "Manual · 23 days old", "Off". */
 export function sourceState(source: SourceHealth, now: Date = new Date()): { label: string; tone: Tone } {
-  if (source.syncing) return { label: 'Syncing…', tone: 'muted' }
+  if (source.syncing) {
+    return {
+      label: source.progress ? formatSyncProgress(source.progress).label : 'Syncing…',
+      tone: 'muted',
+    }
+  }
   switch (source.state) {
     case 'healthy':
       return {

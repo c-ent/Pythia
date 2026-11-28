@@ -65,6 +65,8 @@ export interface DriveScanOptions {
 export interface DriveIndexer {
   /** Indexes every document in the mirror and deletes documents whose files are gone. */
   fullScan(options?: DriveScanOptions): Promise<DriveIndexResult>
+  /** Live progress during a full scan, or null when idle. */
+  progress?(): { stage: string; done: number | null; total: number | null } | null
 }
 
 /** True when the path is an excluded folder or inside one. Case-sensitive, like rclone's filters. */
@@ -214,63 +216,74 @@ export function createDriveIndexer(options: DriveIndexerOptions): DriveIndexer {
     return extraction.kind !== 'document' || extraction.document.allowLlm
   }
 
+  let currentProgress: { stage: string; done: number | null; total: number | null } | null = null
+
   return {
+    progress: () => currentProgress,
     fullScan: (scan = {}) =>
       serialize(async () => {
-        const exclude = scan.exclude ?? []
-        // Throws when the mirror folder is missing, before anything is deleted.
-        const files = (await listDriveFiles(root)).filter((relPath) => !isDriveExcluded(relPath, exclude))
-        const states = await store.getDocumentStates(sourceId, embedder.model)
-        const exclusions = (await options.exclusions?.()) ?? []
-        const result: DriveIndexResult = {
-          files: files.length,
-          indexed: [],
-          unchanged: 0,
-          deleted: [],
-          failed: [],
-          skipped: emptySkipCounts(),
-        }
-        // A folder the owner put on the exclude list leaves the index at once.
-        const excluded = [...states.keys()].filter((relPath) => isDriveExcluded(relPath, exclude)).sort()
-        if (excluded.length > 0) {
-          await store.deleteDocuments(sourceId, excluded)
-          result.deleted.push(...excluded)
-          for (const relPath of excluded) states.delete(relPath)
-        }
-        // An empty mirror usually means the pull or the volume is not there
-        // yet, not that the whole Drive was emptied. Keep the index and say so.
-        if (files.length === 0 && states.size > 0) {
-          result.keptEmptyMirror = true
-          return result
-        }
-
-        const gone: string[] = []
-        for (const relPath of files) {
-          try {
-            const outcome = await indexFile(relPath, states.get(relPath), exclusions)
-            if (outcome.kind === 'indexed') result.indexed.push(relPath)
-            else if (outcome.kind === 'unchanged') result.unchanged++
-            else {
-              result.skipped[outcome.reason]++
-              // A stored document that is no longer a readable document leaves the index.
-              if (states.has(relPath)) gone.push(relPath)
-            }
-          } catch (error) {
-            if (isMissing(error)) gone.push(relPath)
-            else result.failed.push({ path: relPath, error: messageOf(error) })
+        currentProgress = { stage: 'scanning', done: null, total: null }
+        try {
+          const exclude = scan.exclude ?? []
+          // Throws when the mirror folder is missing, before anything is deleted.
+          const files = (await listDriveFiles(root)).filter((relPath) => !isDriveExcluded(relPath, exclude))
+          const states = await store.getDocumentStates(sourceId, embedder.model)
+          const exclusions = (await options.exclusions?.()) ?? []
+          const result: DriveIndexResult = {
+            files: files.length,
+            indexed: [],
+            unchanged: 0,
+            deleted: [],
+            failed: [],
+            skipped: emptySkipCounts(),
           }
-        }
+          // A folder the owner put on the exclude list leaves the index at once.
+          const excluded = [...states.keys()].filter((relPath) => isDriveExcluded(relPath, exclude)).sort()
+          if (excluded.length > 0) {
+            await store.deleteDocuments(sourceId, excluded)
+            result.deleted.push(...excluded)
+            for (const relPath of excluded) states.delete(relPath)
+          }
+          // An empty mirror usually means the pull or the volume is not there
+          // yet, not that the whole Drive was emptied. Keep the index and say so.
+          if (files.length === 0 && states.size > 0) {
+            result.keptEmptyMirror = true
+            return result
+          }
 
-        const inMirror = new Set(files)
-        for (const relPath of states.keys()) if (!inMirror.has(relPath)) gone.push(relPath)
-        for (const relPath of skippedAt.keys()) if (!inMirror.has(relPath)) skippedAt.delete(relPath)
-        const known = [...new Set(gone)].filter((relPath) => states.has(relPath)).sort()
-        if (known.length > 0) {
-          await store.deleteDocuments(sourceId, known)
-          result.deleted.push(...known)
+          const gone: string[] = []
+          let done = 0
+          for (const relPath of files) {
+            currentProgress = { stage: 'indexing', done, total: files.length }
+            try {
+              const outcome = await indexFile(relPath, states.get(relPath), exclusions)
+              if (outcome.kind === 'indexed') result.indexed.push(relPath)
+              else if (outcome.kind === 'unchanged') result.unchanged++
+              else {
+                result.skipped[outcome.reason]++
+                // A stored document that is no longer a readable document leaves the index.
+                if (states.has(relPath)) gone.push(relPath)
+              }
+            } catch (error) {
+              if (isMissing(error)) gone.push(relPath)
+              else result.failed.push({ path: relPath, error: messageOf(error) })
+            }
+            done++
+          }
+
+          const inMirror = new Set(files)
+          for (const relPath of states.keys()) if (!inMirror.has(relPath)) gone.push(relPath)
+          for (const relPath of skippedAt.keys()) if (!inMirror.has(relPath)) skippedAt.delete(relPath)
+          const known = [...new Set(gone)].filter((relPath) => states.has(relPath)).sort()
+          if (known.length > 0) {
+            await store.deleteDocuments(sourceId, known)
+            result.deleted.push(...known)
+          }
+          result.deleted.sort()
+          return result
+        } finally {
+          currentProgress = null
         }
-        result.deleted.sort()
-        return result
       }),
   }
 }

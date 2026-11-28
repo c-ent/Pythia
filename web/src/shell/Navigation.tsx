@@ -9,7 +9,8 @@ import { OfflineCard, OfflineRailButton } from './OfflineCard'
 import { RecentQueries } from './RecentQueries'
 import { Avatar } from './TopBar'
 import { StatusMenu } from './StatusMenu'
-import type { ServerHealth } from '../api/status'
+import { SyncMenu } from './SyncMenu'
+import type { ServerHealth, SourceHealth } from '../api/status'
 
 /** `aria-current` for a nav item: "page" on its screen, "true" while a document is open over it. */
 export type CurrentFor = (route: RouteName) => 'page' | 'true' | undefined
@@ -56,6 +57,8 @@ export function Sidebar({
   pinned,
   recentKind,
   online,
+  syncing = false,
+  syncProgress = null,
   onCollapse,
 }: {
   className: string
@@ -64,6 +67,8 @@ export function Sidebar({
   /** Recent questions on the Ask page, recent searches everywhere else. */
   recentKind: RecentQueryKind
   online: boolean
+  syncing?: boolean
+  syncProgress?: string | null
   onCollapse: () => void
 }) {
   return (
@@ -121,7 +126,7 @@ export function Sidebar({
 
       <div className="min-h-3 flex-1" />
 
-      <OfflineCard online={online} pinned={pinned} />
+      <OfflineCard online={online} pinned={pinned} syncing={syncing} progress={syncProgress} />
 
       <ul className="mt-3 space-y-0.5 border-t border-nav-line pt-2 pb-1">
         <li>
@@ -150,12 +155,14 @@ export function Rail({
   current,
   collapsed,
   online,
+  syncing = false,
   onExpand,
 }: {
   className: string
   current: CurrentFor
   collapsed: boolean
   online: boolean
+  syncing?: boolean
   onExpand: () => void
 }) {
   return (
@@ -192,7 +199,7 @@ export function Rail({
         </ul>
       </nav>
       <div className="flex-1" />
-      <OfflineRailButton online={online} />
+      <OfflineRailButton online={online} syncing={syncing} />
       <Avatar className="mt-4 mb-1" />
     </aside>
   )
@@ -204,6 +211,8 @@ export function MobileTopBar({
   reachable,
   health,
   brokenChecks,
+  sources,
+  syncing,
   gemini,
   checkedAt,
 }: {
@@ -211,6 +220,8 @@ export function MobileTopBar({
   reachable?: boolean
   health?: ServerHealth
   brokenChecks?: readonly string[]
+  sources?: readonly SourceHealth[]
+  syncing?: boolean
   gemini?: boolean
   checkedAt?: string
 }) {
@@ -224,6 +235,7 @@ export function MobileTopBar({
         <span className="text-xl font-semibold tracking-tight">Pythia</span>
       </AppLink>
       <div className="flex items-center gap-2">
+        <SyncMenu online={online} reachable={reachable} sources={sources} syncing={syncing} />
         <StatusMenu
           online={online}
           reachable={reachable}

@@ -18,6 +18,8 @@ export interface RunningRepos {
   runOne?: (name: string) => Promise<RepoRoundResult> | null
   /** The scheduler's round state for Status (T52); absent when the config did not load. */
   state?: () => { running: boolean; repo: string | null }
+  /** Live progress during a round or single fetch, or null when idle. */
+  progress?: () => { stage: 'fetching' | 'indexing'; done: number; total: number; item: string | null } | null
   /** Repo names in config order, then any added by discovery (T54); empty when the config did not load. */
   names: readonly string[]
   /** Time between fetch rounds, in ms. */
@@ -156,6 +158,7 @@ export async function startRepos(
     runNow: () => scheduler.runNow(),
     runOne: (name) => scheduler.runOne(name),
     state: () => scheduler.state(),
+    progress: () => scheduler.progress(),
     names,
     intervalMs: repos.fetchIntervalMs,
     configError: null,

@@ -60,6 +60,8 @@ export interface VaultIndexer {
    * that a listed note always gets `false`.
    */
   refreshAllowLlm(): Promise<RefreshResult>
+  /** Live progress during a full scan, or null when idle. */
+  progress?(): { stage: string; done: number | null; total: number | null } | null
 }
 
 const MARKDOWN = /\.md$/i
@@ -120,6 +122,7 @@ export function createVaultIndexer(options: VaultIndexerOptions): VaultIndexer {
 
   const emptyResult = (): IndexResult => ({ indexed: [], unchanged: 0, deleted: [], failed: [] })
   const notePath = (relPath: string): string => path.join(root, ...relPath.split('/'))
+  let currentProgress: { stage: string; done: number | null; total: number | null } | null = null
 
   /** Throws ENOENT when the file is gone. */
   async function indexNote(
@@ -194,8 +197,11 @@ export function createVaultIndexer(options: VaultIndexerOptions): VaultIndexer {
     exclusions: readonly LlmExclusion[],
     result: IndexResult,
     missing: string[],
+    trackProgress = false,
   ): Promise<void> {
+    let done = 0
     for (const relPath of paths) {
+      if (trackProgress) currentProgress = { stage: 'indexing', done, total: paths.length }
       try {
         const outcome = await indexNote(relPath, states.get(relPath), exclusions)
         if (outcome === 'indexed') result.indexed.push(relPath)
@@ -204,6 +210,7 @@ export function createVaultIndexer(options: VaultIndexerOptions): VaultIndexer {
         if (isMissing(error)) missing.push(relPath)
         else result.failed.push({ path: relPath, error: messageOf(error) })
       }
+      done++
     }
   }
 
@@ -226,26 +233,32 @@ export function createVaultIndexer(options: VaultIndexerOptions): VaultIndexer {
   }
 
   return {
+    progress: () => currentProgress,
     fullScan: () =>
       serialize(async () => {
-        const result = emptyResult()
-        // Throws when the vault folder is missing, before anything is deleted.
-        const notes = await listVaultNotes(root)
-        const exclusions = await loadExclusions()
-        const states = await store.getDocumentStates(sourceId, embedder.model)
-        const missing: string[] = []
-        await indexAll(notes, states, exclusions, result, missing)
+        currentProgress = { stage: 'scanning', done: null, total: null }
+        try {
+          const result = emptyResult()
+          // Throws when the vault folder is missing, before anything is deleted.
+          const notes = await listVaultNotes(root)
+          const exclusions = await loadExclusions()
+          const states = await store.getDocumentStates(sourceId, embedder.model)
+          const missing: string[] = []
+          await indexAll(notes, states, exclusions, result, missing, true)
 
-        const onDisk = new Set(notes)
-        const gone = [...states.keys()].filter((relPath) => !onDisk.has(relPath)).concat(missing)
-        // An empty folder usually means the sync or mount is not there yet,
-        // not that every note was deleted. Keep the index and say so.
-        if (notes.length === 0 && states.size > 0) {
-          result.keptEmptyVault = true
+          const onDisk = new Set(notes)
+          const gone = [...states.keys()].filter((relPath) => !onDisk.has(relPath)).concat(missing)
+          // An empty folder usually means the sync or mount is not there yet,
+          // not that every note was deleted. Keep the index and say so.
+          if (notes.length === 0 && states.size > 0) {
+            result.keptEmptyVault = true
+            return result
+          }
+          await deleteKnown(gone, states, result)
           return result
+        } finally {
+          currentProgress = null
         }
-        await deleteKnown(gone, states, result)
-        return result
       }),
 
     syncPaths: (paths) =>

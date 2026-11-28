@@ -16,6 +16,8 @@ export interface RunningDrive {
   runNow?: () => Promise<DriveIndexResult>
   /** A round is running (startup, every 30 minutes or Sync now); absent when off. */
   state?: () => { running: boolean }
+  /** Live progress during a round, or null when idle. */
+  progress?: () => { stage: string; done: number | null; total: number | null } | null
   /** Time between rounds, in ms. */
   intervalMs: number
   close(): Promise<void>
@@ -51,6 +53,8 @@ export interface DriveRoundOptions {
   recorder: DriveActivity
   /** Counts only. */
   log?: (message: string) => void
+  /** Called when the pull stage starts/ends so status can report 'pulling'. */
+  onPulling?: (pulling: boolean) => void
 }
 
 /**
@@ -65,15 +69,21 @@ export function createDriveRound(options: DriveRoundOptions): () => Promise<Driv
     options.recorder.round(async () => {
       // Read every round, so an edit on the host applies without a restart.
       const { exclude } = await loadDriveConfigFile(options.drive.configFile)
-      const pulled = await pullDrive(
-        {
-          remote: options.drive.remote,
-          dest: options.root,
-          exclude,
-          rcloneConfig: options.drive.rcloneConfig,
-        },
-        options.rclone,
-      )
+      options.onPulling?.(true)
+      let pulled: Awaited<ReturnType<typeof pullDrive>>
+      try {
+        pulled = await pullDrive(
+          {
+            remote: options.drive.remote,
+            dest: options.root,
+            exclude,
+            rcloneConfig: options.drive.rcloneConfig,
+          },
+          options.rclone,
+        )
+      } finally {
+        options.onPulling?.(false)
+      }
       if (pulled.duplicates > 0) log(`drive pull: ${pulled.duplicates} duplicate names, one kept each`)
       return options.indexer.fullScan({ exclude })
     })
@@ -112,9 +122,19 @@ export async function startDrive(
     ...(exclusionStore === undefined ? {} : { exclusions: () => exclusionStore.list() }),
   })
 
+  let pulling = false
   const scheduler: DriveScheduler = startDriveScheduler({
     intervalMs: drive.pullIntervalMs,
-    round: createDriveRound({ drive, root, rclone: options.rclone ?? createRcloneRunner(), indexer, recorder }),
+    round: createDriveRound({
+      drive,
+      root,
+      rclone: options.rclone ?? createRcloneRunner(),
+      indexer,
+      recorder,
+      onPulling: (active) => {
+        pulling = active
+      },
+    }),
     onRound: (result) => console.log('drive round', summarizeDriveRound(result)),
     onFailed: (error) => console.error(`drive round failed: ${errorName(error)}; index kept`),
   })
@@ -122,6 +142,7 @@ export async function startDrive(
   return {
     runNow: () => scheduler.runNow(),
     state: () => scheduler.state(),
+    progress: () => (pulling ? { stage: 'pulling', done: null, total: null } : (indexer.progress?.() ?? null)),
     intervalMs: drive.pullIntervalMs,
     close: () => scheduler.close(),
   }

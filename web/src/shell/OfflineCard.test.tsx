@@ -163,15 +163,24 @@ describe('OfflineCard', () => {
     fireEvent.click(syncButton())
     expect(await screen.findByText('Sync now isn’t available on this server yet.')).toBeTruthy()
   })
+
+  it('shows Syncing… when the server is already syncing in the background', () => {
+    render(<OfflineCard online pinned={6} syncing progress="Syncing the server… 40%" />)
+    expect(syncButton().textContent).toBe('Syncing…')
+    expect(syncButton().disabled).toBe(true)
+    expect(screen.getByText('Syncing the server… 40%')).toBeTruthy()
+  })
 })
 
 describe('OfflineRailButton', () => {
   afterEach(() => resetSyncNow())
 
-  it('is one labelled button, disabled offline', () => {
+  it('is one labelled button, disabled offline or while syncing', () => {
     const { rerender } = render(<OfflineRailButton online />)
     const button = screen.getByRole('button', { name: 'Offline ready. Sync now' }) as HTMLButtonElement
     expect(button.disabled).toBe(false)
+    rerender(<OfflineRailButton online syncing />)
+    expect((screen.getByRole('button', { name: 'Syncing…' }) as HTMLButtonElement).disabled).toBe(true)
     rerender(<OfflineRailButton online={false} />)
     expect(
       (screen.getByRole('button', { name: 'You’re offline. Sync now needs a connection' }) as HTMLButtonElement).disabled,

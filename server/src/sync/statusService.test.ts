@@ -47,7 +47,7 @@ function setup() {
     vault: null,
     repos: { names: specs.map((spec) => spec.name), intervalMs: 30 * 60_000, configError: null },
     syncing: () => syncNow.state(),
-    repoRound: () => scheduler.state(),
+    repoRound: () => ({ ...scheduler.state(), progress: scheduler.progress() }),
     log: () => {},
   })
   const until = async (check: () => boolean) => {
@@ -66,6 +66,12 @@ describe('createStatusService with a scheduled repo round (T52)', () => {
     let result = await status.status()
     expect(result.syncing).toBe(true)
     expect(result.sources.find((source) => source.id === 'github')?.syncing).toBe(true)
+    expect(result.sources.find((source) => source.id === 'github')?.progress).toEqual({
+      stage: 'fetching',
+      done: 0,
+      total: 2,
+      item: 'pythia',
+    })
     expect(result.repos.map((repo) => [repo.name, repo.syncing])).toEqual([
       ['pythia', true],
       ['notes', false],
@@ -75,6 +81,12 @@ describe('createStatusService with a scheduled repo round (T52)', () => {
     await until(() => started.includes('notes'))
     result = await status.status()
     expect(result.syncing).toBe(true)
+    expect(result.sources.find((source) => source.id === 'github')?.progress).toEqual({
+      stage: 'fetching',
+      done: 1,
+      total: 2,
+      item: 'notes',
+    })
     expect(result.repos.map((repo) => [repo.name, repo.syncing])).toEqual([
       ['pythia', false],
       ['notes', true],
@@ -85,6 +97,7 @@ describe('createStatusService with a scheduled repo round (T52)', () => {
     result = await status.status()
     expect(result.syncing).toBe(false)
     expect(result.sources.find((source) => source.id === 'github')?.syncing).toBe(false)
+    expect(result.sources.find((source) => source.id === 'github')?.progress).toBeUndefined()
     expect(result.repos.every((repo) => !repo.syncing)).toBe(true)
     await scheduler.close()
   })

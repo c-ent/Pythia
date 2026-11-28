@@ -33,6 +33,17 @@ export interface Schedule {
   everyMinutes: number | null
 }
 
+export interface SyncProgress {
+  /** Short stage label, e.g. 'scanning', 'fetching', 'pulling', 'indexing'. */
+  stage: string
+  /** Completed units in this stage, or null when indeterminate. */
+  done: number | null
+  /** Total units in this stage, or null when indeterminate. */
+  total: number | null
+  /** Optional current item label (e.g. repo name); never file paths or secrets. */
+  item?: string | null
+}
+
 export interface SourceStatus {
   id: SourceId
   kind: 'obsidian' | 'repo' | 'keep' | 'gdrive'
@@ -45,6 +56,8 @@ export interface SourceStatus {
   chunks: number
   /** A scan or fetch started by Sync now or Re-sync, or a scheduled repo round (github), is running. */
   syncing: boolean
+  /** Live progress while syncing, when available. */
+  progress?: SyncProgress | null
 }
 
 export interface RepoStatus {
@@ -89,7 +102,7 @@ export interface StatusServiceOptions {
   /** R16 key set and last call not failed on the key; absent means false. */
   gemini?: () => Promise<boolean>
   /** Null when the vault is off (no PYTHIA_VAULT_PATH, or its source switched off). */
-  vault: { watching: boolean } | null
+  vault: { watching: boolean; progress?: () => SyncProgress | null } | null
   /** Null when repos are off (no PYTHIA_REPOS_CONFIG). */
   repos: { names: readonly string[]; intervalMs: number; configError: string | null } | null
   /** Sync now state (syncNow.ts); absent means nothing is running. */
@@ -99,11 +112,11 @@ export interface StatusServiceOptions {
    * round, the 30-minute round or one started by Sync now) and the repo being
    * fetched right now. Absent means repos are off.
    */
-  repoRound?: () => { running: boolean; repo: string | null }
+  repoRound?: () => { running: boolean; repo: string | null; progress?: SyncProgress | null }
   /** Null or absent when Drive is off (no PYTHIA_DRIVE_REMOTE, or its source switched off). */
   drive?: { intervalMs: number } | null
   /** The Drive scheduler's state: a round (startup, every 30 minutes or Sync now) is running. */
-  driveRound?: () => { running: boolean }
+  driveRound?: () => { running: boolean; progress?: SyncProgress | null }
   now?: () => number
   /** Error classes only. */
   log?: (message: string) => void
@@ -151,6 +164,7 @@ export function createStatusService(options: StatusServiceOptions): StatusServic
       const driveRow = rows.find((row) => row.kind === 'gdrive')
       const repoRows = new Map(rows.filter((row) => row.kind === 'repo').map((row) => [row.name, row]))
 
+      const vaultProgress = syncing.running ? (options.vault?.progress?.() ?? null) : null
       const vault: SourceStatus =
         options.vault === null
           ? {
@@ -174,6 +188,7 @@ export function createStatusService(options: StatusServiceOptions): StatusServic
               documents: vaultRow?.documents ?? 0,
               chunks: vaultRow?.chunks ?? 0,
               syncing: syncing.running,
+              ...(vaultProgress === null ? {} : { progress: vaultProgress }),
             }
 
       const repos: RepoStatus[] = names.map((name) => {
@@ -196,6 +211,8 @@ export function createStatusService(options: StatusServiceOptions): StatusServic
         (sum, row) => ({ documents: sum.documents + row.documents, chunks: sum.chunks + row.chunks }),
         { documents: 0, chunks: 0 },
       )
+      const githubSyncing = options.repos !== null && (syncing.running || syncing.repos.length > 0 || round.running)
+      const githubProgress = githubSyncing ? (round.progress ?? null) : null
       const github: SourceStatus = {
         id: REPOS_SOURCE,
         kind: 'repo',
@@ -210,7 +227,8 @@ export function createStatusService(options: StatusServiceOptions): StatusServic
               schedule: { kind: 'interval', everyMinutes: Math.round(options.repos.intervalMs / 60_000) },
             }),
         ...repoTotals,
-        syncing: options.repos !== null && (syncing.running || syncing.repos.length > 0 || round.running),
+        syncing: githubSyncing,
+        ...(githubProgress === null ? {} : { progress: githubProgress }),
       }
 
       // Keep has no sync to fail on its own: it changes only when a Takeout zip is uploaded (R12).
@@ -229,7 +247,10 @@ export function createStatusService(options: StatusServiceOptions): StatusServic
 
       // Drive (R19, T61): pulled and indexed every `everyMinutes`, at startup and on Sync now.
       const driveOptions = options.drive ?? null
-      const driveRunning = driveOptions !== null && (options.driveRound?.().running ?? false)
+      const driveState = driveOptions === null ? null : (options.driveRound?.() ?? { running: false })
+      const driveRunning = driveState?.running ?? false
+      const driveSyncing = driveOptions !== null && (syncing.running || driveRunning)
+      const driveProgress = driveSyncing ? (driveState?.progress ?? null) : null
       const drive: SourceStatus =
         driveOptions === null
           ? {
@@ -252,7 +273,8 @@ export function createStatusService(options: StatusServiceOptions): StatusServic
               schedule: { kind: 'interval', everyMinutes: Math.round(driveOptions.intervalMs / 60_000) },
               documents: driveRow?.documents ?? 0,
               chunks: driveRow?.chunks ?? 0,
-              syncing: syncing.running || driveRunning,
+              syncing: driveSyncing,
+              ...(driveProgress === null ? {} : { progress: driveProgress }),
             }
 
       return {

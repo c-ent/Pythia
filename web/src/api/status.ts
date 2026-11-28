@@ -24,6 +24,13 @@ export interface Schedule {
   everyMinutes: number | null
 }
 
+export interface SyncProgress {
+  stage: string
+  done: number | null
+  total: number | null
+  item?: string | null
+}
+
 export interface SourceHealth {
   id: StatusSourceId
   kind: StatusSourceKind
@@ -36,6 +43,8 @@ export interface SourceHealth {
   chunks: number
   /** A scan or fetch started by Sync now or Re-sync is running. */
   syncing: boolean
+  /** Live progress while syncing, when available. */
+  progress?: SyncProgress | null
 }
 
 export interface RepoHealth {
@@ -141,11 +150,22 @@ function parseSchedule(value: unknown): Schedule {
   return { kind: oneOf(value.kind, SCHEDULE_KINDS) ?? 'off', everyMinutes: countOrNull(value.everyMinutes) }
 }
 
+function parseProgress(value: unknown): SyncProgress | null {
+  if (!isObject(value) || typeof value.stage !== 'string') return null
+  return {
+    stage: value.stage,
+    done: countOrNull(value.done),
+    total: countOrNull(value.total),
+    ...(typeof value.item === 'string' ? { item: value.item } : {}),
+  }
+}
+
 function parseSource(value: unknown): SourceHealth | null {
   if (!isObject(value)) return null
   const id = oneOf(value.id, SOURCE_IDS)
   const kind = oneOf(value.kind, SOURCE_KINDS)
   if (id === null || kind === null) return null
+  const progress = parseProgress(value.progress)
   return {
     id,
     kind,
@@ -156,6 +176,7 @@ function parseSource(value: unknown): SourceHealth | null {
     documents: count(value.documents),
     chunks: count(value.chunks),
     syncing: value.syncing === true,
+    ...(progress === null ? {} : { progress }),
   }
 }
 
@@ -250,9 +271,12 @@ export const SYNC_POLL_MS = 2000
 export const SYNC_MAX_POLLS = 450
 
 /** Pulls this device's offline copy (notes plus pinned repos). Without IndexedDB there is nothing to update. */
-export async function pullDeviceCopy(signal?: AbortSignal): Promise<void> {
+export async function pullDeviceCopy(
+  signal?: AbortSignal,
+  onProgress?: (progress: { pages: number; documents: number }) => void,
+): Promise<void> {
   if (typeof indexedDB === 'undefined') return
-  await syncOnce(offlineDb(), { pinnedRepos: readPinnedRepos(), signal })
+  await syncOnce(offlineDb(), { pinnedRepos: readPinnedRepos(), signal, onProgress })
 }
 
 export type SyncNowPhase = 'server' | 'device'
@@ -263,8 +287,13 @@ export interface RunSyncNowOptions {
   onStatus?: (status: ServerStatus) => void
   /** `server` before the request, `device` before this device's copy is pulled. */
   onPhase?: (phase: SyncNowPhase) => void
+  /** Progress during the device pull. */
+  onDeviceProgress?: (progress: { pages: number; documents: number }) => void
   /** Defaults to `pullDeviceCopy`. */
-  pullDevice?: (signal?: AbortSignal) => Promise<unknown>
+  pullDevice?: (
+    signal?: AbortSignal,
+    onProgress?: (progress: { pages: number; documents: number }) => void,
+  ) => Promise<unknown>
   pollMs?: number
   maxPolls?: number
 }
@@ -318,7 +347,7 @@ export async function runSyncNow(options: RunSyncNowOptions = {}): Promise<RunSy
     options.onStatus?.(status)
   }
   options.onPhase?.('device')
-  await (options.pullDevice ?? pullDeviceCopy)(signal)
+  await (options.pullDevice ?? pullDeviceCopy)(signal, options.onDeviceProgress)
   statusChanged()
   return { request, status, serverFinished: !status.syncing }
 }

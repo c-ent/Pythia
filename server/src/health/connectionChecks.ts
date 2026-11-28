@@ -179,9 +179,11 @@ export function createConnectionChecks(options: ConnectionChecksOptions) {
     ])
 
     const checks: ConnectionChecks = { postgres, ollama, gemini, github, vault, sources: sourceStatus, oracle }
+    // Source sync failures are reported by the Sync status pill, not as a server outage.
+    const serverChecks = [postgres, ollama, gemini, github, vault, oracle]
     return {
       checkedAt: new Date(now()).toISOString(),
-      health: Object.values(checks).some((entry) => entry.state === 'broken') ? 'broken' : 'ok',
+      health: serverChecks.some((entry) => entry.state === 'broken') ? 'broken' : 'ok',
       checks,
     }
   }

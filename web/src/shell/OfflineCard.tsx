@@ -57,11 +57,21 @@ function useOfflineCache(): Cache | null {
  * cached size and last sync for this device, and Sync now (server scan and
  * fetch, then this device's copy). Offline it says so and Sync now is disabled.
  */
-export function OfflineCard({ online, pinned }: { online: boolean; pinned: number }) {
+export function OfflineCard({
+  online,
+  pinned,
+  syncing = false,
+  progress: serverProgress = null,
+}: {
+  online: boolean
+  pinned: number
+  syncing?: boolean
+  progress?: string | null
+}) {
   const cache = useOfflineCache()
   const sync = useSyncNow()
-  const busy = isSyncing(sync)
-  const progress = syncProgressText(sync)
+  const busy = isSyncing(sync) || syncing
+  const progress = syncProgressText(sync) ?? (syncing ? (serverProgress ?? 'Syncing the server…') : null)
 
   const summary =
     cache === null
@@ -105,9 +115,9 @@ export function OfflineCard({ online, pinned }: { online: boolean; pinned: numbe
 }
 
 /** The tablet rail's form of the card (Tablet boards): one button with a status dot. */
-export function OfflineRailButton({ online }: { online: boolean }) {
+export function OfflineRailButton({ online, syncing = false }: { online: boolean; syncing?: boolean }) {
   const sync = useSyncNow()
-  const busy = isSyncing(sync)
+  const busy = isSyncing(sync) || syncing
   const label = !online ? 'You’re offline. Sync now needs a connection' : busy ? 'Syncing…' : 'Offline ready. Sync now'
   return (
     <button

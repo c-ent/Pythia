@@ -19,6 +19,8 @@ import { followLink, pathFor, settingsPath, sourceBrowsePath } from '../router'
 import {
   activityText,
   formatWhen,
+  overallSyncPercent,
+  serverSyncSummary,
   sourceDetail,
   sourceState,
   sourceTitle,
@@ -110,6 +112,8 @@ export function SourcesScreen() {
           <Alert message={sync.message} />
         ) : sync.phase === 'done' && !sync.serverFinished ? (
           <p className="mb-4 text-sm text-muted">The server is still syncing. This page updates when it is done.</p>
+        ) : busy && status !== null ? (
+          <SyncProgressBanner sources={status.sources} sync={sync} />
         ) : null}
       </div>
 
@@ -128,6 +132,44 @@ export function SourcesScreen() {
         </aside>
       </div>
     </>
+  )
+}
+
+function SyncProgressBanner({
+  sources,
+  sync,
+}: {
+  sources: readonly SourceHealth[]
+  sync: ReturnType<typeof useSyncNow>
+}) {
+  const detail = serverSyncSummary(sources)
+  const percent = overallSyncPercent(sources)
+  const text =
+    sync.phase === 'device'
+      ? sync.docs !== undefined && sync.docs > 0
+        ? `Updating this device… ${sync.docs} docs`
+        : 'Updating this device…'
+      : detail ?? 'Syncing…'
+  return (
+    <div className="mb-4 rounded-card border border-line bg-surface px-4 py-3 text-sm">
+      <div className="flex items-center justify-between gap-3">
+        <span className="truncate text-ink">{text}</span>
+        {percent !== null && sync.phase !== 'device' ? (
+          <span className="shrink-0 font-medium text-muted">{percent}%</span>
+        ) : null}
+      </div>
+      {percent !== null && sync.phase !== 'device' ? (
+        <div
+          role="progressbar"
+          aria-valuenow={percent}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-raised"
+        >
+          <div className="h-full bg-accent transition-[width] duration-300" style={{ width: `${percent}%` }} />
+        </div>
+      ) : null}
+    </div>
   )
 }
 

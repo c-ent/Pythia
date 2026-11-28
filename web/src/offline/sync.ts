@@ -55,6 +55,8 @@ export interface SyncOptions {
   now?: () => Date
   /** Defaults to `GET /api/sync` through `apiFetch`. */
   fetchPage?: (query: URLSearchParams, signal?: AbortSignal) => Promise<SyncPage>
+  /** Called after each page is written. */
+  onProgress?: (progress: { pages: number; documents: number }) => void
 }
 
 /** A runaway loop (a server that keeps saying `hasMore`) stops here. */
@@ -165,6 +167,7 @@ export async function syncOnce(db: OfflineDb, options: SyncOptions = {}): Promis
     wrote = true
     cursor = page.cursor
     result.cursor = cursor
+    options.onProgress?.({ pages: result.pages, documents: result.updated })
     if (finished) return result
   }
 }

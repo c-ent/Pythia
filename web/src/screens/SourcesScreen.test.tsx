@@ -327,6 +327,26 @@ describe('SourcesScreen', () => {
     expect(count('GET /api/status')).toBe(2)
   })
 
+  it('shows live stage, counts, and percentage progress while syncing (T91)', async () => {
+    stubApi({
+      'GET /api/status': statusOf({
+        syncing: true,
+        sources: [
+          obsidian({ syncing: true, progress: { stage: 'indexing', done: 5, total: 10 } }),
+          github({ syncing: true, progress: { stage: 'fetching', done: 1, total: 4, item: 'pythia' } }),
+          keep(),
+        ],
+      }),
+    })
+    render(<SourcesScreen />)
+    await findCard('Obsidian vault')
+
+    expect(card('Obsidian vault').getByText('Indexing · 50% (5/10)')).toBeTruthy()
+    expect(card('GitHub repos').getByText('Fetching · 25% (1/4)')).toBeTruthy()
+    const bar = screen.getByRole('progressbar')
+    expect(bar.getAttribute('aria-valuenow')).toBe('43')
+  })
+
   it('imports a Keep zip, shows the summary and rereads the status', async () => {
     const { calls, count } = stubApi({
       'GET /api/status': statusOf(),

@@ -4,6 +4,7 @@ import { getServerStatusDetails, serverCheckLabel, type ServerStatusDetails } fr
 import { STATUS_CHANGED, type ServerHealth } from '../api/status'
 import { followLink, settingsPath } from '../router'
 import { serverCheckDetails, serverCheckState } from '../sources/serverCheckFormat'
+import { usePopoverDismiss } from './usePopoverDismiss'
 
 export interface StatusMenuProps {
   online: boolean
@@ -82,26 +83,7 @@ export function StatusMenu(props: StatusMenuProps) {
     return () => controller.abort()
   }, [open, canQueryServer, requestKey])
 
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (event: PointerEvent): void => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        close(false)
-      }
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        close(true)
-      }
-    }
-    document.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('keydown', onKeyDown)
-    }
-  }, [open, close])
+  usePopoverDismiss(open, containerRef, close)
 
   const openRoute = (event: React.MouseEvent<HTMLAnchorElement>, path: string): void => {
     close(false)
@@ -179,23 +161,25 @@ export function StatusMenu(props: StatusMenuProps) {
             </li>
 
             {canQueryServer && details !== null
-              ? Object.entries(details.checks).map(([name, check]) => {
-                  const state = serverCheckState(check)
-                  const Icon = state.Icon
-                  const info = serverCheckDetails(check)
-                  return (
-                    <li key={name} className="flex items-start justify-between gap-3 py-2">
-                      <div className="min-w-0">
-                        <p className="font-medium">{serverCheckLabel(name)}</p>
-                        {info.length > 0 ? <p className="text-xs text-muted">{info.join(' · ')}</p> : null}
-                      </div>
-                      <span className={`inline-flex shrink-0 items-center gap-1 text-xs font-medium ${state.tone}`}>
-                        <Icon aria-hidden="true" className="size-3.5" />
-                        {state.label}
-                      </span>
-                    </li>
-                  )
-                })
+              ? Object.entries(details.checks)
+                  .filter(([name]) => name !== 'sources')
+                  .map(([name, check]) => {
+                    const state = serverCheckState(check)
+                    const Icon = state.Icon
+                    const info = serverCheckDetails(check)
+                    return (
+                      <li key={name} className="flex items-start justify-between gap-3 py-2">
+                        <div className="min-w-0">
+                          <p className="font-medium">{serverCheckLabel(name)}</p>
+                          {info.length > 0 ? <p className="text-xs text-muted">{info.join(' · ')}</p> : null}
+                        </div>
+                        <span className={`inline-flex shrink-0 items-center gap-1 text-xs font-medium ${state.tone}`}>
+                          <Icon aria-hidden="true" className="size-3.5" />
+                          {state.label}
+                        </span>
+                      </li>
+                    )
+                  })
               : null}
 
             {canQueryServer && details === null && gemini !== undefined ? (

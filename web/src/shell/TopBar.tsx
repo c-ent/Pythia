@@ -1,9 +1,10 @@
 import { MonitorSmartphone, UserRound } from 'lucide-react'
-import type { ServerHealth } from '../api/status'
+import type { ServerHealth, SourceHealth } from '../api/status'
 import { useProfile } from '../profile/profile'
 import { plural } from '../repos/format'
 import { followLink, settingsPath } from '../router'
 import { StatusMenu } from './StatusMenu'
+import { SyncMenu } from './SyncMenu'
 
 /** The owner's initial (a person icon until Profile has a name); opens Profile. */
 export function Avatar({ name, className = '' }: { name?: string; className?: string }) {
@@ -31,6 +32,8 @@ export function TopBar({
   reachable,
   health,
   brokenChecks,
+  sources,
+  syncing,
   devices,
   gemini,
   checkedAt,
@@ -41,6 +44,8 @@ export function TopBar({
   reachable?: boolean
   health?: ServerHealth
   brokenChecks?: readonly string[]
+  sources?: readonly SourceHealth[]
+  syncing?: boolean
   devices?: number
   gemini?: boolean
   checkedAt?: string
@@ -66,6 +71,7 @@ export function TopBar({
         </a>
       </div>
       <div className="flex flex-wrap items-center gap-2.5">
+        <SyncMenu online={online} reachable={reachable} sources={sources} syncing={syncing} />
         <StatusMenu
           online={online}
           reachable={reachable}

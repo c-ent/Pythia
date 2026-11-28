@@ -23,7 +23,8 @@ import { SettingsScreen } from '../screens/SettingsScreen'
 import { SourcesScreen } from '../screens/SourcesScreen'
 import { PinnedScreen } from '../screens/PinnedScreen'
 import { MapScreen } from '../screens/MapScreen'
-import { useServerStatus } from '../sources/useServerStatus'
+import { overallSyncPercent } from '../sources/format'
+import { serverSyncing, useServerStatus } from '../sources/useServerStatus'
 import { NAV, SETTINGS_SECTION_LABELS, readSidebarCollapsed, saveSidebarCollapsed } from './nav'
 import { MobileTabBar, MobileTopBar, Rail, Sidebar, type CurrentFor } from './Navigation'
 import { isNewSearchShortcut, startNewSearch } from './newSearch'
@@ -177,6 +178,15 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
         pinned={pinnedRepos.length}
         recentKind={route === 'ask' ? 'ask' : 'search'}
         online={online}
+        syncing={serverSyncing(server.status)}
+        syncProgress={
+          server.status === null
+            ? null
+            : (() => {
+                const pct = overallSyncPercent(server.status.sources)
+                return pct === null ? null : `Syncing the server… ${pct}%`
+              })()
+        }
         onCollapse={() => collapse(true)}
       />
       <Rail
@@ -184,6 +194,7 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
         current={current}
         collapsed={collapsed}
         online={online}
+        syncing={serverSyncing(server.status)}
         onExpand={() => collapse(false)}
       />
 
@@ -193,6 +204,8 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
           reachable={server.reachable}
           health={server.status?.health}
           brokenChecks={brokenChecks}
+          sources={server.status?.sources}
+          syncing={serverSyncing(server.status)}
           gemini={gemini}
           checkedAt={server.status?.checkedAt}
         />
@@ -201,6 +214,8 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
           reachable={server.reachable}
           health={server.status?.health}
           brokenChecks={brokenChecks}
+          sources={server.status?.sources}
+          syncing={serverSyncing(server.status)}
           devices={devices}
           gemini={gemini}
           checkedAt={server.status?.checkedAt}

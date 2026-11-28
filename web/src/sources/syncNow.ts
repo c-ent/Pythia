@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import { ApiError } from '../api/client'
 import { runSyncNow, type RunSyncNowOptions } from '../api/status'
+import { overallSyncPercent, serverSyncSummary } from './format'
 
 /**
  * One Sync now at a time for the whole app (R18): the sidebar card and
@@ -11,9 +12,9 @@ import { runSyncNow, type RunSyncNowOptions } from '../api/status'
 export type SyncNowState =
   | { phase: 'idle' }
   /** Waiting for the server's scan and fetch. */
-  | { phase: 'server' }
+  | { phase: 'server'; detail?: string | null; percent?: number | null }
   /** Pulling this device's offline copy. */
-  | { phase: 'device' }
+  | { phase: 'device'; docs?: number }
   | { phase: 'done'; at: string; serverFinished: boolean }
   | { phase: 'error'; message: string }
 
@@ -38,9 +39,11 @@ export const isSyncing = (current: SyncNowState): boolean => current.phase === '
 export function syncProgressText(sync: SyncNowState): string | null {
   switch (sync.phase) {
     case 'server':
+      if (sync.percent !== undefined && sync.percent !== null) return `Syncing the server… ${sync.percent}%`
+      if (sync.detail) return `Syncing the server… ${sync.detail}`
       return 'Syncing the server…'
     case 'device':
-      return 'Updating this device…'
+      return sync.docs !== undefined && sync.docs > 0 ? `Updating this device… ${sync.docs} docs` : 'Updating this device…'
     case 'done':
       return sync.serverFinished ? 'Up to date.' : 'The server is still syncing; this device has what is ready.'
     case 'error':
@@ -64,7 +67,26 @@ export async function startSyncNow(options: Omit<RunSyncNowOptions, 'onPhase'> =
   if (isSyncing(state)) return
   set({ phase: 'server' })
   try {
-    const result = await runSyncNow({ ...options, onPhase: (phase) => set({ phase }) })
+    const result = await runSyncNow({
+      ...options,
+      onPhase: (phase) => set({ phase }),
+      onStatus: (status) => {
+        options.onStatus?.(status)
+        if (state.phase === 'server') {
+          set({
+            phase: 'server',
+            detail: serverSyncSummary(status.sources),
+            percent: overallSyncPercent(status.sources),
+          })
+        }
+      },
+      onDeviceProgress: (progress) => {
+        options.onDeviceProgress?.(progress)
+        if (state.phase === 'device') {
+          set({ phase: 'device', docs: progress.documents })
+        }
+      },
+    })
     set({ phase: 'done', at: new Date().toISOString(), serverFinished: result.serverFinished })
   } catch (error) {
     set({ phase: 'error', message: syncNowErrorMessage(error) })
