@@ -17,3 +17,6 @@ repos.json
 .agents/skills/*
 !.agents/skills/add-sql-migration/
 .claude/skills/
+
+# Playwright MCP output logs and snapshots
+.playwright-mcp/
