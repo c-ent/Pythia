@@ -120,15 +120,8 @@ export function LocalGraphPanel({ id }: { id: number }) {
     body = (
       <>
         {view === 'graph' ? (
-          <Suspense
-            fallback={
-              <p role="status" className="flex h-88 items-center justify-center gap-2 text-sm text-muted md:h-112">
-                <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />
-                Drawing the graph…
-              </p>
-            }
-          >
-            <GraphCanvas graph={graph} />
+          <Suspense fallback={<p role="status" className="flex h-88 items-center justify-center gap-2 text-sm text-muted md:h-112"><LoaderCircle aria-hidden="true" className="size-4 animate-spin" />Drawing the graph…</p>}>
+            <GraphCanvas graph={graph} center={graph.center} />
           </Suspense>
         ) : (
           <GraphList graph={graph} />

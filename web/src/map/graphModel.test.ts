@@ -111,7 +111,7 @@ describe('listGroups', () => {
 describe('toElements and tonesIn', () => {
   it('builds nodes and edges, dropping edges to missing nodes', () => {
     const tag = node({ id: 'tag:a', type: 'tag', label: 'a', source: null, sourceLabel: null })
-    const elements = toElements(graph([center, tag], [edge('doc:7', 'tag:a', 'tag'), edge('doc:7', 'doc:404')]))
+    const elements = toElements(graph([center, tag], [edge('doc:7', 'tag:a', 'tag'), edge('doc:7', 'doc:404')]), 'doc:7')
     expect(elements.filter((element) => element.group === 'nodes')).toHaveLength(2)
     expect(elements.filter((element) => element.group === 'edges')).toHaveLength(1)
     expect(elements.find((element) => element.data.id === 'doc:7')?.data.center).toBe('yes')

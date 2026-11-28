@@ -1,4 +1,4 @@
-import { Database, FolderGit2, Pin, Search, Settings, Sparkles, type LucideIcon } from 'lucide-react'
+import { Database, FolderGit2, Map, Pin, Search, Settings, Sparkles, type LucideIcon } from 'lucide-react'
 import type { RouteName, SettingsSection } from '../router'
 
 export type NavItem = { route: RouteName; label: string; icon: LucideIcon }
@@ -9,12 +9,13 @@ export const NAV: readonly NavItem[] = [
   { route: 'ask', label: 'Ask', icon: Sparkles },
   { route: 'repos', label: 'Repos', icon: FolderGit2 },
   { route: 'pinned', label: 'Pinned', icon: Pin },
+  { route: 'map', label: 'Map', icon: Map },
   { route: 'sources', label: 'Sources', icon: Database },
   { route: 'settings', label: 'Settings', icon: Settings },
 ]
 
 /** The phone tab bar has room for five; Sources and sync is reached from Settings. */
-export const TAB_BAR: readonly NavItem[] = NAV.filter((item) => item.route !== 'sources')
+export const TAB_BAR: readonly NavItem[] = NAV.filter((item) => item.route !== 'sources' && item.route !== 'map')
 
 export const SETTINGS_SECTION_LABELS: Record<SettingsSection, string> = {
   profile: 'Profile',

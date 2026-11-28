@@ -40,16 +40,28 @@ export interface GraphEdge {
   score: number | null
 }
 
-export interface LocalGraphResponse {
+export interface GraphResponse {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  truncated: boolean
+}
+
+export interface LocalGraphResponse extends GraphResponse {
   documentId: number
   /** False for a document outside the map (repo code, boilerplate, no stored chunks): no graph. */
   inMap: boolean
   /** Node id of the opened document. */
   center: string
   nodes: LocalGraphNode[]
-  edges: GraphEdge[]
-  /** True when the server left nodes out to keep the graph small. */
-  truncated: boolean
+}
+
+export async function getVaultGraph(filters: { sources?: readonly string[]; repo?: string }, signal?: AbortSignal): Promise<GraphResponse> {
+  const params = new URLSearchParams()
+  if (filters.sources?.length) params.set('sources', filters.sources.join(','))
+  if (filters.repo) params.set('repo', filters.repo)
+  const query = params.size ? `?${params.toString()}` : ''
+  const res = await apiFetch(`/api/graph${query}`, { signal })
+  return (await res.json()) as GraphResponse
 }
 
 export async function getLocalGraph(id: number, signal?: AbortSignal): Promise<LocalGraphResponse> {

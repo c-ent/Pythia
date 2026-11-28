@@ -19,6 +19,7 @@ describe('router', () => {
     ['/repos', 'repos'],
     ['/repos/pythia', 'repos'],
     ['/pinned', 'pinned'],
+    ['/map', 'map'],
     ['/sources', 'sources'],
     ['/settings/', 'settings'],
     ['/settings/gemini', 'settings'],

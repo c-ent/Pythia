@@ -19,6 +19,7 @@ import { SearchScreen } from '../screens/SearchScreen'
 import { SettingsScreen } from '../screens/SettingsScreen'
 import { SourcesScreen } from '../screens/SourcesScreen'
 import { PinnedScreen } from '../screens/PinnedScreen'
+import { MapScreen } from '../screens/MapScreen'
 import { useServerStatus } from '../sources/useServerStatus'
 import { NAV, SETTINGS_SECTION_LABELS, readSidebarCollapsed, saveSidebarCollapsed } from './nav'
 import { MobileTabBar, MobileTopBar, Rail, Sidebar, type CurrentFor } from './Navigation'
@@ -114,6 +115,10 @@ export function AppShell({ onSignOut }: { onSignOut: () => void }) {
       // Pinned repos beside the storage card from lg.
       width = 'max-w-5xl'
       screen = <PinnedScreen />
+      break
+    case 'map':
+      width = 'max-w-6xl'
+      screen = <MapScreen />
       break
     case 'sources':
       // The sources list and the activity side by side from lg.

@@ -27,6 +27,7 @@ describe('AppShell', () => {
       'Ask',
       'Repos',
       'Pinned',
+      'Map',
       'Sources',
       'Settings',
     ])
@@ -35,13 +36,14 @@ describe('AppShell', () => {
     expect(document.title).toBe('Search · Pythia')
   })
 
-  it('gives the rail every screen and the phone tab bar all but Sources', () => {
+  it('gives the rail every screen and the phone tab bar all but Map and Sources', () => {
     render(<AppShell onSignOut={() => {}} />)
     expect(labels(within(layout('tablet')).getByRole('navigation', { name: 'Main' }))).toEqual([
       'Search',
       'Ask',
       'Repos',
       'Pinned',
+      'Map',
       'Sources',
       'Settings',
     ])

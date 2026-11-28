@@ -1,7 +1,8 @@
 import cytoscape from 'cytoscape'
 import { Lock, Maximize2, Minus, Plus } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { useEffect, useRef, useState } from 'react'
-import type { LocalGraphNode, LocalGraphResponse } from '../api/graph'
+import type { GraphNode, GraphResponse } from '../api/graph'
 import { documentPath, navigate } from '../router'
 import { NODE_TONES, TONE_LABELS, nodeTone, toElements } from './graphModel'
 
@@ -68,12 +69,12 @@ function buildStyle(): cytoscape.StylesheetJson {
 }
 
 interface Preview {
-  node: LocalGraphNode
+  node: GraphNode
   x: number
   y: number
 }
 
-function previewKind(node: LocalGraphNode): string {
+function previewKind(node: GraphNode): string {
   if (node.type === 'document') return node.sourceLabel ?? TONE_LABELS[nodeTone(node)]
   if (node.type === 'ghost') return 'Missing note: nothing has this name yet'
   return TONE_LABELS[nodeTone(node)]
@@ -84,7 +85,7 @@ function previewKind(node: LocalGraphNode): string {
  * document, hover (long press on touch) shows a preview, zoom and pan with the
  * wheel, pinch or the buttons. Tags, repos and ghosts do not open anything.
  */
-export function GraphCanvas({ graph }: { graph: LocalGraphResponse }) {
+export function GraphCanvas({ graph, center }: { graph: Pick<GraphResponse, 'nodes' | 'edges'>; center?: string }) {
   const container = useRef<HTMLDivElement>(null)
   const cyRef = useRef<cytoscape.Core | null>(null)
   const [preview, setPreview] = useState<Preview | null>(null)
@@ -95,7 +96,7 @@ export function GraphCanvas({ graph }: { graph: LocalGraphResponse }) {
     const byId = new Map(graph.nodes.map((node) => [node.id, node]))
     const cy = cytoscape({
       container: element,
-      elements: toElements(graph),
+      elements: toElements(graph, center),
       style: buildStyle(),
       layout: {
         name: 'cose',
@@ -140,7 +141,7 @@ export function GraphCanvas({ graph }: { graph: LocalGraphResponse }) {
         return
       }
       const node = byId.get(event.target.id() as string)
-      if (node?.type === 'document' && node.documentId !== null && node.id !== graph.center) {
+      if (node?.type === 'document' && node.documentId !== null && node.id !== center) {
         navigate(documentPath(node.documentId))
       }
     })
@@ -158,7 +159,7 @@ export function GraphCanvas({ graph }: { graph: LocalGraphResponse }) {
       cy.destroy()
       cyRef.current = null
     }
-  }, [graph])
+  }, [center, graph])
 
   const zoomBy = (factor: number): void => {
     const cy = cyRef.current
@@ -174,7 +175,7 @@ export function GraphCanvas({ graph }: { graph: LocalGraphResponse }) {
       <div
         ref={container}
         role="img"
-        aria-label={`Graph of this document and ${graph.nodes.length - 1} connected items. The list view has the same items.`}
+        aria-label={`Graph with ${graph.nodes.length} items. The list view has the same items.`}
         className="h-88 w-full overflow-hidden rounded-control border border-line bg-canvas md:h-112"
       />
       <div className="absolute top-2 right-2 flex flex-col gap-1">
@@ -193,7 +194,7 @@ export function GraphCanvas({ graph }: { graph: LocalGraphResponse }) {
   )
 }
 
-function ZoomButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+function ZoomButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
   return (
     <button
       type="button"

@@ -1,6 +1,6 @@
 import { useSyncExternalStore, type MouseEvent } from 'react'
 
-export const ROUTES = ['search', 'ask', 'repos', 'pinned', 'sources', 'settings'] as const
+export const ROUTES = ['search', 'ask', 'repos', 'pinned', 'map', 'sources', 'settings'] as const
 export type RouteName = (typeof ROUTES)[number]
 
 export const SETTINGS_SECTIONS = ['profile', 'gemini', 'devices'] as const

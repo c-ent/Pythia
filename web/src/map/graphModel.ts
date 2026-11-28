@@ -1,4 +1,4 @@
-import type { GraphEdge, LocalGraphNode, LocalGraphResponse } from '../api/graph'
+import type { GraphEdge, GraphNode, GraphResponse, LocalGraphNode, LocalGraphResponse } from '../api/graph'
 
 // Plain data work for the local graph (R20, T71), shared by the list view and
 // the Cytoscape canvas. No Cytoscape import here, so the list view and the
@@ -28,7 +28,7 @@ export const TONE_SWATCH: Record<NodeTone, string> = {
   ghost: 'bg-map-ghost',
 }
 
-export function nodeTone(node: Pick<LocalGraphNode, 'type' | 'source'>): NodeTone {
+export function nodeTone(node: Pick<GraphNode, 'type' | 'source'>): NodeTone {
   if (node.type === 'tag') return 'tag'
   if (node.type === 'ghost') return 'ghost'
   if (node.type === 'repo') return 'repo'
@@ -52,6 +52,10 @@ export function isLocalGraphResponse(value: unknown): value is LocalGraphRespons
     'edges' in value &&
     Array.isArray(value.edges)
   )
+}
+
+export function isGraphResponse(value: unknown): value is GraphResponse {
+  return value !== null && typeof value === 'object' && 'nodes' in value && Array.isArray(value.nodes) && 'edges' in value && Array.isArray(value.edges) && 'truncated' in value && typeof value.truncated === 'boolean'
 }
 
 /** Nodes other than the opened document. */
@@ -145,7 +149,7 @@ export function listGroups(graph: LocalGraphResponse): ListGroup[] {
 }
 
 /** Tones present in the graph, in legend order. */
-export function tonesIn(graph: LocalGraphResponse): NodeTone[] {
+export function tonesIn(graph: Pick<GraphResponse, 'nodes'>): NodeTone[] {
   const present = new Set(graph.nodes.map(nodeTone))
   return NODE_TONES.filter((tone) => present.has(tone))
 }
@@ -160,7 +164,7 @@ export interface GraphElementData {
   id: string
   label?: string
   tone?: NodeTone
-  type?: LocalGraphNode['type']
+  type?: GraphNode['type']
   size?: number
   center?: 'yes' | 'no'
   source?: string
@@ -169,7 +173,7 @@ export interface GraphElementData {
 }
 
 /** Cytoscape element definitions; edges to nodes the response does not have are dropped. */
-export function toElements(graph: LocalGraphResponse): Array<{ group: 'nodes' | 'edges'; data: GraphElementData }> {
+export function toElements(graph: Pick<GraphResponse, 'nodes' | 'edges'>, center?: string): Array<{ group: 'nodes' | 'edges'; data: GraphElementData }> {
   const ids = new Set(graph.nodes.map((node) => node.id))
   const nodes = graph.nodes.map((node) => ({
     group: 'nodes' as const,
@@ -178,8 +182,8 @@ export function toElements(graph: LocalGraphResponse): Array<{ group: 'nodes' | 
       label: shortLabel(node.label),
       tone: nodeTone(node),
       type: node.type,
-      size: node.id === graph.center ? Math.max(nodeSize(node.links), 36) : nodeSize(node.links),
-      center: node.id === graph.center ? ('yes' as const) : ('no' as const),
+      size: node.id === center ? Math.max(nodeSize(node.links), 36) : nodeSize(node.links),
+      center: node.id === center ? ('yes' as const) : ('no' as const),
     },
   }))
   const edges = graph.edges
