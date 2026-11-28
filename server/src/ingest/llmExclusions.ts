@@ -44,6 +44,39 @@ export interface LlmExclusion {
   path: string
 }
 
+export interface CatalogFolder {
+  path: string
+  documents: number
+}
+
+export interface CatalogTag {
+  tag: string
+  documents: number
+}
+
+/** Browseable index of vault, Drive and Keep items for "Kept away from Gemini" (R16, R19). */
+export interface LlmExclusionCatalog {
+  obsidian: {
+    folders: CatalogFolder[]
+    notes: string[]
+    tags: CatalogTag[]
+  }
+  gdrive: {
+    totalDocuments: number
+    folders: CatalogFolder[]
+    files: string[]
+  }
+  keep: {
+    documents: number
+  }
+}
+
+export const EMPTY_EXCLUSION_CATALOG: LlmExclusionCatalog = {
+  obsidian: { folders: [], notes: [], tags: [] },
+  gdrive: { totalDocuments: 0, folders: [], files: [] },
+  keep: { documents: 0 },
+}
+
 /** Where the list is kept. The Postgres version is `db/llmExclusionStore.ts`. */
 export interface LlmExclusionStore {
   list(): Promise<LlmExclusion[]>
@@ -204,6 +237,80 @@ export function createMemoryLlmExclusionStore(
     },
     async countDocuments(list) {
       return list.map(count)
+    },
+  }
+}
+
+export interface ExclusionCatalogInput {
+  obsidianDocs: readonly { path: string; tags: readonly string[] }[]
+  drivePaths: readonly string[]
+  keepDocuments: number
+}
+
+function compareIgnoreCase(a: string, b: string): number {
+  const left = a.toLowerCase()
+  const right = b.toLowerCase()
+  if (left !== right) return left < right ? -1 : 1
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
+function collectFolders(paths: readonly string[]): CatalogFolder[] {
+  const counts = new Map<string, CatalogFolder>()
+  for (const docPath of paths) {
+    const parts = docPath.split('/')
+    const seen = new Set<string>()
+    for (let i = 1; i < parts.length; i++) {
+      const folder = parts.slice(0, i).join('/')
+      if (folder === '') continue
+      const key = folder.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      const existing = counts.get(key)
+      if (existing === undefined) counts.set(key, { path: folder, documents: 1 })
+      else existing.documents++
+    }
+  }
+  return [...counts.values()].sort((a, b) => compareIgnoreCase(a.path, b.path))
+}
+
+function collectTags(docs: readonly { tags: readonly string[] }[]): CatalogTag[] {
+  const counts = new Map<string, number>()
+  for (const doc of docs) {
+    const seen = new Set<string>()
+    for (const raw of doc.tags) {
+      const normalized = normalizeTag(raw)
+      if (normalized === null) continue
+      const parts = normalized.split('/')
+      for (let i = 1; i <= parts.length; i++) {
+        seen.add(parts.slice(0, i).join('/'))
+      }
+    }
+    for (const tag of seen) {
+      counts.set(tag, (counts.get(tag) ?? 0) + 1)
+    }
+  }
+  return [...counts.entries()]
+    .map(([tag, documents]) => ({ tag, documents }))
+    .sort((a, b) => compareIgnoreCase(a.tag, b.tag))
+}
+
+/** Builds the browseable catalog of indexed vault, Drive and Keep items from stored document paths and tags. */
+export function buildExclusionCatalog(input: ExclusionCatalogInput): LlmExclusionCatalog {
+  const notes = [...new Set(input.obsidianDocs.map((doc) => doc.path))].sort(compareIgnoreCase)
+  const files = [...new Set(input.drivePaths)].sort(compareIgnoreCase)
+  return {
+    obsidian: {
+      folders: collectFolders(notes),
+      notes,
+      tags: collectTags(input.obsidianDocs),
+    },
+    gdrive: {
+      totalDocuments: files.length,
+      folders: collectFolders(files),
+      files,
+    },
+    keep: {
+      documents: input.keepDocuments,
     },
   }
 }

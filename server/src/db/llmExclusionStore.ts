@@ -1,5 +1,11 @@
 import type { Pool } from 'pg'
-import type { LlmExclusion, LlmExclusionKind, LlmExclusionStore } from '../ingest/llmExclusions.js'
+import {
+  buildExclusionCatalog,
+  type LlmExclusion,
+  type LlmExclusionCatalog,
+  type LlmExclusionKind,
+  type LlmExclusionStore,
+} from '../ingest/llmExclusions.js'
 
 // Vault notes: only tightens. Notes the new list no longer excludes keep
 // allow_llm = false until `VaultIndexer.refreshAllowLlm` has read their
@@ -122,4 +128,34 @@ export function createPgLlmExclusionStore(pool: Pool): LlmExclusionStore {
       return rows.map((row) => Number(row.n))
     },
   }
+}
+
+/** Reads indexed Obsidian folders/notes/tags, Drive folders/files and Keep count for Settings. */
+export async function readPgLlmExclusionCatalog(pool: Pool): Promise<LlmExclusionCatalog> {
+  const [docsResult, keepResult] = await Promise.all([
+    pool.query<{ kind: 'obsidian' | 'gdrive'; path: string; tags: string[] }>(
+      `SELECT s.kind, d.path, d.tags
+       FROM documents d
+       JOIN sources s ON s.id = d.source_id
+       WHERE s.kind IN ('obsidian', 'gdrive') AND s.enabled
+       ORDER BY lower(d.path), d.path`,
+    ),
+    pool.query<{ n: string }>(
+      `SELECT count(*) AS n
+       FROM documents d
+       JOIN sources s ON s.id = d.source_id
+       WHERE s.kind = 'keep' AND s.enabled`,
+    ),
+  ])
+  const obsidianDocs: { path: string; tags: string[] }[] = []
+  const drivePaths: string[] = []
+  for (const row of docsResult.rows) {
+    if (row.kind === 'obsidian') obsidianDocs.push({ path: row.path, tags: row.tags })
+    else drivePaths.push(row.path)
+  }
+  return buildExclusionCatalog({
+    obsidianDocs,
+    drivePaths,
+    keepDocuments: Number(keepResult.rows[0]?.n ?? 0),
+  })
 }

@@ -3,7 +3,12 @@ import { createServer, type Server } from 'node:http'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from '../app.js'
 import type { AskService } from '../ask/askService.js'
-import { createMemoryLlmExclusionStore, type LlmExclusionStore } from '../ingest/llmExclusions.js'
+import {
+  buildExclusionCatalog,
+  createMemoryLlmExclusionStore,
+  type LlmExclusionCatalog,
+  type LlmExclusionStore,
+} from '../ingest/llmExclusions.js'
 import { testAuth } from './testAuth.js'
 import type { SearchService } from '../search/searchService.js'
 import { createSettingsService, MAX_LLM_EXCLUSIONS } from '../settings/settingsService.js'
@@ -17,6 +22,7 @@ describe('settings routes: Gemini exclusion list', () => {
   let server: Server
   let base: string
   let store: LlmExclusionStore
+  let catalog: LlmExclusionCatalog
   let refreshes = 0
 
   beforeAll(async () => {
@@ -30,6 +36,7 @@ describe('settings routes: Gemini exclusion list', () => {
           replace: (list) => store.replace(list),
           countDocuments: (list) => store.countDocuments(list),
         },
+        catalog: async () => catalog,
         refreshAllowLlm: async () => {
           refreshes++
         },
@@ -42,6 +49,7 @@ describe('settings routes: Gemini exclusion list', () => {
 
   beforeEach(() => {
     store = createMemoryLlmExclusionStore()
+    catalog = buildExclusionCatalog({ obsidianDocs: [], drivePaths: [], keepDocuments: 0 })
     refreshes = 0
   })
 
@@ -51,6 +59,8 @@ describe('settings routes: Gemini exclusion list', () => {
 
   const get = (withCookie = true) =>
     fetch(`${base}/api/settings/llm-exclusions`, { headers: withCookie ? { cookie } : {} })
+  const getCatalog = (withCookie = true) =>
+    fetch(`${base}/api/settings/llm-exclusions/catalog`, { headers: withCookie ? { cookie } : {} })
   const put = (body: unknown, withCookie = true) =>
     fetch(`${base}/api/settings/llm-exclusions`, {
       method: 'PUT',
@@ -174,8 +184,47 @@ describe('settings routes: Gemini exclusion list', () => {
 
   it('needs a session for reading and saving', async () => {
     expect((await get(false)).status).toBe(401)
+    expect((await getCatalog(false)).status).toBe(401)
     expect((await put({ exclusions: [] }, false)).status).toBe(401)
     expect(await store.list()).toEqual([])
+  })
+
+  it('returns the browseable exclusion catalog', async () => {
+    catalog = buildExclusionCatalog({
+      obsidianDocs: [
+        { path: 'Work/Clients/Acme.md', tags: ['#Private/Health', 'client'] },
+        { path: 'Work/Notes.md', tags: ['private'] },
+        { path: 'Home.md', tags: [] },
+      ],
+      drivePaths: ['Finance/2026/Budget.xlsx', 'Finance/Summary.docx', 'Readme.pdf'],
+      keepDocuments: 14,
+    })
+    const res = await getCatalog()
+    expect(res.status).toBe(200)
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(await res.json()).toEqual({
+      obsidian: {
+        folders: [
+          { path: 'Work', documents: 2 },
+          { path: 'Work/Clients', documents: 1 },
+        ],
+        notes: ['Home.md', 'Work/Clients/Acme.md', 'Work/Notes.md'],
+        tags: [
+          { tag: 'client', documents: 1 },
+          { tag: 'private', documents: 2 },
+          { tag: 'private/health', documents: 1 },
+        ],
+      },
+      gdrive: {
+        totalDocuments: 3,
+        folders: [
+          { path: 'Finance', documents: 2 },
+          { path: 'Finance/2026', documents: 1 },
+        ],
+        files: ['Finance/2026/Budget.xlsx', 'Finance/Summary.docx', 'Readme.pdf'],
+      },
+      keep: { documents: 14 },
+    })
   })
 })
 

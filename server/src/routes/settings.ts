@@ -16,6 +16,10 @@ export function createSettingsRouter(settings: SettingsService): Router {
     res.json({ exclusions: await settings.getLlmExclusions() })
   })
 
+  router.get('/settings/llm-exclusions/catalog', async (_req, res) => {
+    res.json(await settings.getExclusionCatalog())
+  })
+
   router.put('/settings/llm-exclusions', async (req, res) => {
     const input = parseInput(llmExclusionsInputSchema, req.body)
     res.json({ exclusions: await settings.setLlmExclusions(input.exclusions) })

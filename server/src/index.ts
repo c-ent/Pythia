@@ -28,7 +28,7 @@ import { createPgTopicMapStore } from './db/topicMapStore.js'
 import { createGraphService } from './search/graphService.js'
 import { createTopicMapService } from './search/topicMapService.js'
 import { createPgStatusStore } from './db/statusStore.js'
-import { createPgLlmExclusionStore } from './db/llmExclusionStore.js'
+import { createPgLlmExclusionStore, readPgLlmExclusionCatalog } from './db/llmExclusionStore.js'
 import { createPgProfileStore } from './db/profileStore.js'
 import { createProfileService } from './profile/profileService.js'
 import { createPgRecentQueryStore } from './db/recentQueryStore.js'
@@ -143,6 +143,7 @@ if (config.vault === null) {
 
 const settings = createSettingsService({
   exclusions: llmExclusions,
+  catalog: () => readPgLlmExclusionCatalog(pool),
   ...(vault?.refreshAllowLlm === undefined ? {} : { refreshAllowLlm: vault.refreshAllowLlm }),
 })
 

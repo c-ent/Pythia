@@ -1,10 +1,12 @@
 import { z } from 'zod'
 import {
   cleanExclusions,
+  EMPTY_EXCLUSION_CATALOG,
   LLM_EXCLUSION_KINDS,
   normalizeRulePath,
   sortExclusions,
   type LlmExclusion,
+  type LlmExclusionCatalog,
   type LlmExclusionKind,
   type LlmExclusionStore,
 } from '../ingest/llmExclusions.js'
@@ -60,6 +62,7 @@ export interface CountedLlmExclusion extends LlmExclusion {
 
 export interface SettingsService {
   getLlmExclusions(): Promise<CountedLlmExclusion[]>
+  getExclusionCatalog(): Promise<LlmExclusionCatalog>
   /**
    * Saves the whole list (validated by `llmExclusionsInputSchema`), deduplicated
    * and sorted, and returns it with counts. New exclusions, and repo and Keep
@@ -71,6 +74,7 @@ export interface SettingsService {
 
 export interface SettingsServiceOptions {
   exclusions: LlmExclusionStore
+  catalog?: () => Promise<LlmExclusionCatalog>
   /** Re-applies the list to stored vault notes without embedding; absent when vault indexing is off. */
   refreshAllowLlm?: () => Promise<unknown>
   log?: (message: string) => void
@@ -87,6 +91,10 @@ export function createSettingsService(options: SettingsServiceOptions): Settings
   return {
     async getLlmExclusions() {
       return withCounts(sortExclusions(await options.exclusions.list()))
+    },
+
+    async getExclusionCatalog() {
+      return options.catalog === undefined ? EMPTY_EXCLUSION_CATALOG : options.catalog()
     },
 
     async setLlmExclusions(list) {

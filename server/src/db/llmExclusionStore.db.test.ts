@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { loadConfig } from '../config.js'
 import type { LlmExclusion } from '../ingest/llmExclusions.js'
 import { createPgIndexStore, ensureSource } from './indexStore.js'
-import { createPgLlmExclusionStore } from './llmExclusionStore.js'
+import { createPgLlmExclusionStore, readPgLlmExclusionCatalog } from './llmExclusionStore.js'
 import { runMigrations } from './migrate.js'
 import { dropTestDatabase } from './testDatabase.js'
 
@@ -153,5 +153,30 @@ describe.skipIf(process.env.PYTHIA_DB_TESTS !== '1')('Gemini list rules against 
     const drives = Object.entries(await allowLlm()).filter(([key]) => key.startsWith('gdrive:'))
     expect(drives.every(([, allowed]) => !allowed)).toBe(true)
     expect(await exclusions.list()).toEqual([{ kind: 'gdrive', path: '/' }])
+  })
+
+  it('builds the exclusion catalog from indexed Obsidian, Drive and Keep documents', async () => {
+    const store = createPgIndexStore(pool)
+    const drive = await ensureSource(pool, 'gdrive', 'gdrive', '/data/gdrive')
+    await store.replaceDocument(
+      drive.id,
+      { path: 'Finance/Budget.xlsx', title: 'Budget', language: null, contentHash: 'h-budget', allowLlm: true, mtime: null },
+      [],
+      'nomic-embed-text',
+    )
+    const catalog = await readPgLlmExclusionCatalog(pool)
+    expect(catalog.obsidian.folders).toEqual([{ path: 'Health', documents: 1 }])
+    expect(catalog.obsidian.notes).toEqual(['Health/log.md', 'Ideas.md', 'Inline.md', 'Other.md'])
+    expect(catalog.obsidian.tags).toEqual([
+      { tag: 'private', documents: 2 },
+      { tag: 'private/health', documents: 1 },
+      { tag: 'privateish', documents: 1 },
+    ])
+    expect(catalog.gdrive).toEqual({
+      totalDocuments: 1,
+      folders: [{ path: 'Finance', documents: 1 }],
+      files: ['Finance/Budget.xlsx'],
+    })
+    expect(catalog.keep).toEqual({ documents: 1 })
   })
 })
