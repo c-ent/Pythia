@@ -717,21 +717,20 @@ export function AtlasCanvas({
         <p className="pointer-events-none hidden pt-2 font-mono text-[11px] tracking-wider text-nav-muted md:block">
           DRAG - rotate &nbsp; SCROLL - zoom{fullscreen ? '   ESC - exit' : ''}
         </p>
-        {fullscreen ? (
-          <button
-            type="button"
-            aria-label="Exit full screen"
-            aria-pressed={true}
-            title="Exit full screen (Esc)"
-            onClick={() => setFullscreen(false)}
-            className="inline-flex min-h-11 items-center gap-2 rounded-control border border-nav-line bg-nav/85 px-3.5 text-xs font-medium text-nav-ink backdrop-blur-sm transition-colors hover:bg-nav-raised"
-          >
-            <Minimize2 aria-hidden="true" className="size-4" />
-            <span>Exit full screen</span>
-          </button>
-        ) : null}
-        <div className="flex flex-col gap-1.5">
-          {fullscreen ? null : (
+        <div className="flex flex-col items-end gap-1.5">
+          {fullscreen ? (
+            <button
+              type="button"
+              aria-label="Exit full screen"
+              aria-pressed={true}
+              title="Exit full screen (Esc)"
+              onClick={() => setFullscreen(false)}
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-control border border-nav-line bg-nav/85 px-3 text-xs font-medium text-nav-ink backdrop-blur-sm transition-colors hover:bg-nav-raised"
+            >
+              <Minimize2 aria-hidden="true" className="size-4" />
+              <span>Exit</span>
+            </button>
+          ) : (
             <ZoomButton label="Full screen" pressed={false} onClick={() => setFullscreen(true)}>
               <Maximize2 aria-hidden="true" className="size-4" />
             </ZoomButton>

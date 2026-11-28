@@ -219,4 +219,21 @@ describe('SyncMenu', () => {
     expect(screen.queryByRole('region', { name: 'Sync issue' })).toBeNull()
     expect(document.activeElement).toBe(trigger)
   })
+
+  it('shows Syncing with percentage instead of Sync issue while the failing source is retrying', () => {
+    const retryingSources: SourceHealth[] = [
+      sampleSources[0]!,
+      {
+        ...sampleSources[1]!,
+        syncing: true,
+        progress: { stage: 'indexing', done: 14, total: 119 },
+      },
+    ]
+    render(<SyncMenu online reachable sources={retryingSources} syncing />)
+    const trigger = screen.getByRole('button', { name: 'Sync: Syncing 12%' })
+    expect(trigger.textContent).toBe('Syncing 12%')
+    fireEvent.click(trigger)
+    const panel = screen.getByRole('region', { name: 'Syncing 12%' })
+    expect(within(panel).getByText('Indexing · 12% (14/119)')).toBeTruthy()
+  })
 })

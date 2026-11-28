@@ -3,6 +3,7 @@ import type { SourceKind } from '../api/search'
 import type { TopicMapResponse } from '../api/topicMap'
 
 export type MapView = 'topic' | 'vault'
+export type TopicDisplayMode = 'atlas' | 'mindmap' | 'list'
 
 export type TopicMapResult =
   | { key: string; status: 'done'; response: TopicMapResponse }
@@ -21,7 +22,7 @@ export interface MapMemory {
   repo: string
   attempt: number
   result: TopicMapResult | null
-  viewOverride: { narrow: boolean; listView: boolean } | null
+  viewOverride: { narrow: boolean; mode: TopicDisplayMode } | null
   vaultAttempt: number
   vaultResult: VaultGraphResult | null
   vaultViewOverride: { narrow: boolean; listView: boolean } | null

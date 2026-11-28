@@ -144,9 +144,11 @@ describe('MapScreen', () => {
     fireEvent.click(screen.getByText('Where these branches come from'))
     expect(screen.getByRole('link', { name: /Job Search Strategy/ }).getAttribute('href')).toBe('/doc/1')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show list' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Mindmap' }))
+    expect(await screen.findByRole('img', { name: /2D mindmap for job/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'List' }))
     expect(screen.getByRole('list', { name: 'Topic map outline' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Show map' }))
+    fireEvent.click(screen.getByRole('button', { name: '3D map' }))
     expect(screen.getByRole('img', { name: /3D topic map for job/ })).toBeTruthy()
   })
 

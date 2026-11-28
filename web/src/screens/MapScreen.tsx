@@ -12,9 +12,10 @@ import { documentPath, followLink } from '../router'
 import { SOURCE_LABELS } from '../search/format'
 import { SourceChips } from '../search/SourceChips'
 import { VaultGraphPanel } from '../map/VaultGraphPanel'
-import { mapMemory, type MapView, type TopicMapResult } from './map'
+import { mapMemory, type MapView, type TopicDisplayMode, type TopicMapResult } from './map'
 
 const TopicAtlas = lazy(() => import('../map/TopicAtlas').then((module) => ({ default: module.TopicAtlas })))
+const TopicMindmap = lazy(() => import('../map/TopicMindmap').then((module) => ({ default: module.TopicMindmap })))
 
 type LoadState = { status: 'idle' } | { status: 'loading' } | { status: 'done'; response: TopicMapResponse } | { status: 'error'; message: string }
 
@@ -35,8 +36,8 @@ export function MapScreen() {
   const [sources, setSources] = useState<SourceKind[]>(() => mapMemory.sources)
   const [repo, setRepo] = useState(() => mapMemory.repo)
   const [result, setResult] = useState<TopicMapResult | null>(() => mapMemory.result)
-  const [viewOverride, setViewOverride] = useState<{ narrow: boolean; listView: boolean } | null>(() => mapMemory.viewOverride)
-  const listView = viewOverride !== null && viewOverride.narrow === narrow ? viewOverride.listView : narrow
+  const [viewOverride, setViewOverride] = useState<{ narrow: boolean; mode: TopicDisplayMode } | null>(() => mapMemory.viewOverride)
+  const displayMode: TopicDisplayMode = viewOverride !== null && viewOverride.narrow === narrow ? viewOverride.mode : (narrow ? 'list' : 'atlas')
   const [attempt, setAttempt] = useState(() => mapMemory.attempt)
   const [copied, copy] = useClipboard()
   const [view, setView] = useState<MapView>(() => mapMemory.view)
@@ -185,18 +186,32 @@ export function MapScreen() {
             <div className="flex flex-wrap gap-2">
               {trail.length > 0 ? <button type="button" onClick={stepBack} className={BUTTON}><ArrowLeft aria-hidden="true" className="size-4" />Back to {trail.at(-1)}</button> : null}
               <button type="button" onClick={() => void copyOutline()} className={BUTTON}><Copy aria-hidden="true" className="size-4" />{copied === 'copied' ? 'Copied' : copied === 'failed' ? 'Copy failed' : 'Copy as Markdown'}</button>
-              {documents.length > 0 ? <button type="button" aria-pressed={listView} onClick={() => setViewOverride({ narrow, listView: !listView })} className={BUTTON}>{listView ? 'Show map' : 'Show list'}</button> : null}
+              {documents.length > 0 ? (
+                <div role="group" aria-label="Topic display" className="inline-flex rounded-control bg-raised p-1">
+                  <button type="button" aria-pressed={displayMode === 'atlas'} onClick={() => setViewOverride({ narrow, mode: 'atlas' })} className={`inline-flex min-h-11 items-center rounded-[0.5rem] px-3.5 text-sm ${displayMode === 'atlas' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'}`}>3D map</button>
+                  <button type="button" aria-pressed={displayMode === 'mindmap'} onClick={() => setViewOverride({ narrow, mode: 'mindmap' })} className={`inline-flex min-h-11 items-center rounded-[0.5rem] px-3.5 text-sm ${displayMode === 'mindmap' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'}`}>Mindmap</button>
+                  <button type="button" aria-pressed={displayMode === 'list'} onClick={() => setViewOverride({ narrow, mode: 'list' })} className={`inline-flex min-h-11 items-center rounded-[0.5rem] px-3.5 text-sm ${displayMode === 'list' ? 'bg-strong font-medium text-on-strong' : 'text-muted hover:text-ink'}`}>List</button>
+                </div>
+              ) : null}
             </div>
           </header>
-          {documents.length === 0 ? <p className="py-10 text-center text-sm text-muted">No matching map documents were found. Try another topic or filter.</p> : listView ? <TopicList partitioned={partitioned} onBranch={chooseBranch} /> : <>
-            <Suspense fallback={<p role="status" className="flex h-104 items-center justify-center gap-2 text-sm text-muted md:h-136"><LoaderCircle aria-hidden="true" className="size-4 animate-spin" />Drawing the atlas…</p>}>
-              <TopicAtlas topic={state.response.topic} branches={branches} onBranch={chooseBranch} />
-            </Suspense>
-            <ul aria-label="Topic map colours" className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
-              {NODE_TONES.filter((tone) => documents.some((doc) => doc.source.kind === tone)).map((tone) => (
-                <li key={tone} className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`size-2.5 rounded-full ${TONE_SWATCH[tone]}`} />{TONE_LABELS[tone]}</li>
-              ))}
-            </ul>
+          {documents.length === 0 ? <p className="py-10 text-center text-sm text-muted">No matching map documents were found. Try another topic or filter.</p> : displayMode === 'list' ? <TopicList partitioned={partitioned} onBranch={chooseBranch} /> : <>
+            {displayMode === 'mindmap' ? (
+              <Suspense fallback={<p role="status" className="flex h-104 items-center justify-center gap-2 text-sm text-muted md:h-136"><LoaderCircle aria-hidden="true" className="size-4 animate-spin" />Drawing the mindmap…</p>}>
+                <TopicMindmap topic={state.response.topic} branches={branches} partitioned={partitioned} onBranch={chooseBranch} />
+              </Suspense>
+            ) : (
+              <>
+                <Suspense fallback={<p role="status" className="flex h-104 items-center justify-center gap-2 text-sm text-muted md:h-136"><LoaderCircle aria-hidden="true" className="size-4 animate-spin" />Drawing the atlas…</p>}>
+                  <TopicAtlas topic={state.response.topic} branches={branches} onBranch={chooseBranch} />
+                </Suspense>
+                <ul aria-label="Topic map colours" className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+                  {NODE_TONES.filter((tone) => documents.some((doc) => doc.source.kind === tone)).map((tone) => (
+                    <li key={tone} className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`size-2.5 rounded-full ${TONE_SWATCH[tone]}`} />{TONE_LABELS[tone]}</li>
+                  ))}
+                </ul>
+              </>
+            )}
             <details className="mt-3 rounded-control border border-line bg-canvas px-3.5 py-1.5">
               <summary className="flex min-h-11 cursor-pointer items-center justify-between text-sm font-medium text-ink">
                 <span>Where these branches come from</span>

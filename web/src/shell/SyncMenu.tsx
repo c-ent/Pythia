@@ -34,7 +34,7 @@ const TONE_ICON: Record<Tone, typeof Check> = {
 }
 
 function syncSummary(sources: readonly SourceHealth[], syncing: boolean): SyncSummary {
-  const failed = sources.filter((source) => source.state === 'error')
+  const failed = sources.filter((source) => source.state === 'error' && !source.syncing)
   if (failed.length > 0) {
     const names = failed.map((source) => sourceTitle(source.id)).join(', ')
     return {

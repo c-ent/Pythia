@@ -97,6 +97,7 @@ describe('AtlasCanvas', () => {
     fireEvent.click(enterFullscreen)
     const exitFullscreen = screen.getByRole('button', { name: 'Exit full screen' })
     expect(exitFullscreen.getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByText('Exit')).toBeTruthy()
     fireEvent.click(exitFullscreen)
     expect(screen.queryByRole('button', { name: 'Exit full screen' })).toBeNull()
 
