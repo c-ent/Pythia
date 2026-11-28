@@ -1,0 +1,101 @@
+name: Verify and deploy to Oracle
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-oracle
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      PYTHIA_DB_TESTS: '0'
+      PYTHIA_OLLAMA_TESTS: '0'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build
+        run: pnpm build
+
+      - name: Unit tests
+        run: pnpm test
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_BRANCH: ${{ github.ref_name }}
+      ORACLE_HOST: ${{ secrets.ORACLE_HOST || 'pythia' }}
+      ORACLE_USER: ${{ secrets.ORACLE_USER || 'ubuntu' }}
+      ORACLE_SSH_KEY: ${{ secrets.ORACLE_SSH_KEY }}
+    steps:
+      - name: Validate target branch and secrets
+        run: |
+          set -euo pipefail
+          case "$DEPLOY_BRANCH" in
+            dev|main) ;;
+            *) echo "Unsupported deploy branch: $DEPLOY_BRANCH" >&2; exit 1 ;;
+          esac
+          if [ -z "$ORACLE_SSH_KEY" ]; then
+            echo "Missing ORACLE_SSH_KEY repository secret." >&2
+            exit 1
+          fi
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$ORACLE_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          # Wait briefly for Tailscale MagicDNS/peer route before scanning host key.
+          for attempt in 1 2 3 4 5; do
+            if ssh-keyscan -H "$ORACLE_HOST" >> "$HOME/.ssh/known_hosts" 2>/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Could not reach $ORACLE_HOST over Tailscale." >&2
+          exit 1
+
+      - name: Pull and rebuild on Oracle
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/deploy_key" -o BatchMode=yes "${ORACLE_USER}@${ORACLE_HOST}" \
+            "set -euo pipefail; cd ~/Pythia; git fetch origin '${DEPLOY_BRANCH}'; git checkout '${DEPLOY_BRANCH}'; git pull --ff-only origin '${DEPLOY_BRANCH}'; docker compose up -d --build"
