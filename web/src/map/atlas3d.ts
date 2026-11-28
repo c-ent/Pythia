@@ -493,19 +493,72 @@ function isLocalNode(node: GraphNode): node is LocalGraphNode {
   return 'depth' in node && typeof (node as LocalGraphNode).depth === 'number'
 }
 
+function isRootRepoReadme(node: GraphNode): boolean {
+  if (node.type !== 'document' || node.source?.kind !== 'repo') return false
+  const target = (node.path ?? node.label).trim()
+  if (target.includes('/')) return false
+  return /^readme(\.[^/]+)?$/i.test(target)
+}
+
 /**
  * Converts a local or whole-vault GraphResponse into a 3D force-directed Atlas graph.
+ * Root repo READMEs are folded into their parent repo node (unless pinned as `center`),
+ * and any remaining duplicate or generic titles are disambiguated by source/folder.
  */
 export function buildNetworkAtlasGraph(graph: Pick<GraphResponse, 'nodes' | 'edges'>, center?: string): AtlasGraph {
-  const ordered = [...graph.nodes].sort((a, b) => a.id.localeCompare(b.id))
+  const rawById = new Map(graph.nodes.map((node) => [node.id, node]))
+  const collapsedToRepo = new Map<string, string>()
+
+  for (const edge of graph.edges) {
+    if (edge.kind !== 'repo') continue
+    if (edge.target === center) continue
+    const repoNode = rawById.get(edge.source)
+    const docNode = rawById.get(edge.target)
+    if (repoNode?.type === 'repo' && docNode !== undefined && isRootRepoReadme(docNode)) {
+      collapsedToRepo.set(docNode.id, repoNode.id)
+    }
+  }
+
+  const ordered = graph.nodes
+    .filter((node) => !collapsedToRepo.has(node.id))
+    .sort((a, b) => a.id.localeCompare(b.id))
   const ids = new Set(ordered.map((node) => node.id))
   const count = ordered.length
+
+  const seenEdges = new Set<string>()
+  const edges: AtlasEdge[] = []
+  for (const edge of graph.edges) {
+    const source = collapsedToRepo.get(edge.source) ?? edge.source
+    const target = collapsedToRepo.get(edge.target) ?? edge.target
+    if (source === target || !ids.has(source) || !ids.has(target)) continue
+    const key =
+      edge.kind === 'neighbour'
+        ? `neighbour|${[source, target].sort().join('|')}`
+        : `${edge.kind}|${source}|${target}`
+    if (seenEdges.has(key)) continue
+    seenEdges.add(key)
+    edges.push({ source, target, kind: edge.kind })
+  }
+
+  const degreeById = new Map<string, number>()
+  for (const edge of edges) {
+    degreeById.set(edge.source, (degreeById.get(edge.source) ?? 0) + 1)
+    degreeById.set(edge.target, (degreeById.get(edge.target) ?? 0) + 1)
+  }
+
+  const titleCounts = new Map<string, number>()
+  for (const node of ordered) {
+    if (node.type !== 'document') continue
+    const key = node.label.toLocaleLowerCase()
+    titleCounts.set(key, (titleCounts.get(key) ?? 0) + 1)
+  }
 
   const nodes: AtlasNode[] = ordered.map((node, index) => {
     const tone = nodeTone(node)
     const isCenter = node.id === center
     const seed = hashString(node.id)
     const localDepth = isLocalNode(node) ? node.depth : 1
+    const links = collapsedToRepo.size > 0 ? (degreeById.get(node.id) ?? node.links) : node.links
 
     let x = 0
     let y = 0
@@ -523,30 +576,33 @@ export function buildNetworkAtlasGraph(graph: Pick<GraphResponse, 'nodes' | 'edg
     const baseRadius = isCenter
       ? 12.5
       : node.type === 'repo' || node.type === 'tag'
-        ? clamp(5.5 + Math.sqrt(Math.max(0, node.links)) * 1.4, 6, 11)
-        : clamp(4.2 + Math.sqrt(Math.max(0, node.links)) * 1.15, 4.5, 10)
+        ? clamp(5.5 + Math.sqrt(Math.max(0, links)) * 1.4, 6, 11)
+        : clamp(4.2 + Math.sqrt(Math.max(0, links)) * 1.15, 4.5, 10)
+
+    const label =
+      node.type === 'tag'
+        ? `#${shortLabel(node.label)}`
+        : node.type === 'document'
+          ? disambiguateTitle(node.label, node.path ?? '', node.sourceLabel ?? node.source?.name ?? '', titleCounts)
+          : shortLabel(node.label)
 
     return {
       id: node.id,
       kind: isCenter ? 'center' : node.type,
       tone: isCenter ? 'center' : tone,
-      label: node.type === 'tag' ? `#${shortLabel(node.label)}` : shortLabel(node.label),
-      sublabel: node.type === 'repo' || node.type === 'tag' ? `${node.links} ${node.links === 1 ? 'link' : 'links'}` : undefined,
+      label,
+      sublabel: node.type === 'repo' || node.type === 'tag' ? `${links} ${links === 1 ? 'link' : 'links'}` : undefined,
       x,
       y,
       z,
       radius: baseRadius,
-      links: node.links,
+      links,
       documentId: node.documentId,
       sourceLabel: node.sourceLabel,
       path: node.path,
       allowLlm: node.allowLlm,
     }
   })
-
-  const edges: AtlasEdge[] = graph.edges
-    .filter((edge) => ids.has(edge.source) && ids.has(edge.target) && edge.source !== edge.target)
-    .map((edge) => ({ source: edge.source, target: edge.target, kind: edge.kind }))
 
   const fixedIds = new Set<string>(center ? [center] : [])
   const byId = new Map(nodes.map((node, index) => [node.id, index]))
@@ -609,7 +665,7 @@ export function buildNetworkAtlasGraph(graph: Pick<GraphResponse, 'nodes' | 'edg
         const dz = b.z - a.z
         const dist = Math.hypot(dx, dy, dz)
         if (dist < 0.01) continue
-        const ideal = edge.kind === 'neighbour' ? 92 : 68
+        const ideal = edge.kind === 'neighbour' ? 92 : edge.kind === 'repo' ? 40 : 68
         const pull = ((dist - ideal) / dist) * 0.14
         if (!fixedIds.has(a.id)) {
           dispX[ia]! += dx * pull

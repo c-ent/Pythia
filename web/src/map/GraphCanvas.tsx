@@ -30,7 +30,7 @@ export function GraphCanvas({
       edges={atlas.edges}
       worldRadius={atlas.worldRadius}
       title={title}
-      subtitle={subtitle ?? `${graph.nodes.length} items · ${graph.edges.length} connections`}
+      subtitle={subtitle ?? `${atlas.nodes.length} items · ${atlas.edges.length} connections`}
       ariaLabel={`Graph with ${graph.nodes.length} items. The list view has the same items.`}
       heightClassName={heightClassName}
     />

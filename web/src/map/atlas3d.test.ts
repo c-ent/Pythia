@@ -136,6 +136,37 @@ describe('buildNetworkAtlasGraph', () => {
     expect(center?.z).toBe(0)
     expect(atlas.nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y) && Number.isFinite(n.z))).toBe(true)
   })
+
+  it('folds root repo READMEs into their repo node and disambiguates nested READMEs', () => {
+    const graph: GraphResponse = {
+      nodes: [
+        { id: 'repo:1', type: 'repo', label: 'pythia', documentId: null, source: { kind: 'repo', name: 'pythia' }, sourceLabel: 'pythia', path: null, allowLlm: null, links: 2 },
+        { id: 'doc:10', type: 'document', label: 'README.md', documentId: 10, source: { kind: 'repo', name: 'pythia' }, sourceLabel: 'pythia', path: 'README.md', allowLlm: true, links: 2 },
+        { id: 'doc:11', type: 'document', label: 'README.md', documentId: 11, source: { kind: 'repo', name: 'pythia' }, sourceLabel: 'pythia', path: 'docs/README.md', allowLlm: true, links: 1 },
+        { id: 'doc:20', type: 'document', label: 'Architecture', documentId: 20, source: { kind: 'obsidian', name: 'vault' }, sourceLabel: 'Obsidian', path: 'Architecture.md', allowLlm: true, links: 1 },
+      ],
+      edges: [
+        { source: 'repo:1', target: 'doc:10', kind: 'repo', score: null },
+        { source: 'repo:1', target: 'doc:11', kind: 'repo', score: null },
+        { source: 'doc:10', target: 'doc:20', kind: 'neighbour', score: 0.85 },
+      ],
+      truncated: false,
+    }
+
+    const atlas = buildNetworkAtlasGraph(graph)
+    expect(atlas.nodes.map((n) => n.id)).toEqual(['doc:11', 'doc:20', 'repo:1'])
+    expect(atlas.nodes.find((n) => n.id === 'doc:11')?.label).toBe('pythia / README.md')
+    expect(atlas.edges).toEqual([
+      { source: 'repo:1', target: 'doc:11', kind: 'repo' },
+      { source: 'repo:1', target: 'doc:20', kind: 'neighbour' },
+    ])
+    expect(atlas.nodes.find((n) => n.id === 'repo:1')?.links).toBe(2)
+
+    // When a root README is explicitly centered (local graph), keep it as the center node.
+    const localAtlas = buildNetworkAtlasGraph(graph, 'doc:10')
+    expect(localAtlas.nodes.find((n) => n.id === 'doc:10')?.kind).toBe('center')
+    expect(localAtlas.nodes.find((n) => n.id === 'doc:10')?.label).toBe('pythia / README.md')
+  })
 })
 
 describe('projection, hit testing and label collision culling', () => {
